@@ -1,0 +1,24 @@
+.idea
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+env/
+venv/
+
+# Task Loop runtime state
+.agents/task-loop/
+.codex/task-loop/
+
+# Logs & OS files
+*.log
+.DS_Store
+Thumbs.db
+
+# Temporary directories
+tmp/
+temp/
+

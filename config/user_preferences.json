@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "comment": "task-loop 跨项目通用用户偏好与主会话行为策略配置（复制本 Skill 即可完整迁移用户习惯）",
+  "main_session_policy": {
+    "default_vendor": "antigravity",
+    "explainable_reasoning": true,
+    "allow_simple_direct_edits": true,
+    "complexity_bias": "balanced",
+    "anti_wandering_intervention": {
+      "enabled": true,
+      "max_turns_for_level_1": 3,
+      "max_unconverged_errors": 2,
+      "allowlist_violation_action": "intervene_and_revert"
+    }
+  },
+  "hybrid_verification_policy": {
+    "prefer_installed_review_skills": [
+      "code-review",
+      "superpowers:code-review",
+      "receiving-code-review",
+      "systematic-debugging"
+    ],
+    "unverifiable_ui_action": "prompt_user_with_steps"
+  },
+  "model_mappings": {
+    "level_1_simple": "gpt-5.6-luna",
+    "level_2_standard": "gpt-5.6-terra",
+    "level_3_complex": "gpt-5.6-sol"
+  }
+}
