@@ -17,7 +17,7 @@ providers_dir = script_dir / "providers"
 sys.path.insert(0, str(providers_dir))
 
 from get_agy_project_sessions import scan_agy_sessions
-from get_codex_project_sessions import scan_codex_sessions
+from get_codex_project_sessions import get_current_session_metadata, scan_codex_sessions
 from get_claude_project_sessions import scan_claude_sessions
 
 
@@ -30,11 +30,11 @@ def find_sessions(project_root: str = ".", vendor: str = "Auto", inspect: bool =
     elif vendor == "codex":
         all_sessions.extend(scan_codex_sessions(project_root))
     elif vendor == "claude":
-        all_sessions.extend(scan_claude_sessions(project_root))
+        all_sessions.extend(scan_claude_sessions(project_root, inspect_activity=inspect))
     elif vendor == "all":
         all_sessions.extend(scan_agy_sessions(project_root, inspect_activity=inspect))
         all_sessions.extend(scan_codex_sessions(project_root))
-        all_sessions.extend(scan_claude_sessions(project_root))
+        all_sessions.extend(scan_claude_sessions(project_root, inspect_activity=inspect))
     else:  # "auto"
         root_path = Path(project_root)
         policy_file = root_path / ".agents" / "task-loop" / "policy.json"
@@ -62,7 +62,7 @@ def find_sessions(project_root: str = ".", vendor: str = "Auto", inspect: bool =
             if not codex:
                 all_sessions.extend(scan_agy_sessions(project_root, inspect_activity=inspect))
         elif active_vendor == "claude":
-            all_sessions.extend(scan_claude_sessions(project_root))
+            all_sessions.extend(scan_claude_sessions(project_root, inspect_activity=inspect))
         else:
             all_sessions.extend(scan_agy_sessions(project_root, inspect_activity=inspect))
             
@@ -70,11 +70,23 @@ def find_sessions(project_root: str = ".", vendor: str = "Auto", inspect: bool =
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     parser = argparse.ArgumentParser(description="Find & Inspect project sessions across AI agents.")
     parser.add_argument("--root", default=".", help="Project root path (default: current directory)")
     parser.add_argument("--vendor", default="Auto", choices=["Auto", "Antigravity", "Codex", "Claude", "All"], help="Vendor selector")
     parser.add_argument("--inspect", "-i", action="store_true", help="Extract recent prompts and touched files for AI tagging")
+    parser.add_argument("--current", action="store_true", help="Read the current Codex thread ID from host runtime metadata")
     args = parser.parse_args()
+
+    if args.current:
+        if args.vendor.lower() != "codex":
+            parser.error("--current is currently supported only with --vendor Codex")
+        print(json.dumps(get_current_session_metadata(), ensure_ascii=False, indent=2))
+        return
 
     sessions = find_sessions(args.root, args.vendor, args.inspect)
     print(json.dumps(sessions, ensure_ascii=False, indent=2))

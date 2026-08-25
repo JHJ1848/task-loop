@@ -1,0 +1,19 @@
+{
+  "name": "task-loop",
+  "version": "1.2.0",
+  "description": "Universal Cross-Agent Task Loop Plugin for Antigravity, Codex, and Claude Code",
+  "author": "Antigravity Team",
+  "capabilities": {
+    "skills": [
+      "skills/task-loop",
+      "skills/session-control",
+      "skills/subagent",
+      "skills/hook",
+      "skills/init"
+    ],
+    "rules": [
+      "rules/task-loop-governance.md"
+    ],
+    "hooks": "hooks.json"
+  }
+}

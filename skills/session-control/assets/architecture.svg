@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 380" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgObsidian" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+    <linearGradient id="cardObsidian" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#1f2937" />
+    </linearGradient>
+    <filter id="layerShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.6" />
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="380" rx="12" fill="url(#bgObsidian)" stroke="#374151" stroke-width="1.2" />
+
+  <!-- Header -->
+  <text x="460" y="36" fill="#f3f4f6" font-size="16" font-weight="600" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">session-control // Multi-Vendor SessionProvider &amp; Introspection Architecture</text>
+  <line x1="30" y1="52" x2="890" y2="52" stroke="#1f2937" stroke-width="1" />
+
+  <!-- Layer 1: Log Ingestion Sources -->
+  <g transform="translate(30, 65)">
+    <!-- AGY -->
+    <rect x="0" y="0" width="270" height="72" rx="6" fill="url(#cardObsidian)" stroke="#38bdf8" stroke-width="1" filter="url(#layerShadow)" />
+    <text x="16" y="24" fill="#38bdf8" font-size="12" font-weight="bold" font-family="monospace">Google Antigravity (AGY)</text>
+    <text x="16" y="44" fill="#9ca3af" font-size="10" font-family="sans-serif">JSONL Trajectory Introspection</text>
+    <text x="16" y="60" fill="#6b7280" font-size="9" font-family="monospace">~/.gemini/antigravity/brain/*/transcript.jsonl</text>
+
+    <!-- Codex -->
+    <rect x="295" y="0" width="270" height="72" rx="6" fill="url(#cardObsidian)" stroke="#34d399" stroke-width="1" filter="url(#layerShadow)" />
+    <text x="311" y="24" fill="#34d399" font-size="12" font-weight="bold" font-family="monospace">OpenAI Codex</text>
+    <text x="311" y="44" fill="#9ca3af" font-size="10" font-family="sans-serif">Rollout Trajectory &amp; Env Context</text>
+    <text x="311" y="60" fill="#6b7280" font-size="9" font-family="monospace">~/.codex/sessions/*.jsonl / CODEX_THREAD_ID</text>
+
+    <!-- Claude -->
+    <rect x="590" y="0" width="270" height="72" rx="6" fill="url(#cardObsidian)" stroke="#fbbf24" stroke-width="1" filter="url(#layerShadow)" />
+    <text x="606" y="24" fill="#fbbf24" font-size="12" font-weight="bold" font-family="monospace">Anthropic Claude Code</text>
+    <text x="606" y="44" fill="#9ca3af" font-size="10" font-family="sans-serif">CLI Agents Introspection &amp; Pipe</text>
+    <text x="606" y="60" fill="#6b7280" font-size="9" font-family="monospace">claude agents --json / --resume</text>
+  </g>
+
+  <!-- Connectors -->
+  <path d="M 165 137 L 460 162" stroke="#4b5563" stroke-width="1.2" stroke-dasharray="3,2" />
+  <path d="M 460 137 L 460 162" stroke="#4b5563" stroke-width="1.2" stroke-dasharray="3,2" />
+  <path d="M 725 137 L 460 162" stroke="#4b5563" stroke-width="1.2" stroke-dasharray="3,2" />
+
+  <!-- Layer 2: SessionProvider Core -->
+  <g transform="translate(30, 162)" filter="url(#layerShadow)">
+    <rect width="860" height="100" rx="8" fill="#111827" stroke="#6366f1" stroke-width="1.2" />
+    <text x="20" y="24" fill="#a5b4fc" font-size="12" font-weight="bold" font-family="monospace">SessionProvider // 6 Standard Primitives Layer</text>
+
+    <!-- 6 Primitives -->
+    <rect x="20" y="40" width="130" height="44" rx="4" fill="#1e1b4b" stroke="#4338ca" stroke-width="0.8" />
+    <text x="85" y="60" fill="#c7d2fe" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">get_session_id</text>
+    <text x="85" y="74" fill="#818cf8" font-size="8" text-anchor="middle" font-family="sans-serif">运行时 ID 内省</text>
+
+    <rect x="160" y="40" width="130" height="44" rx="4" fill="#1e1b4b" stroke="#4338ca" stroke-width="0.8" />
+    <text x="225" y="60" fill="#c7d2fe" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">scan_sessions</text>
+    <text x="225" y="74" fill="#818cf8" font-size="8" text-anchor="middle" font-family="sans-serif">全工作区无侵入扫描</text>
+
+    <rect x="300" y="40" width="130" height="44" rx="4" fill="#1e1b4b" stroke="#4338ca" stroke-width="0.8" />
+    <text x="365" y="60" fill="#c7d2fe" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">spawn_topic</text>
+    <text x="365" y="74" fill="#818cf8" font-size="8" text-anchor="middle" font-family="sans-serif">顶层专题会话建立</text>
+
+    <rect x="440" y="40" width="130" height="44" rx="4" fill="#1e1b4b" stroke="#4338ca" stroke-width="0.8" />
+    <text x="505" y="60" fill="#c7d2fe" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">send_message</text>
+    <text x="505" y="74" fill="#818cf8" font-size="8" text-anchor="middle" font-family="sans-serif">定向跨会话发信</text>
+
+    <rect x="580" y="40" width="130" height="44" rx="4" fill="#1e1b4b" stroke="#4338ca" stroke-width="0.8" />
+    <text x="645" y="60" fill="#c7d2fe" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">manage_agents</text>
+    <text x="645" y="74" fill="#818cf8" font-size="8" text-anchor="middle" font-family="sans-serif">熔断检查与回收</text>
+
+    <rect x="720" y="40" width="120" height="44" rx="4" fill="#1e1b4b" stroke="#4338ca" stroke-width="0.8" />
+    <text x="780" y="60" fill="#c7d2fe" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">await_reply</text>
+    <text x="780" y="74" fill="#818cf8" font-size="8" text-anchor="middle" font-family="sans-serif">异步被动唤醒</text>
+  </g>
+
+  <!-- Connectors -->
+  <path d="M 460 262 L 460 286" stroke="#4b5563" stroke-width="1.2" />
+
+  <!-- Layer 3: Persistence & Memory -->
+  <g transform="translate(30, 286)">
+    <rect width="420" height="66" rx="6" fill="#111827" stroke="#374151" filter="url(#layerShadow)" />
+    <text x="16" y="24" fill="#93c5fd" font-size="11" font-weight="bold" font-family="monospace">.agents/task-loop/sessions.json &amp; topics.json</text>
+    <text x="16" y="44" fill="#9ca3af" font-size="10" font-family="sans-serif">持久化会话拓扑状态机 (Git 忽略，本地热加载)</text>
+    <text x="16" y="58" fill="#6b7280" font-size="9" font-family="monospace">main_thread_id / module_key / tags mapping</text>
+
+    <rect x="440" y="0" width="450" height="66" rx="6" fill="#111827" stroke="#374151" filter="url(#layerShadow)" />
+    <text x="456" y="24" fill="#6ee7b7" font-size="11" font-weight="bold" font-family="monospace">docs/MEMORY.md &amp; docs/memory/*.md</text>
+    <text x="456" y="44" fill="#9ca3af" font-size="10" font-family="sans-serif">受控专题记忆中枢 (Git 协同，经过证实的架构事实)</text>
+    <text x="456" y="58" fill="#6b7280" font-size="9" font-family="monospace">memory-get &amp; memory-put lifecycle integration</text>
+  </g>
+</svg>

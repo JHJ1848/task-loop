@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 360" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0d1117" />
+      <stop offset="100%" stop-color="#161b22" />
+    </linearGradient>
+    <linearGradient id="cardDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#161b22" />
+      <stop offset="100%" stop-color="#21262d" />
+    </linearGradient>
+    <filter id="subtleShadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000000" flood-opacity="0.5" />
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="360" rx="12" fill="url(#bgDark)" stroke="#30363d" stroke-width="1.2" />
+
+  <!-- Header -->
+  <text x="460" y="36" fill="#f0f6fc" font-size="16" font-weight="600" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace">task-loop // Universal Task Orchestration Workflow</text>
+  <line x1="30" y1="52" x2="890" y2="52" stroke="#21262d" stroke-width="1" />
+
+  <!-- Flow Nodes -->
+  <!-- Node 1: Intake -->
+  <g transform="translate(30, 70)" filter="url(#subtleShadow)">
+    <rect width="125" height="190" rx="8" fill="url(#cardDark)" stroke="#388bfd" stroke-width="1.2" />
+    <rect x="12" y="14" width="24" height="20" rx="4" fill="#1f6feb" fill-opacity="0.2" stroke="#388bfd" stroke-width="0.8" />
+    <text x="24" y="28" fill="#58a6ff" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">01</text>
+    <text x="12" y="54" fill="#f0f6fc" font-size="13" font-weight="600" font-family="sans-serif">需求接收</text>
+    <text x="12" y="74" fill="#8b949e" font-size="10" font-family="sans-serif">用户自然语言需求</text>
+    <text x="12" y="92" fill="#8b949e" font-size="10" font-family="sans-serif">主会话统一受理</text>
+    <line x1="12" y1="110" x2="113" y2="110" stroke="#30363d" stroke-width="0.8" />
+    <text x="12" y="132" fill="#7ee787" font-size="9" font-family="monospace">role: main</text>
+    <text x="12" y="150" fill="#f85149" font-size="9" font-family="sans-serif">严禁直接改码</text>
+    <text x="12" y="168" fill="#8b949e" font-size="9" font-family="sans-serif">专职中枢治理</text>
+  </g>
+
+  <!-- Connector 1->2 -->
+  <path d="M 160 165 L 180 165" stroke="#484f58" stroke-width="1.5" stroke-dasharray="3,2" />
+
+  <!-- Node 2: Processing -->
+  <g transform="translate(180, 70)" filter="url(#subtleShadow)">
+    <rect width="125" height="190" rx="8" fill="url(#cardDark)" stroke="#8957e5" stroke-width="1.2" />
+    <rect x="12" y="14" width="24" height="20" rx="4" fill="#8957e5" fill-opacity="0.2" stroke="#a371f7" stroke-width="0.8" />
+    <text x="24" y="28" fill="#d2a8ff" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">02</text>
+    <text x="12" y="54" fill="#f0f6fc" font-size="13" font-weight="600" font-family="sans-serif">需求初加工</text>
+    <text x="12" y="74" fill="#8b949e" font-size="10" font-family="sans-serif">提炼单一职责目标</text>
+    <text x="12" y="92" fill="#8b949e" font-size="10" font-family="sans-serif">二元任务类型定义:</text>
+    <line x1="12" y1="110" x2="113" y2="110" stroke="#30363d" stroke-width="0.8" />
+    <text x="12" y="132" fill="#58a6ff" font-size="9" font-weight="bold" font-family="monospace">[EXPLORE]</text>
+    <text x="12" y="150" fill="#d2a8ff" font-size="9" font-weight="bold" font-family="monospace">[WORK]</text>
+    <text x="12" y="168" fill="#8b949e" font-size="9" font-family="sans-serif">明确验收准则</text>
+  </g>
+
+  <!-- Connector 2->3 -->
+  <path d="M 310 165 L 330 165" stroke="#484f58" stroke-width="1.5" stroke-dasharray="3,2" />
+
+  <!-- Node 3: Anti-Conflict -->
+  <g transform="translate(330, 70)" filter="url(#subtleShadow)">
+    <rect width="125" height="190" rx="8" fill="url(#cardDark)" stroke="#d29922" stroke-width="1.2" />
+    <rect x="12" y="14" width="24" height="20" rx="4" fill="#d29922" fill-opacity="0.2" stroke="#e3b341" stroke-width="0.8" />
+    <text x="24" y="28" fill="#e3b341" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">03</text>
+    <text x="12" y="54" fill="#f0f6fc" font-size="13" font-weight="600" font-family="sans-serif">防冲突比对</text>
+    <text x="12" y="74" fill="#8b949e" font-size="10" font-family="sans-serif">检索既有专题库</text>
+    <text x="12" y="92" fill="#8b949e" font-size="10" font-family="sans-serif">(tags/memory/doc)</text>
+    <line x1="12" y1="110" x2="113" y2="110" stroke="#30363d" stroke-width="0.8" />
+    <text x="12" y="132" fill="#e3b341" font-size="9" font-weight="bold" font-family="monospace">policy: reuse</text>
+    <text x="12" y="150" fill="#f85149" font-size="9" font-family="sans-serif">严禁重复建专题</text>
+    <text x="12" y="168" fill="#8b949e" font-size="9" font-family="sans-serif">杜绝业务碎片化</text>
+  </g>
+
+  <!-- Connector 3->4 -->
+  <path d="M 460 165 L 480 165" stroke="#484f58" stroke-width="1.5" stroke-dasharray="3,2" />
+
+  <!-- Node 4: Dispatch -->
+  <g transform="translate(480, 70)" filter="url(#subtleShadow)">
+    <rect width="125" height="190" rx="8" fill="url(#cardDark)" stroke="#f778ba" stroke-width="1.2" />
+    <rect x="12" y="14" width="24" height="20" rx="4" fill="#f778ba" fill-opacity="0.2" stroke="#ff7b72" stroke-width="0.8" />
+    <text x="24" y="28" fill="#ff7b72" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">04</text>
+    <text x="12" y="54" fill="#f0f6fc" font-size="13" font-weight="600" font-family="sans-serif">三步派单</text>
+    <text x="12" y="74" fill="#8b949e" font-size="10" font-family="sans-serif">1. 寻找已有专题</text>
+    <text x="12" y="92" fill="#8b949e" font-size="10" font-family="sans-serif">2. agentapi 创建</text>
+    <line x1="12" y1="110" x2="113" y2="110" stroke="#30363d" stroke-width="0.8" />
+    <text x="12" y="132" fill="#58a6ff" font-size="9" font-family="monospace">send_message()</text>
+    <text x="12" y="150" fill="#f0f6fc" font-size="9" font-family="sans-serif">物理 Allowlist 划定</text>
+    <text x="12" y="168" fill="#8b949e" font-size="9" font-family="sans-serif">1/2/3 复杂度裁决</text>
+  </g>
+
+  <!-- Connector 4->5 -->
+  <path d="M 610 165 L 630 165" stroke="#484f58" stroke-width="1.5" stroke-dasharray="3,2" />
+
+  <!-- Node 5: Topic Execution -->
+  <g transform="translate(630, 70)" filter="url(#subtleShadow)">
+    <rect width="125" height="190" rx="8" fill="url(#cardDark)" stroke="#2ea043" stroke-width="1.2" />
+    <rect x="12" y="14" width="24" height="20" rx="4" fill="#238636" fill-opacity="0.2" stroke="#3fb950" stroke-width="0.8" />
+    <text x="24" y="28" fill="#56d364" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">05</text>
+    <text x="12" y="54" fill="#f0f6fc" font-size="13" font-weight="600" font-family="sans-serif">专题执行</text>
+    <text x="12" y="74" fill="#8b949e" font-size="10" font-family="sans-serif">白名单内精准修改</text>
+    <text x="12" y="92" fill="#8b949e" font-size="10" font-family="sans-serif">单测与门禁核验</text>
+    <line x1="12" y1="110" x2="113" y2="110" stroke="#30363d" stroke-width="0.8" />
+    <text x="12" y="132" fill="#56d364" font-size="9" font-family="monospace">memory: put</text>
+    <text x="12" y="150" fill="#8b949e" font-size="9" font-family="sans-serif">沉淀 docs/memory</text>
+    <text x="12" y="168" fill="#f0f6fc" font-size="9" font-family="sans-serif">标准化结构汇报</text>
+  </g>
+
+  <!-- Connector 5->6 -->
+  <path d="M 760 165 L 775 165" stroke="#484f58" stroke-width="1.5" stroke-dasharray="3,2" />
+
+  <!-- Node 6: Verification -->
+  <g transform="translate(775, 70)" filter="url(#subtleShadow)">
+    <rect width="115" height="190" rx="8" fill="url(#cardDark)" stroke="#388bfd" stroke-width="1.2" />
+    <rect x="12" y="14" width="24" height="20" rx="4" fill="#1f6feb" fill-opacity="0.2" stroke="#58a6ff" stroke-width="0.8" />
+    <text x="24" y="28" fill="#79c0ff" font-size="10" font-weight="bold" text-anchor="middle" font-family="monospace">06</text>
+    <text x="12" y="54" fill="#f0f6fc" font-size="13" font-weight="600" font-family="sans-serif">质检验收</text>
+    <text x="12" y="74" fill="#8b949e" font-size="10" font-family="sans-serif">自动化测试核对</text>
+    <text x="12" y="92" fill="#8b949e" font-size="10" font-family="sans-serif">Diff 白名单走查</text>
+    <line x1="12" y1="110" x2="103" y2="110" stroke="#30363d" stroke-width="0.8" />
+    <text x="12" y="132" fill="#79c0ff" font-size="9" font-weight="bold" font-family="monospace">gate: pass</text>
+    <text x="12" y="150" fill="#f0f6fc" font-size="9" font-family="sans-serif">人机混合验证卡</text>
+    <text x="12" y="168" fill="#8b949e" font-size="9" font-family="sans-serif">闭环交付用户</text>
+  </g>
+
+  <!-- Bottom Spec Bar -->
+  <rect x="30" y="280" width="860" height="48" rx="6" fill="#161b22" stroke="#30363d" />
+  <text x="45" y="302" fill="#8b949e" font-size="11" font-family="sans-serif">调度复杂度分级:</text>
+  <text x="145" y="302" fill="#58a6ff" font-size="11" font-weight="600" font-family="monospace">Level 1 (就地闭环)</text>
+  <text x="290" y="302" fill="#30363d" font-size="11" font-family="sans-serif">|</text>
+  <text x="310" y="302" fill="#d2a8ff" font-size="11" font-weight="600" font-family="monospace">Level 2 (标准派单自测)</text>
+  <text x="480" y="302" fill="#30363d" font-size="11" font-family="sans-serif">|</text>
+  <text x="500" y="302" fill="#ff7b72" font-size="11" font-weight="600" font-family="monospace">Level 3 (Subagent 并行编排)</text>
+  <text x="45" y="318" fill="#484f58" font-size="10" font-family="monospace">Domain Ownership Trumps Complexity // 领域管辖权优先于复杂度</text>
+</svg>

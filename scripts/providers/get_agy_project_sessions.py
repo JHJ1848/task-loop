@@ -122,6 +122,11 @@ def scan_agy_sessions(project_root_str: str = ".", custom_brain_path: str = None
 
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
     project_root = sys.argv[1] if len(sys.argv) > 1 else "."
     inspect = "--inspect" in sys.argv or "-i" in sys.argv
     sessions = scan_agy_sessions(project_root, inspect_activity=inspect)

@@ -1,0 +1,27 @@
+{
+  "session-context-injector": {
+    "enabled": true,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node ./scripts/hooks/inject_session_context.js",
+        "timeout": 5
+      }
+    ]
+  },
+  "allowlist-safety-gate": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "replace_file_content|write_to_file|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./scripts/hooks/enforce_allowlist.js",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
