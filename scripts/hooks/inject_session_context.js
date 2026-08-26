@@ -99,10 +99,12 @@ function getSessionDetails(conversationId, sessionData) {
     return {
       session_id: conversationId,
       is_main: false,
-      title: '未注册会话',
+      is_unregistered: true,
+      title: '未注册会话 (Unregistered Session)',
       module_key: 'unknown',
       created_at: null,
       last_active_at: null,
+      summary: null,
       memory_docs: []
     };
   }
@@ -131,9 +133,26 @@ function getSessionDetails(conversationId, sessionData) {
     }
   }
 
+  const isRegistered = Boolean(isMain || sessionItem || moduleKey);
+
+  if (!isRegistered) {
+    return {
+      session_id: conversationId,
+      is_main: false,
+      is_unregistered: true,
+      title: '未注册会话 (Unregistered Session)',
+      module_key: 'unknown',
+      created_at: null,
+      last_active_at: null,
+      summary: null,
+      memory_docs: []
+    };
+  }
+
   return {
     session_id: conversationId,
     is_main: sessionItem ? (sessionItem.is_main || isMain) : isMain,
+    is_unregistered: false,
     title: sessionItem ? sessionItem.title : (isMain ? '[主会话] 任务编排 & 治理中枢' : '专题会话'),
     module_key: moduleKey || (isMain ? 'main' : 'unknown'),
     created_at: sessionItem ? sessionItem.created_at : null,
@@ -151,6 +170,11 @@ function getSessionDetails(conversationId, sessionData) {
 function getPluginTopicRules(details, templates) {
   const pluginRules = (templates && templates.plugin_rules) || (templates && templates.rules) || {};
   const lines = [];
+
+  if (details.is_unregistered) {
+    lines.push(`- [Plugin: task-loop | 会话提示]: 当前会话未在 task-loop 状态机中注册。若需作为主治理中枢，可运行 /init 进行初始化。`);
+    return lines;
+  }
 
   if (details.is_main) {
     if (Array.isArray(pluginRules.main_session) && pluginRules.main_session.length > 0) {
@@ -221,10 +245,15 @@ function generateInjectionMessage(conversationId, sessionData, activeTodo, templ
   const headerNamespace = (templates && templates.header_namespace) || (templates && templates.plugin_namespace) || '[Plugin: task-loop | 会话上下文感知]';
   parts.push(headerNamespace);
   parts.push(`- 会话 ID: ${details.session_id}`);
-  parts.push(`- 是否主会话: ${details.is_main ? '是 (Main Thread)' : '否 (Topic Session)'}`);
+  
+  if (details.is_unregistered) {
+    parts.push(`- 是否主会话: 待定 (Unregistered)`);
+  } else {
+    parts.push(`- 是否主会话: ${details.is_main ? '是 (Main Thread)' : '否 (Topic Session)'}`);
+  }
   parts.push(`- 专题主题: ${details.title}`);
 
-  if (details.module_key && details.module_key !== 'unknown') {
+  if (!details.is_unregistered && details.module_key && details.module_key !== 'unknown') {
     parts.push(`- 所属模块: ${details.module_key}`);
   }
   if (details.created_at) {
@@ -234,7 +263,9 @@ function generateInjectionMessage(conversationId, sessionData, activeTodo, templ
     parts.push(`- 最近更新: ${details.last_active_at}`);
   }
 
-  if (details.is_main) {
+  if (details.is_unregistered) {
+    parts.push(`- 角色定位: [待定 / 初始会话]`);
+  } else if (details.is_main) {
     parts.push(`- 角色定位: [主会话 / 治理中枢]`);
   } else {
     parts.push(`- 角色定位: [专题会话 / 领域负责人]`);

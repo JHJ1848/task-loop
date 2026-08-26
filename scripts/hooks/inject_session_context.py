@@ -95,10 +95,12 @@ def get_session_details(conversation_id, session_data):
         return {
             "session_id": conversation_id,
             "is_main": False,
-            "title": "未注册会话",
+            "is_unregistered": True,
+            "title": "未注册会话 (Unregistered Session)",
             "module_key": "unknown",
             "created_at": None,
             "last_active_at": None,
+            "summary": None,
             "memory_docs": []
         }
 
@@ -126,6 +128,21 @@ def get_session_details(conversation_id, session_data):
                     mem_docs.extend(v["memory_docs"])
                 break
 
+    is_registered = bool(is_main or session_item or module_key)
+
+    if not is_registered:
+        return {
+            "session_id": conversation_id,
+            "is_main": False,
+            "is_unregistered": True,
+            "title": "未注册会话 (Unregistered Session)",
+            "module_key": "unknown",
+            "created_at": None,
+            "last_active_at": None,
+            "summary": None,
+            "memory_docs": []
+        }
+
     if session_item and isinstance(session_item.get("memory_docs"), list) and len(session_item["memory_docs"]) > 0:
         mem_docs = session_item["memory_docs"]
 
@@ -138,6 +155,7 @@ def get_session_details(conversation_id, session_data):
     return {
         "session_id": conversation_id,
         "is_main": (session_item.get("is_main") if (session_item and "is_main" in session_item) else is_main),
+        "is_unregistered": False,
         "title": title,
         "module_key": module_key or ("main" if is_main else "unknown"),
         "created_at": session_item.get("created_at") if session_item else None,
@@ -150,6 +168,10 @@ def get_session_details(conversation_id, session_data):
 def get_plugin_topic_rules(details, templates):
     plugin_rules = (templates.get("plugin_rules") if templates else None) or (templates.get("rules") if templates else None) or {}
     lines = []
+
+    if details.get("is_unregistered"):
+        lines.append("- [Plugin: task-loop | 会话提示]: 当前会话未在 task-loop 状态机中注册。若需作为主治理中枢，可运行 /init 进行初始化。")
+        return lines
 
     if details.get("is_main"):
         main_rules = plugin_rules.get("main_session")
@@ -214,17 +236,23 @@ def generate_injection_message(conversation_id, session_data, active_todo, templ
     
     parts = [header_namespace]
     parts.append(f"- 会话 ID: {details['session_id']}")
-    parts.append(f"- 是否主会话: {'是 (Main Thread)' if details['is_main'] else '否 (Topic Session)'}")
+    
+    if details.get("is_unregistered"):
+        parts.append("- 是否主会话: 待定 (Unregistered)")
+    else:
+        parts.append(f"- 是否主会话: {'是 (Main Thread)' if details['is_main'] else '否 (Topic Session)'}")
     parts.append(f"- 专题主题: {details['title']}")
 
-    if details.get("module_key") and details["module_key"] != "unknown":
+    if not details.get("is_unregistered") and details.get("module_key") and details["module_key"] != "unknown":
         parts.append(f"- 所属模块: {details['module_key']}")
     if details.get("created_at"):
         parts.append(f"- 创建时间: {details['created_at']}")
     if details.get("last_active_at"):
         parts.append(f"- 最近更新: {details['last_active_at']}")
 
-    if details["is_main"]:
+    if details.get("is_unregistered"):
+        parts.append("- 角色定位: [待定 / 初始会话]")
+    elif details["is_main"]:
         parts.append("- 角色定位: [主会话 / 治理中枢]")
     else:
         parts.append("- 角色定位: [专题会话 / 领域负责人]")

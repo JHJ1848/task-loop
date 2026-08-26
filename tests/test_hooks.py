@@ -112,9 +112,19 @@ class TestAntigravityHooks(unittest.TestCase):
             "workspacePaths": [self.temp_dir],
             "invocationNum": 1
         }
+        details = get_session_details("unknown-uuid-9999", None)
+        self.assertTrue(details.get("is_unregistered"))
+        self.assertEqual(details.get("title"), "未注册会话 (Unregistered Session)")
+
         res = process_inject_payload(payload)
         self.assertEqual(len(res["injectSteps"]), 1)
-        self.assertIn("unknown-uuid-9999", res["injectSteps"][0]["ephemeralMessage"])
+        msg = res["injectSteps"][0]["ephemeralMessage"]
+        self.assertIn("unknown-uuid-9999", msg)
+        self.assertIn("是否主会话: 待定 (Unregistered)", msg)
+        self.assertIn("未注册会话 (Unregistered Session)", msg)
+        self.assertIn("角色定位: [待定 / 初始会话]", msg)
+        self.assertIn("当前会话未在 task-loop 状态机中注册。若需作为主治理中枢，可运行 /init 进行初始化。", msg)
+        self.assertNotIn("[Plugin: task-loop | 专题会话约束规则]", msg)
 
     def test_pre_tool_use_read_tool(self):
         payload = {

@@ -89,7 +89,16 @@ description: "[task-loop] Google Antigravity lifecycle hooks system and safety i
 
 ---
 
-## 四、关联文档与受控记忆 (References)
-* **专题受控记忆**: [`docs/memory/hook.md`](../../docs/memory/hook.md)
-* **AGY 官方 Hooks 手册**: `https://antigravity.google/docs/hooks/`
-* **跨厂商 SDK 规范**: [`references/sdk/agy.md`](../../references/sdk/agy.md)
+## 三、架构分工原则：调度器主动程序化创建 + Hook 生命周期被动护航
+
+在 `task-loop` 系统架构中，Hook 严格遵循拦截器纯粹性与单一职责原则（SRP）：
+1. **被动护航定位**：Hook 属于被动生命周期拦截器，**严禁在 Hook 内部编写拉起新会话或派生进程的逻辑**，以杜绝递归触发与死循环风险；
+2. **主动创建收敛于调度器**：所有独立顶层根会话（`nestingDepth: 0`）与子代理会话的物理创建，统一由主调度器 / `init` 脚本通过 `agentapi new-conversation` 主动发起；
+3. **协同闭环**：调度器负责“创建物理战场并持久化 sessions.json”，Hook 负责在任意会话被唤醒时“自动发放规则锦囊 (PreInvocation)”并在代码修改时“严守白名单门禁 (PreToolUse)”。
+
+---
+
+## 四、关联受控记忆与参考文档
+* **专题受控记忆**: `docs/memory/hook.md`
+* **生命周期钩子规范**: `references/hooks-system-deep-spec.md`
+* **跨厂商 SDK 契约**: `references/sdk/agy.md`

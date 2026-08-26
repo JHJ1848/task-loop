@@ -112,6 +112,10 @@ function testHooks() {
     assert.ok(msg.includes('Allowlist'));
 
     // 1.3 Unregistered session fallback
+    const unknownDetails = getSessionDetails('unknown-uuid-9999', sessionsData);
+    assert.strictEqual(unknownDetails.is_unregistered, true);
+    assert.strictEqual(unknownDetails.title, '未注册会话 (Unregistered Session)');
+
     const unknownPayload = {
       conversationId: 'unknown-uuid-9999',
       workspacePaths: [tempDir],
@@ -119,7 +123,13 @@ function testHooks() {
     };
     const unknownRes = processInjectPayload(unknownPayload);
     assert.strictEqual(unknownRes.injectSteps.length, 1);
-    assert.ok(unknownRes.injectSteps[0].ephemeralMessage.includes('unknown-uuid-9999'));
+    const unknownMsg = unknownRes.injectSteps[0].ephemeralMessage;
+    assert.ok(unknownMsg.includes('unknown-uuid-9999'));
+    assert.ok(unknownMsg.includes('是否主会话: 待定 (Unregistered)'));
+    assert.ok(unknownMsg.includes('未注册会话 (Unregistered Session)'));
+    assert.ok(unknownMsg.includes('角色定位: [待定 / 初始会话]'));
+    assert.ok(unknownMsg.includes('当前会话未在 task-loop 状态机中注册。若需作为主治理中枢，可运行 /init 进行初始化。'));
+    assert.strictEqual(unknownMsg.includes('[Plugin: task-loop | 专题会话约束规则]'), false);
 
     // ==========================================
     // 2. Test PreToolUse Allowlist Enforcement

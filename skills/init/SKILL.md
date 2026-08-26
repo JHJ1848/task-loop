@@ -13,13 +13,15 @@ description: "[task-loop] Project initialization, existing session survey, topic
 
 ## 一、定位与适用场景 (When to Use)
 
-当新项目安装或引入 `task-loop` 插件时，工程中往往已经存在了大量历史会话（来自 Antigravity、Codex 或 Claude Code），但历史会话的标题、命名规范与领域划分可能各不相同。
+当新项目安装或引入 `task-loop` 插件时，工程中往往已经存在了大量历史会话（来自 Antigravity、Codex 或 Claude Code）或既有的专题受控记忆文档（`docs/memory/*.md`）。
 
-`init` 技能负责：
-1. **自动扫描历史会话**：无侵入式读取当前工作区的历史会话日志；
-2. **启发式生成映射建议**：根据标题、摘要与关键词，自动匹配并推荐专题划分（`module_key`、专题名、标签、受控记忆路径）；
-3. **用户交互确认与预览**：以结构化清单呈现给用户，支持用户根据自身意图进行预览与确认；
-4. **状态机落盘与兜底修改指引**：写入 `.agents/task-loop/sessions.json`，并明确告知用户文件物理路径，支持随时直接手动修改底层 JSON。
+`init` 技能践行 **【调度器/SDK 主动程序化创建 + Hook 生命周期被动护航】** 核心架构：
+1. **自动扫描历史会话与受控记忆**：无侵入式读取当前工作区的历史会话日志与 `docs/memory/*.md` 记忆文档；
+2. **记忆文档 1:1 专题对齐**：确保每一个专题记忆文档均精确对应一个独立顶层根会话（`nestingDepth: 0`）；
+3. **缺失会话自动创建 (`--create-missing`)**：对已有记忆文档但缺失顶层会话的模块，自动调用 `agentapi new-conversation`（净化父级环境变量）自动补齐；
+4. **启发式标准化命名**：根据标题、摘要与分词，自动规范化为 `[专题名称] 核心功能1 & 核心功能2` 标准命名；
+5. **用户交互确认与预览**：以结构化清单呈现给用户，支持 `--dry-run` 预览与确认；
+6. **状态机落盘与兜底修改指引**：写入 `.agents/task-loop/sessions.json`，支持随时直接手动修改底层 JSON。
 
 ---
 
@@ -27,39 +29,92 @@ description: "[task-loop] Project initialization, existing session survey, topic
 
 1. **零污染原则**：初始化仅在 `.agents/task-loop/` 下生成运行态配置文件，严禁修改用户源码或污染项目根目录的 `AGENTS.md`；
 2. **只读安全发现**：对历史日志的扫描采用纯只读模式，不修改历史会话内容；
-3. **多厂商兼容**：自动兼容 AGY、Codex、Claude Code 会话格式。
+3. **独立根会话规范**：自动创建的专题会话严格保持 `nestingDepth: 0`，直接在 IDE 左侧边栏展示；
+4. **多厂商兼容**：自动兼容 AGY、Codex、Claude Code 会话格式。
 
 ---
 
-## 三、标准交互与执行流程 (Standard Workflow)
+## 三、主会话选定机制与优先级 (Main Session Selection Hierarchy)
+
+在新项目初始化或迁移主治理中枢时，`init` 脚本按以下严格优先级判定与推荐主会话 (`main_thread_id`)：
+
+```json
+[
+  {
+    "priority": 1,
+    "source": "--main-session <id>",
+    "rule": "用户在命令行显式传入目标会话 ID，强制将其作为主治理中枢。"
+  },
+  {
+    "priority": 2,
+    "source": "--current-session <id> / 环境变量 ANTIGRAVITY_CONVERSATION_ID",
+    "rule": "自动获取当前发起 /init 的活跃会话 ID，默认推荐当前会话为主治理中枢 [Current Session & Main Candidate]。"
+  },
+  {
+    "priority": 3,
+    "source": "历史扫描中的主会话标记",
+    "rule": "历史扫描中已带有 is_main: true 或标题包含 [主会话] / 治理中枢 的会话。"
+  },
+  {
+    "priority": 4,
+    "source": "建议清单第一项",
+    "rule": "扫描清单 suggestions 中的首个会话作为兜底。"
+  }
+]
+```
+
+---
+
+## 四、标准交互与执行流程 (Standard Workflow)
 
 ```text
-[启动初始化] -> [扫描历史会话] -> [生成专题映射建议清单] -> [呈现用户确认/预览] -> [状态机落盘] -> [输出兜底修改指引]
+[启动初始化] -> [扫描会话 & 记忆文档] -> [主会话智能选定] -> [1:1 专题映射对齐] -> [输出用户确认卡] -> [按需补齐根会话并落盘] -> [Hook 自动接管]
 ```
 
-### 1. 扫描与建议清单生成
-执行调查脚本获取建议清单：
-* **Node.js (推荐)**: `node scripts/init_task_loop.js --dry-run`
-* **Python (备选)**: `python scripts/init_task_loop.py --dry-run`
+### 1. 扫描与建议清单生成 (预览模式)
+执行调查脚本获取建议清单与 1:1 记忆文档对齐状态（推荐显式传入当前会话 ID）：
+* **Node.js (推荐)**:
+  ```bash
+  node scripts/init_task_loop.js --dry-run --current-session <CurrentSessionId>
+  ```
+* **Python (备选)**:
+  ```bash
+  python scripts/init_task_loop.py --dry-run --current-session <CurrentSessionId>
+  ```
 
-### 2. 结构化建议呈现示例
-向用户输出包含以下字段的建议映射清单：
-* **会话 ID (Session ID)**: 会话真实 UUID；
-* **原始标题与厂商 (Original Title & Vendor)**: 会话创建时的原标题；
-* **建议专题名 (Suggested Topic Name)**: 规范化的专题名称（如“钩子体系与安全拦截专题”）；
-* **建议模块 Key (Suggested Module Key)**: 对应的模块标识（如 `hook`）；
-* **关联受控记忆 (Memory Doc)**: 规划的记忆路径（如 `docs/memory/hook.md`）；
-* **主会话标记 (Main Thread Candidate)**: 是否候选为主治理中枢。
+### 2. 用户确认卡输出规范 (User Confirmation Card)
+在执行初始化前，主会话或调度器应向用户呈现结构化【初始化确认卡】：
 
-### 3. 用户确认与落盘执行
-用户确认或微调后，执行正式写入：
+```json
+{
+  "card_type": "TASK_LOOP_INIT_CONFIRMATION",
+  "workspace_root": "<WorkspaceRoot>",
+  "chosen_main_session": {
+    "session_id": "<MainSessionId>",
+    "is_current_session": true,
+    "title": "[主会话] 任务编排 & 治理中枢"
+  },
+  "topic_mappings": [
+    {
+      "module_key": "hook",
+      "session_id": "<HookSessionId>",
+      "topic_name": "[钩子专题] 生命周期 & 安全门禁",
+      "memory_doc": "docs/memory/hook.md"
+    }
+  ],
+  "missing_sessions_to_create": ["<ModuleKey1>"]
+}
+```
+
+### 3. 正式执行与缺失会话自动补齐
+若需将配置实际落盘，并自动为缺失会话的记忆文档建立顶层根会话：
 ```bash
-node scripts/init_task_loop.js
+node scripts/init_task_loop.js --create-missing --current-session <CurrentSessionId>
 ```
 
 ---
 
-## 四、底层存储与用户兜底修改机制 (Fallback Editing)
+## 五、底层存储与用户兜底修改机制 (Fallback Editing)
 
 初始化完成后，所有专题与会话映射保存在：
 * **核心会话映射表**: `<WorkspaceRoot>/.agents/task-loop/sessions.json`

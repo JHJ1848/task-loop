@@ -11,43 +11,70 @@ const path = require('path');
 const { findSessions } = require('./find_project_sessions');
 
 function generateStandardTitle(session) {
-  const prompts = (session.recent_prompts || []).join(' ').toLowerCase();
-  const touched = (session.recent_touched_files || []).join(' ').toLowerCase();
-  const combined = `${prompts} ${touched}`;
+  const rawTitle = (session.title || '').replace(/\[[^\]]+\]\([^\)]+\)/g, '').trim();
+  const titleLower = rawTitle.toLowerCase();
+  const summaryLower = (session.summary || '').toLowerCase();
+  const promptsLower = (session.recent_prompts || []).join(' ').toLowerCase();
+  const touchedLower = (session.recent_touched_files || []).join(' ').toLowerCase();
+  const fullText = `${titleLower} ${summaryLower} ${promptsLower} ${touchedLower}`;
 
-  let category, func1, func2;
+  let category = '';
+  let func1 = '';
+  let func2 = '';
 
-  if (combined.includes('主会话') || combined.includes('skill的开发仓库') || combined.includes('任务编排')) {
+  if (fullText.includes('topic: hook') || fullText.includes('钩子专题') || (titleLower.includes('hook') && !titleLower.includes('main'))) {
+    category = '钩子专题';
+    func1 = '生命周期';
+    func2 = '安全门禁';
+  } else if (fullText.includes('topic: subagent') || fullText.includes('子代理专题') || (titleLower.includes('subagent') && !titleLower.includes('main'))) {
+    category = '子代理专题';
+    func1 = '动态模板';
+    func2 = '编排治理';
+  } else if (fullText.includes('topic: session_control') || fullText.includes('会话专题') || (titleLower.includes('session') && !titleLower.includes('main'))) {
+    category = '会话控制专题';
+    func1 = '跨厂商内省';
+    func2 = '会话管理';
+  } else if (fullText.includes('topic: memory') || fullText.includes('记忆专题') || titleLower.includes('memory')) {
+    category = '受控记忆专题';
+    func1 = '文档维护';
+    func2 = '经验沉淀';
+  } else if (fullText.includes('code review') || fullText.includes('代码审查') || fullText.includes('高级代码审查员') || fullText.includes('走查')) {
+    category = '代码审查专题';
+    func1 = '质量走查';
+    func2 = '门禁核验';
+  } else if (fullText.includes('debug') || fullText.includes('排障') || fullText.includes('卡顿') || fullText.includes('故障') || fullText.includes('报错')) {
+    category = '排障诊断专题';
+    func1 = '缺陷定位';
+    func2 = '故障分析';
+  } else if (fullText.includes('claude code') || fullText.includes('claude sdk') || fullText.includes('claude')) {
+    category = 'Claude协同专题';
+    func1 = 'SDK适配';
+    func2 = '跨平台支持';
+  } else if (fullText.includes('codex') || fullText.includes('openai')) {
+    category = 'Codex协同专题';
+    func1 = '跨端同步';
+    func2 = '会话管理';
+  } else if (fullText.includes('plugin') || fullText.includes('插件')) {
+    category = 'Plugin规范专题';
+    func1 = '接口定义';
+    func2 = '插件集成';
+  } else if (fullText.includes('dispatch') || fullText.includes('调度') || fullText.includes('task-loop') || fullText.includes('task_loop')) {
+    category = '任务循环调度专题';
+    func1 = '任务分发';
+    func2 = '状态机管理';
+  } else if (session.is_main || titleLower.includes('main') || fullText.includes('治理中枢') || fullText.includes('开发仓库')) {
     category = '主会话';
     func1 = '任务编排';
     func2 = '治理中枢';
-  } else if (combined.includes('会话') || combined.includes('session') || combined.includes('sdk')) {
-    category = '会话专题';
-    func1 = 'SDK接口封装';
-    func2 = '会话管理';
-  } else if (combined.includes('memory') || combined.includes('记忆')) {
-    category = '记忆专题';
-    func1 = '记忆文档维护';
-    func2 = '经验沉淀';
-  } else if (combined.includes('dispatch') || combined.includes('123') || combined.includes('complexity')) {
-    category = '调度专题';
-    func1 = '复杂度裁决';
-    func2 = '派单协议';
-  } else if (combined.includes('lease') || combined.includes('lock')) {
-    category = '租约专题';
-    func1 = '原子锁控制';
-    func2 = '并发防护';
-  } else if (combined.includes('test') || combined.includes('preflight')) {
-    category = '测试专题';
-    func1 = '门禁验证';
-    func2 = '自动化回归';
   } else {
-    category = '通用专题';
-    const rawPrompt = (session.recent_prompts && session.recent_prompts[0]) || '';
-    const cleaned = rawPrompt.replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
-    const words = cleaned.split(/\s+/).filter(w => w.length >= 2).slice(0, 2);
-    func1 = words[0] || '功能开发';
-    func2 = words[1] || '自测验证';
+    const cleanText = rawTitle.replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
+    const stopWords = new Set(['请你', '一个', '当前', '这个', '作为', '可以', '需要', '进行', '如何', '为什么', '是否', '实现', '相关', '检查', '项目']);
+    const words = cleanText.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w));
+    const kw1 = words[0] || '核心业务';
+    const kw2 = words[1] || '功能实现';
+    category = `${kw1}专题`;
+    func1 = kw1;
+    func2 = kw2;
   }
 
   return `[${category}] ${func1} & ${func2}`;
