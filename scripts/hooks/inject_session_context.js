@@ -366,5 +366,6 @@ module.exports = {
   getSessionDetails,
   generateInjectionMessage,
   findSessionsRegistry,
-  findPromptTemplates
+  findPromptTemplates,
+  findActiveTodo
 };

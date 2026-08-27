@@ -30,12 +30,18 @@ function extractTargetFile(toolName, args) {
   if (!args || typeof args !== 'object') return null;
 
   const writeTools = [
+    // Antigravity native file-modification tools
     'write_to_file',
     'replace_file_content',
     'multi_replace_file_content',
     'create_file',
     'edit_file',
-    'delete_file'
+    'delete_file',
+    // ZCode / Claude-Code-style file-modification tools
+    'write',
+    'edit',
+    'multiedit',
+    'notebookedit'
   ];
 
   if (!writeTools.includes(toolName.toLowerCase())) {

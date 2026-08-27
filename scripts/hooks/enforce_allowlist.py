@@ -42,12 +42,18 @@ def extract_target_file(tool_name, args):
         return None
 
     write_tools = [
+        # Antigravity native file-modification tools
         "write_to_file",
         "replace_file_content",
         "multi_replace_file_content",
         "create_file",
         "edit_file",
-        "delete_file"
+        "delete_file",
+        # ZCode / Claude-Code-style file-modification tools
+        "write",
+        "edit",
+        "multiedit",
+        "notebookedit"
     ]
 
     if str(tool_name).lower() not in write_tools:
