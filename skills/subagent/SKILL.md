@@ -1,11 +1,11 @@
 ---
 name: subagent
-description: "[task-loop] Google Antigravity native subagent orchestration and dynamic template management. Provides invocation (invoke_subagent), definition (define_subagent), lifecycle management (manage_subagents), and Python SDK SubagentConfig tool injection."
+description: "[task-loop] Cross-host subagent orchestration (Google Antigravity native invoke/define/manage primitives plus ZCode native Agent tool). Covers workspace isolation, lifecycle management, and persistent root session routing."
 ---
 
 # Subagent Topic Skill (`subagent`)
 
-本文档为 `task-loop` 中【子代理专题 (`subagent`)】的专属技能定义，负责 Google Antigravity 原生子代理机制、动态模板、生命周期治理与 Python SDK 编排。
+本文档为 `task-loop` 中【子代理专题 (`subagent`)】的专属技能定义，负责子代理机制编排——AGY 原生原语（invoke/define/manage）与 ZCode 分支的原生 Agent(Task) 工具、生命周期治理与编排规范。
 
 ![subagent 原生子代理编排生命周期流程](assets/workflow.svg)
 
@@ -54,7 +54,21 @@ description: "[task-loop] Google Antigravity native subagent orchestration and d
 
 ---
 
-## 三、实战避坑指南 (Gotchas)
+## 三、ZCode 宿主映射 (ZCode Agent Tool Parity)
+
+```json
+[
+  { "agy_primitive": "invoke_subagent", "zcode_equivalent": "原生 Agent(Task) 工具，同步并发调用、返回即结果；无 Reactive Wakeup" },
+  { "agy_primitive": "define_subagent", "zcode_equivalent": "无运行时动态模板; 以 Agents 目录配置或 Skill 内置角色描述替代" },
+  { "agy_primitive": "manage_subagents(kill)", "zcode_equivalent": "无需手动回收: 子代理随会话/调用终止自动结束" },
+  { "agy_primitive": "send_message(Recipient, Message)", "zcode_equivalent": "同进程 SendMessage; 跨会话以 ReadSessionContext(sess_id) + dispatch 状态包交接" },
+  { "zcode_gotcha": "瞬态子代理严禁承载需跨轮次记忆的专题任务——ZCode 无持久根会话拉起 CLI，长期专题须新开会话并经 init 技能登记 sessions.json" }
+]
+```
+
+---
+
+## 四、实战避坑指南 (Gotchas)
 
 ```json
 [
@@ -78,7 +92,8 @@ description: "[task-loop] Google Antigravity native subagent orchestration and d
 
 ---
 
-## 四、关联文档与受控记忆 (References)
+## 五、关联文档与受控记忆 (References)
 * **专题受控记忆**: [`docs/memory/subagent.md`](../../docs/memory/subagent.md)
 * **AGY SDK 原生规范**: [`references/sdk/agy.md`](../../references/sdk/agy.md)
+* **ZCode 分支适配规范**: [`references/sdk/zcode.md`](../../references/sdk/zcode.md)
 * **官方规范归档**: [`references/sdk/antigravity-official-docs.md`](../../references/sdk/antigravity-official-docs.md)

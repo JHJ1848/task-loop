@@ -1,11 +1,11 @@
 ---
 name: hook
-description: "[task-loop] Google Antigravity lifecycle hooks system and safety interceptor. Implements PreInvocation session context introspection & ephemeral message injection, and PreToolUse surgical Allowlist physical boundary enforcement."
+description: "[task-loop] Cross-host lifecycle hooks system and safety interceptor (Google Antigravity five-event pipeline plus ZCode seven-event adapter). Implements session context introspection & ephemeral injection, and surgical Allowlist physical boundary enforcement."
 ---
 
 # Hook Topic Skill (`hook`)
 
-本文档为 `task-loop` 中【钩子专题 (`hook`)】的专属技能定义，负责 Google Antigravity 钩子生命周期（`PreInvocation` / `PreToolUse` / `PostToolUse` / `PostInvocation` / `Stop`）、上下文自动感知注入与物理修改白名单越界拦截。
+本文档为 `task-loop` 中【钩子专题 (`hook`)】的专属技能定义，负责宿主钩子生命周期——AGY (`PreInvocation` / `PreToolUse` / `PostToolUse` / `PostInvocation` / `Stop`) 与 ZCode 分支的七事件适配（`SessionStart` / `UserPromptSubmit` / `PreToolUse` / `PermissionRequest` / `PostToolUse` / `PostToolUseFailure` / `Stop`）、上下文自动感知注入与物理修改白名单越界拦截。
 
 ![hook 钩子体系与安全门禁拦截架构](assets/architecture.svg)
 
@@ -70,7 +70,38 @@ description: "[task-loop] Google Antigravity lifecycle hooks system and safety i
 
 ---
 
-## 三、实战避坑指南 (Gotchas)
+## 三、ZCode 分支七事件适配规范 (ZCode Hook Adapter)
+
+```json
+[
+  {
+    "adapter_scripts": [
+      "scripts/hooks/inject_session_context_zcode.js|.py (SessionStart + UserPromptSubmit, 复用 AGY 核心 generateInjectionMessage)",
+      "scripts/hooks/enforce_allowlist_zcode.js|.py (PreToolUse matcher='Edit|Write|MultiEdit|NotebookEdit', 复用 AGY 核心白名单解析)"
+    ],
+    "registration": "hooks/hooks.json (插件级自动启用 hook runner，免 enabled 门禁)",
+    "stdin": "Claude Code 兼容双命名: session_id|sessionId, tool_name|toolName, tool_input|toolInput, cwd",
+    "inject_output": "{ hookSpecificOutput: { hookEventName, additionalContext }, suppressOutput: true }",
+    "gate_deny_output": "{ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason } }",
+    "allow_convention": "静默空输出 + exit 0 (严格 schema 校验下最稳妥的放行方式)",
+    "fail_open": "适配器任何内部异常一律空输出 exit 0，严禁 wedge 宿主编辑管线"
+  },
+  {
+    "gotcha_id": "ZCode Gotcha 1",
+    "title": "工具名单双轨制",
+    "rule": "共享核心 extractTargetFile 名单已同时覆盖 AGY 工具名与 ZCode 的 write/edit/multiedit/notebookedit；新增宿主工具时需同步扩充核心名单而非绕过它。"
+  },
+  {
+    "gotcha_id": "ZCode Gotcha 2",
+    "title": "超时单位差异",
+    "rule": "type=command 的 timeout 单位是秒，type=process 的 timeoutMs 才是毫秒；混用即被静默杀死。"
+  }
+]
+```
+
+---
+
+## 四、实战避坑指南 (Gotchas)
 
 ```json
 [
@@ -98,7 +129,7 @@ description: "[task-loop] Google Antigravity lifecycle hooks system and safety i
 
 ---
 
-## 四、关联受控记忆与参考文档
+## 五、关联受控记忆与参考文档
 * **专题受控记忆**: `docs/memory/hook.md`
 * **生命周期钩子规范**: `references/hooks-system-deep-spec.md`
-* **跨厂商 SDK 契约**: `references/sdk/agy.md`
+* **跨厂商 SDK 契约**: `references/sdk/agy.md` / `references/sdk/zcode.md`

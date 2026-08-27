@@ -1,6 +1,6 @@
 ---
 name: session-control
-description: "[task-loop] Multi-vendor agent session provider, introspection, and lifecycle manager for Antigravity, Codex, and Claude Code. Scans and parses conversation logs, manages SessionProvider primitives, and handles topic session routing."
+description: "[task-loop] Multi-vendor agent session provider, introspection, and lifecycle manager for ZCode, Antigravity, Codex, and Claude Code. Scans and parses conversation logs (ZCode db.sqlite/rollout JSONL included), manages SessionProvider primitives, and handles topic session routing."
 ---
 
 # Session Control Topic Skill (`session-control`)
@@ -14,7 +14,7 @@ description: "[task-loop] Multi-vendor agent session provider, introspection, an
 ## 一、专题核心职责 (Core Responsibilities)
 
 1. **跨厂商会话反向内省 (Reverse Introspection)**:
-   - 自动扫描与解析 AGY（`transcript.jsonl`）、Codex（`sessions/*.jsonl` / `CODEX_THREAD_ID`）与 Claude Code（`--resume` / `claude agents`）的历史交互。
+   - 自动扫描与解析 ZCode（`db.sqlite` 只读 + `rollout/model-io-sess_*.jsonl`）、AGY（`transcript.jsonl`）、Codex（`sessions/*.jsonl` / `CODEX_THREAD_ID`）与 Claude Code（`--resume` / `claude agents`）的历史交互。
 2. **六大标准 SessionProvider 原语**:
    - `get_current_session_id`: 获取当前宿主会话 UUID。
    - `scan`: 扫描工程历史会话并提取最近 Prompt 与元数据。
@@ -90,9 +90,10 @@ description: "[task-loop] Multi-vendor agent session provider, introspection, an
 
 ---
 
-## 四、关联文档与受控记忆 (References)
+## 五、关联文档与受控记忆 (References)
 * **专题受控记忆**: [`docs/memory/session_control.md`](../../docs/memory/session_control.md)
 * **跨厂商 SDK 主索引**: [`references/sdk/README.md`](../../references/sdk/README.md)
+* **ZCode 分支适配规范**: [`references/sdk/zcode.md`](../../references/sdk/zcode.md)
 * **AGY SDK 手册**: [`references/sdk/agy.md`](../../references/sdk/agy.md)
 * **Codex SDK 手册**: [`references/sdk/codex.md`](../../references/sdk/codex.md)
 * **Claude SDK 手册**: [`references/sdk/claude.md`](../../references/sdk/claude.md)
