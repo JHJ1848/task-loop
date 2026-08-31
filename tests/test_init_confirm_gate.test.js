@@ -39,7 +39,8 @@ function testFirstMatchConsistency() {
     mkSuggestion('sess_main', 'main', 'zcode', { is_main_candidate: true })
   ];
   suggestions.sort((a, b) => (a.is_main_candidate ? -1 : 0) - (b.is_main_candidate ? -1 : 0));
-  const assignments = resolveModuleAssignments(suggestions);
+  const memoryDocs = [{ module_key: 'hook', relative_path: 'docs/memory/hook.md' }];
+  const assignments = resolveModuleAssignments(suggestions, memoryDocs);
   assert.strictEqual(assignments.get('hook').session_id, 'sess_hook_first', 'first match must win');
 
   const alignment = [
@@ -55,10 +56,17 @@ function testApprovalGate() {
   const suggestions = [
     mkSuggestion('sess_main', 'main', 'antigravity', { is_main_candidate: true }),
     mkSuggestion('sess_hook', 'hook', 'antigravity'),
-    mkSuggestion('sess_junk', '调用', 'antigravity'),
+    mkSuggestion('sess_junk', 'junk_mod', 'antigravity'),
     mkSuggestion('sess_excluded', 'debug', 'antigravity')
   ];
-  const assignments = resolveModuleAssignments(suggestions);
+  const memoryDocs = [
+    { module_key: 'hook', relative_path: 'docs/memory/hook.md' },
+    { module_key: 'debug', relative_path: 'docs/memory/debug.md' }
+  ];
+  const assignments = new Map();
+  for (const s of suggestions) {
+    assignments.set(s.suggested_module_key, s);
+  }
   const alignment = [
     { module_key: 'hook', status: 'ALIGNED' },
     { module_key: 'main', status: 'ALIGNED' }
@@ -68,7 +76,7 @@ function testApprovalGate() {
   const gate = applyApprovalGate(assignments, alignment, {});
   const approvedKeys = gate.approved.map(a => a.module_key).sort();
   assert.deepStrictEqual(approvedKeys, ['hook', 'main'], 'default gate = main + aligned only');
-  assert.ok(gate.pending.some(p => p.module_key === '调用'), 'unapproved junk must be pending');
+  assert.ok(gate.pending.some(p => p.module_key === 'junk_mod'), 'unapproved junk must be pending');
   assert.ok(gate.pending.some(p => p.module_key === 'debug'), 'unapproved extra must be pending');
 
   // --modules debug 显式批准
@@ -83,19 +91,17 @@ function testApprovalGate() {
 }
 
 function testKeyHygiene() {
-  // P1-4: 中文/角色扮演前缀标题必须降级 custom_topic + needs_naming
+  // 非法定记忆模块的会话必须返回 module_key: null, 绝不虚构假专题
   const junk1 = inferTopicMapping({ title: '你是一个专门负责 mock_quality 的智能体' });
-  assert.strictEqual(junk1.module_key, 'custom_topic', `roleplay prefix must degrade, got ${junk1.module_key}`);
-  assert.strictEqual(junk1.needs_naming, true);
+  assert.strictEqual(junk1.module_key, null, `unaligned session must have null module_key, got ${junk1.module_key}`);
 
   const junk2 = inferTopicMapping({ title: '核心功能维护   The current local time is: 2026-08-27' });
-  assert.strictEqual(junk2.module_key, 'custom_topic', `CJK fragment must degrade, got ${junk2.module_key}`);
-  assert.strictEqual(junk2.needs_naming, true);
+  assert.strictEqual(junk2.module_key, null, `CJK fragment must have null module_key, got ${junk2.module_key}`);
 
-  // 合法英文 key 保持
-  const ok1 = inferTopicMapping({ title: 'refactor the dispatch pipeline for worker agents' });
-  assert.strictEqual(ok1.module_key, 'refactor');
-  assert.strictEqual(ok1.needs_naming, false);
+  // 法定模块推断保持
+  const hookSess = inferTopicMapping({ title: '生命周期 hook 拦截与安全门禁' });
+  assert.strictEqual(hookSess.module_key, 'hook');
+  assert.strictEqual(hookSess.needs_naming, false);
 
   assert.strictEqual(isValidModuleKey('hook'), true);
   assert.strictEqual(isValidModuleKey('调用'), false);

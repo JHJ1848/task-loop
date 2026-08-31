@@ -147,6 +147,69 @@ def is_path_allowed(target_file, allowlist, ws_root):
     return False
 
 
+def find_sessions_registry(ws_root):
+    candidates = [
+        os.path.join(ws_root, ".agents", "task-loop", "sessions.json"),
+        os.path.join(ws_root, ".agents", "sessions.json"),
+        os.path.join(os.getcwd(), ".agents", "task-loop", "sessions.json")
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            try:
+                with open(c, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    return None
+
+
+def is_governance_or_state_file(norm_target, norm_ws_root):
+    allowed_prefixes = [
+        normalize_path(os.path.join(norm_ws_root, ".agents")),
+        normalize_path(os.path.join(norm_ws_root, "docs")),
+        normalize_path(os.path.join(norm_ws_root, "rules")),
+        normalize_path(os.path.join(norm_ws_root, "templates")),
+        normalize_path(os.path.join(norm_ws_root, "references")),
+        normalize_path(os.path.join(norm_ws_root, "config")),
+        normalize_path(tempfile.gettempdir()),
+        normalize_path(os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain"))
+    ]
+    for p in allowed_prefixes:
+        if norm_target.startswith(p):
+            return True
+
+    allowed_exact = [
+        normalize_path(os.path.join(norm_ws_root, "AGENTS.md")),
+        normalize_path(os.path.join(norm_ws_root, ".gitignore")),
+        normalize_path(os.path.join(norm_ws_root, "plugin.json")),
+        normalize_path(os.path.join(norm_ws_root, "hooks.json")),
+        normalize_path(os.path.join(norm_ws_root, "SKILL.md"))
+    ]
+    for f in allowed_exact:
+        if norm_target == f:
+            return True
+    return False
+
+
+def check_is_main_session(session_data, conversation_id):
+    if not session_data or not conversation_id:
+        return False
+    if session_data.get("main_thread_id") == conversation_id:
+        return True
+    if isinstance(session_data.get("sessions"), list):
+        if any(s.get("session_id") == conversation_id and s.get("is_main") for s in session_data["sessions"]):
+            return True
+    if isinstance(session_data.get("vendors"), dict):
+        for v_data in session_data["vendors"].values():
+            if isinstance(v_data, dict):
+                if v_data.get("main_thread_id") == conversation_id:
+                    return True
+                if isinstance(v_data.get("sessions"), list):
+                    if any(s.get("session_id") == conversation_id and s.get("is_main") for s in v_data["sessions"]):
+                        return True
+    return False
+
+
 def process_payload(payload):
     try:
         tool_call = payload.get("toolCall")
@@ -163,6 +226,19 @@ def process_payload(payload):
 
         ws_root = resolve_workspace_root(payload.get("workspacePaths"))
         conversation_id = payload.get("conversationId")
+
+        # 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
+        session_data = find_sessions_registry(ws_root)
+        is_main_session = check_is_main_session(session_data, conversation_id)
+
+        if is_main_session:
+            norm_target = normalize_path(target_file if os.path.isabs(target_file) else os.path.join(ws_root, target_file))
+            norm_ws_root = normalize_path(ws_root)
+            if not is_governance_or_state_file(norm_target, norm_ws_root):
+                return {
+                    "decision": "deny",
+                    "reason": f"[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 ({target_file})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。"
+                }
 
         allowlist = find_allowlist_for_session(ws_root, conversation_id)
         if not allowlist:

@@ -16,6 +16,7 @@ class TestInitSkill(unittest.TestCase):
         mapped_main = infer_topic_mapping(mock_main)
         self.assertEqual(mapped_main["module_key"], "main")
         self.assertEqual(mapped_main["topic_name"], "[主会话] 任务编排 & 治理中枢")
+        self.assertEqual(mapped_main["memory_doc"], "docs/MEMORY.md")
 
         mock_hook = {"session_id": "22345678-0000-0000-0000-000000000000", "title": "Hook 拦截与状态防护", "summary": "hook lifecycle"}
         mapped_hook = infer_topic_mapping(mock_hook)
@@ -25,7 +26,7 @@ class TestInitSkill(unittest.TestCase):
         mock_subagent = {"session_id": "32345678-0000-0000-0000-000000000000", "title": "Subagent 并行与模板", "summary": "subagent workers"}
         mapped_subagent = infer_topic_mapping(mock_subagent)
         self.assertEqual(mapped_subagent["module_key"], "subagent")
-        self.assertEqual(mapped_subagent["topic_name"], "[子代理专题] 动态模板 & 编排治理")
+        self.assertEqual(mapped_subagent["topic_name"], "[子代理专题] Subagent机制 & 动态模板")
 
     def test_init_dry_run(self):
         res = init_task_loop({"dry_run": True})
@@ -39,18 +40,35 @@ class TestInitSkill(unittest.TestCase):
         try:
             tmp_mem = os.path.join(tmp_ws, "docs", "memory")
             os.makedirs(tmp_mem, exist_ok=True)
-            with open(os.path.join(tmp_mem, "sample.md"), "w", encoding="utf-8") as f:
-                f.write("# Sample Memory")
+            with open(os.path.join(tmp_mem, "hook.md"), "w", encoding="utf-8") as f:
+                f.write("# Hook Memory")
 
-            res = init_task_loop({"ws_root": tmp_ws, "dry_run": False})
-            self.assertTrue(os.path.exists(res["storage_files"]["sessions_json"]))
-            self.assertTrue(os.path.exists(res["storage_files"]["topics_json"]))
-            self.assertTrue(os.path.exists(res["storage_files"]["todo_json"]))
-            self.assertTrue(os.path.exists(res["storage_files"]["policy_json"]))
+            # Initialize with antigravity vendor
+            res_agy = init_task_loop({"ws_root": tmp_ws, "dry_run": False, "vendor": "antigravity", "main_session_id": "sess_agy_main"})
+            self.assertTrue(os.path.exists(res_agy["storage_files"]["sessions_json"]))
+            self.assertTrue(os.path.exists(res_agy["storage_files"]["sessions_vendor_json"]))
+            self.assertTrue(os.path.exists(res_agy["storage_files"]["topics_json"]))
+            self.assertTrue(os.path.exists(res_agy["storage_files"]["todo_json"]))
+            self.assertTrue(os.path.exists(res_agy["storage_files"]["policy_json"]))
 
-            with open(res["storage_files"]["sessions_json"], "r", encoding="utf-8") as f:
-                data = json.load(f)
-                self.assertEqual(data.get("schema_version"), 2)
+            with open(res_agy["storage_files"]["sessions_json"], "r", encoding="utf-8") as f:
+                data_agy = json.load(f)
+                self.assertEqual(data_agy.get("schema_version"), 3)
+                self.assertEqual(data_agy.get("current_vendor"), "antigravity")
+                self.assertEqual(data_agy.get("main_thread_id"), "sess_agy_main")
+                self.assertIn("antigravity", data_agy.get("vendors", {}))
+
+            # Initialize with zcode vendor on top of the same workspace -> must preserve antigravity partition!
+            res_zcode = init_task_loop({"ws_root": tmp_ws, "dry_run": False, "vendor": "zcode", "main_session_id": "sess_zcode_main"})
+            with open(res_zcode["storage_files"]["sessions_json"], "r", encoding="utf-8") as f:
+                data_zcode = json.load(f)
+                self.assertEqual(data_zcode.get("schema_version"), 3)
+                self.assertEqual(data_zcode.get("current_vendor"), "zcode")
+                self.assertEqual(data_zcode.get("main_thread_id"), "sess_zcode_main")
+                self.assertEqual(data_zcode["vendors"]["antigravity"]["main_thread_id"], "sess_agy_main")
+                self.assertIn("zcode", data_zcode["vendors"])
+            self.assertTrue(os.path.exists(os.path.join(tmp_ws, ".agents", "task-loop", "sessions.antigravity.json")))
+            self.assertTrue(os.path.exists(os.path.join(tmp_ws, ".agents", "task-loop", "sessions.zcode.json")))
         finally:
             shutil.rmtree(tmp_ws, ignore_errors=True)
 

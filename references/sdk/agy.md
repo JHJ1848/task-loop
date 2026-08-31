@@ -305,8 +305,14 @@ if __name__ == "__main__":
   * Windows：`~/.gemini/antigravity/bin/agentapi.bat`（内部调用 `language_server.exe agentapi`）
   * Linux/macOS：`~/.gemini/antigravity/bin/agentapi`
 * **执行语义**：`agentapi` 处于系统全局 `PATH` 中，无需第三方依赖，可被 Node.js / Python 脚本或 Sidecar 守护进程直接调用。
+* **Language Server Sidebus 定位**：通过 Language Server Sidebus 进行会话治理，具备直接创建顶层根会话（`nestingDepth: 0`）、侧边栏独立树形呈现、零轮询 Reactive Wakeup 唤醒等系统级能力。
 
-### 2. 步骤 2：执行 `new-conversation` 创建全新独立根会话
+### 2. 步骤 2：执行 `new-conversation` 创建全新独立根会话 (环境变量净化)
+* **父级环境变量净化 (Environment Sanitization)**：
+  在子进程中调用 `agentapi` 时，**必须清理父级环境变量**，以确保新会话拥有 `nestingDepth: 0` 并在 IDE 侧边栏独立展示：
+  - 清除 `ANTIGRAVITY_CONVERSATION_ID`（防止被识别为嵌套子代理）；
+  - 清除 `ANTIGRAVITY_SOURCE_METADATA`（防止元数据污染）；
+  - 清除 `ANTIGRAVITY_TRAJECTORY_ID`（保证独立的审计轨迹）。
 * **执行命令格式**：
   ```bash
   agentapi new-conversation --title="[专题名称] 核心功能A & 核心功能B" --model=flash "首轮初始化派单提示词"
@@ -355,4 +361,72 @@ if __name__ == "__main__":
 * **命令行删除不支持**：`agentapi` 当前未暴露 `delete-conversation` 子命令（为防止程序误删重要聊天记录）。
 * **UI 视图清理**：用户在 Antigravity IDE 的会话历史列表中点击垃圾桶图标完成 View Model 删除。
 * **磁盘数据清理**：物理日志落盘于 `~/.gemini/antigravity/brain/<conversation_id>/`，可按需归档或清理。
+
+---
+
+## 六、真实专题派单实战案例 (Real-World Dispatch Case)
+
+以会话控制专题会话 `cdd1ca5c-3532-4489-b844-15c6f34055fa` 为例，主会话或外部守护进程通过 Sidebus 下发落地工作包：
+
+### 1. 派单调用命令
+```bash
+agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发】你是负责【会话控制专题】的专题会话。请按以下白名单执行修改任务：\n- 任务类型: work\n- 物理白名单: skills/session-control/SKILL.md, references/sdk/agy.md, docs/memory/session_control.md\n- 验收准则: 深度优化 SKILL.md 增加 Sidebus 实操指引与案例，完成自测并回写记忆。"
+```
+
+### 2. 执行与交付流转
+1. **Sidebus 投递**：`agentapi.bat send-message` 命中 Language Server Sidebus 通道，将消息注入会话 `cdd1ca5c-3532-4489-b844-15c6f34055fa`。
+2. **IDE 视图渲染**：会话历史顶部出现 `Message from Root Agent v` 折叠卡片，自动加载上下文记忆并触发执行。
+3. **Reactive Wakeup 回执**：专题子会话执行完毕后，通过 `send_message` 将结构化交付结果汇报给主会话。
+
+---
+
+## 七、官方与本地完整文档路径索引 (Reference Registry JSON)
+
+```json
+[
+  {
+    "doc_name": "AGY SDK 规范 (本项目)",
+    "relative_path": "references/sdk/agy.md",
+    "absolute_path": "d:/jhj/projects/task-loop/references/sdk/agy.md",
+    "description": "Google Antigravity 宿主工具原语、Python SDK 与 agentapi CLI 深度规范"
+  },
+  {
+    "doc_name": "跨厂商 SDK 主索引 (本项目)",
+    "relative_path": "references/sdk/README.md",
+    "absolute_path": "d:/jhj/projects/task-loop/references/sdk/README.md",
+    "description": "六大标准会话原语与多厂商能力映射矩阵"
+  },
+  {
+    "doc_name": "会话控制专题技能 (本项目)",
+    "relative_path": "skills/session-control/SKILL.md",
+    "absolute_path": "d:/jhj/projects/task-loop/skills/session-control/SKILL.md",
+    "description": "跨厂商会话提供者、反向内省、Sidebus 实操指引与生命周期治理"
+  },
+  {
+    "doc_name": "新专题会话开辟技能 (本项目)",
+    "relative_path": "skills/new-session/SKILL.md",
+    "absolute_path": "d:/jhj/projects/task-loop/skills/new-session/SKILL.md",
+    "description": "从 docs/memory/*.md 自动发现与开辟独立顶层根会话 (nestingDepth: 0)"
+  },
+  {
+    "doc_name": "会话控制受控记忆 (本项目)",
+    "relative_path": "docs/memory/session_control.md",
+    "absolute_path": "d:/jhj/projects/task-loop/docs/memory/session_control.md",
+    "description": "会话控制专题已知事实、设计决策与实战陷阱"
+  },
+  {
+    "doc_name": "Antigravity 官方指南与站点地图 (内置)",
+    "relative_path": "builtin/skills/antigravity_guide/SKILL.md",
+    "absolute_path": "C:/Users/48631/.gemini/antigravity/builtin/skills/antigravity_guide/SKILL.md",
+    "description": "Google Antigravity 官方 CLI、IDE、2.0 桌面端与 SDK 综合指南"
+  },
+  {
+    "doc_name": "Antigravity 定制系统指南 (内置)",
+    "relative_path": "builtin/skills/agy-customizations/SKILL.md",
+    "absolute_path": "C:/Users/48631/.gemini/antigravity/builtin/skills/agy-customizations/SKILL.md",
+    "description": "Antigravity Rules、Skills、Plugins、Hooks 与 MCP 官方定制规范"
+  }
+]
+```
+
 

@@ -15,8 +15,12 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ### 1. 三步路由流转 (调度器主动创建 + Hook 被动护航)
 主会话（Main Session）专注于需求初加工、任务编排、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
+* **主会话行为硬性红线 (Explore Only & Mandatory Delegation)**:
+  - **仅限只读探索**: 主会话仅承担需求分析、只读探测与架构诊断 (`explore`)，**严禁主会话自身直接执行修改落地 (`work`) 或修改业务代码**；
+  - **强制派单执行**: 所有具体编码与 BugFix (`work`) **必须且强制要求派发给专题会话 (Topic Session) 实施**，彻底杜绝分散多方写入造成的上下文错乱与代码冲突；
+  - **无可用专题与防擅自派发铁律**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
-2. **没有则新建 (主动程序化创建)**: 若为全新领域，调度器调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"`（自动净化父级环境变数，确保 `nestingDepth: 0` 独立顶层根会话）并在 `sessions.json` 持久化登记；
+2. **没有则新建 (主动程序化创建)**: 若为全新领域，调度器调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"`（自动净化父级环境变数，确保 `nestingDepth: 0` 独立顶层根会话）并在 `sessions.json` 持久化登记；若不知如何创建或无环境，先查阅文档或向用户确认；
 3. **定向发信请求**: 通过 `send_message(recipient, message)` 定向发信下发任务，目标会话激活时由 **`PreInvocation` Hook 自动被动注入该专题专属上下文**，严禁首选本能派发空白临时子代理。
 
 ### 2. 专题相似度计算与业务冲突前置裁决 (Topic Similarity & Anti-Conflict Gate)

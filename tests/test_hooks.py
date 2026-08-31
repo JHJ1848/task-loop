@@ -79,7 +79,8 @@ class TestAntigravityHooks(unittest.TestCase):
         payload = {
             "conversationId": "main-thread-uuid-1234",
             "workspacePaths": [self.temp_dir],
-            "invocationNum": 1
+            "invocationNum": 1,
+            "isTest": True
         }
         res = process_inject_payload(payload)
         self.assertIn("injectSteps", res)
@@ -92,7 +93,8 @@ class TestAntigravityHooks(unittest.TestCase):
         payload = {
             "conversationId": "hook-topic-uuid-5678",
             "workspacePaths": [self.temp_dir],
-            "invocationNum": 2
+            "invocationNum": 2,
+            "isTest": True
         }
         res = process_inject_payload(payload)
         self.assertEqual(len(res["injectSteps"]), 1)
@@ -110,7 +112,8 @@ class TestAntigravityHooks(unittest.TestCase):
         payload = {
             "conversationId": "unknown-uuid-9999",
             "workspacePaths": [self.temp_dir],
-            "invocationNum": 1
+            "invocationNum": 1,
+            "isTest": True
         }
         details = get_session_details("unknown-uuid-9999", None)
         self.assertTrue(details.get("is_unregistered"))

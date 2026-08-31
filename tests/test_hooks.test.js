@@ -78,7 +78,8 @@ function testHooks() {
     const mainPayload = {
       conversationId: 'main-thread-uuid-1234',
       workspacePaths: [tempDir],
-      invocationNum: 1
+      invocationNum: 1,
+      isTest: true
     };
     const mainRes = processInjectPayload(mainPayload);
     assert.ok(Array.isArray(mainRes.injectSteps), 'injectSteps must be an array');
@@ -97,7 +98,8 @@ function testHooks() {
     const topicPayload = {
       conversationId: 'hook-topic-uuid-5678',
       workspacePaths: [tempDir],
-      invocationNum: 2
+      invocationNum: 2,
+      isTest: true
     };
     const topicRes = processInjectPayload(topicPayload);
     assert.strictEqual(topicRes.injectSteps.length, 1);
@@ -119,7 +121,8 @@ function testHooks() {
     const unknownPayload = {
       conversationId: 'unknown-uuid-9999',
       workspacePaths: [tempDir],
-      invocationNum: 1
+      invocationNum: 1,
+      isTest: true
     };
     const unknownRes = processInjectPayload(unknownPayload);
     assert.strictEqual(unknownRes.injectSteps.length, 1);

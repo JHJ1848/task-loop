@@ -11,14 +11,17 @@
 * **文件编辑工具约束**: 强制使用原生文件编辑工具（`replace_file_content` / `write_to_file`），严禁使用 PowerShell 命令行重写文件。
 * **Git 安全约束**: 严禁 Agent 自动执行 `git add`, `git commit`, `git push`, `git reset` 等命令，所有变更保留在本地工作区由用户自主决定提交。
 * **编码一致性**: 统一使用 UTF-8 编码，严禁将文本转为 GBK。
+* **单主干与多厂商状态分区持久化**: 统一在 master 单主干维护所有厂商扩展能力，由 `.agents/task-loop/sessions.json` 的 `vendors` 字段与 `.agents/task-loop/sessions.<vendor>.json` 专属物理文件进行会话分区隔离，专题清单以 `docs/memory/*.md` 为法定事实源进行 1:1 对齐。
 
 ---
 
 ## 2. 主会话编排与三步派单铁律 (Main Session 3-Step Law)
 
 主会话在接收到用户需求后，专注于需求初加工、任务编排、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
+* **主会话行为硬性红线 (Explore Only)**: 主会话仅限执行只读探索与架构诊断 (EXPLORE)，**严禁在自身会话中直接修改业务代码 (WORK)**；所有具体编码与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 实施，杜绝分散多方写入造成的上下文错乱与代码冲突。
+* **无可用会话与防擅自派发铁律 (Strict Topic Governance & No Unauthorized Worker)**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
-2. **没有则新建**: 若为全新领域，调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"` 创建真实持久顶层专题会话并注册；
+2. **没有则新建**: 若为全新领域，按规范调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"` 创建真实持久顶层专题会话并注册；若不知如何创建则先查阅文档或向用户询问；
 3. **定向发信请求**: 通过 `send_message(recipient, message)` 下发任务，严禁首选本能派发空白临时子代理。
 
 ---

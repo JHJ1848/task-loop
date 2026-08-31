@@ -13,7 +13,7 @@ import os
 import sys
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Import providers
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -77,97 +77,57 @@ def infer_topic_mapping(session):
     title_lower = raw_title.lower()
     summary_lower = (session.get("summary") or "").lower()
     prompts_lower = " ".join(session.get("recent_prompts") or []).lower()
+def infer_topic_mapping(session, known_memory_keys=None):
+    raw_title = sanitize_title(session.get("title"))
+    title_lower = raw_title.lower()
+    summary_lower = (session.get("summary") or "").lower()
+    prompts_lower = " ".join(session.get("recent_prompts") or []).lower()
     touched_lower = " ".join(session.get("recent_touched_files") or []).lower()
     full_text = f"{title_lower} {summary_lower} {prompts_lower} {touched_lower}"
 
-    category = ""
-    func1 = ""
-    func2 = ""
-    module_key = ""
-    needs_naming = False
+    module_key = None
+    topic_name = raw_title
 
     if session.get("is_main") or "main" in title_lower or any(k in full_text for k in ["治理中枢", "开发仓库"]):
-        category = "主会话"
-        func1 = "任务编排"
-        func2 = "治理中枢"
         module_key = "main"
-    elif any(k in full_text for k in ["topic: hook", "钩子专题"]) or ("hook" in title_lower and "main" not in title_lower):
-        category = "钩子专题"
-        func1 = "生命周期"
-        func2 = "安全门禁"
+        topic_name = "[主会话] 任务编排 & 治理中枢"
+    elif any(k in full_text for k in ["hook", "钩子", "生命周期", "安全门禁"]):
         module_key = "hook"
-    elif any(k in full_text for k in ["topic: subagent", "子代理专题"]) or ("subagent" in title_lower and "main" not in title_lower):
-        category = "子代理专题"
-        func1 = "动态模板"
-        func2 = "编排治理"
+        topic_name = "[钩子专题] 生命周期 & 安全门禁"
+    elif any(k in full_text for k in ["subagent", "子代理", "动态模板", "编排治理"]):
         module_key = "subagent"
-    elif any(k in full_text for k in ["topic: session_control", "session_control", "会话专题"]) or ("session" in title_lower and "main" not in title_lower):
-        category = "会话控制专题"
-        func1 = "跨厂商内省"
-        func2 = "会话管理"
+        topic_name = "[子代理专题] Subagent机制 & 动态模板"
+    elif any(k in full_text for k in ["session_control", "session", "会话控制", "会话管理"]):
         module_key = "session_control"
-    elif any(k in full_text for k in ["topic: memory", "记忆专题"]) or "memory" in title_lower:
-        category = "受控记忆专题"
-        func1 = "文档维护"
-        func2 = "经验沉淀"
-        module_key = "memory"
-    elif any(k in full_text for k in ["code review", "代码审查", "高级代码审查员", "走查"]):
-        category = "代码审查专题"
-        func1 = "质量走查"
-        func2 = "门禁核验"
-        module_key = "code_review"
-    elif any(k in full_text for k in ["debug", "排障", "卡顿", "故障", "报错"]):
-        category = "排障诊断专题"
-        func1 = "缺陷定位"
-        func2 = "故障分析"
-        module_key = "debug"
-    elif any(k in full_text for k in ["claude code", "claude sdk"]) or ("claude" in title_lower and "main" not in title_lower):
-        category = "Claude协同专题"
-        func1 = "SDK适配"
-        func2 = "跨平台支持"
-        module_key = "claude_sdk"
-    elif any(k in full_text for k in ["topic: codex"]) or ("codex" in title_lower and "main" not in title_lower):
-        category = "Codex协同专题"
-        func1 = "跨端同步"
-        func2 = "会话管理"
-        module_key = "codex_sync"
-    elif any(k in full_text for k in ["topic: plugin", "plugin规范"]) or ("plugin" in title_lower and "main" not in title_lower):
-        category = "Plugin规范专题"
-        func1 = "接口定义"
-        func2 = "插件集成"
+        topic_name = "[Session] SDK & Scripting"
+    elif any(k in full_text for k in ["plugin_spec", "plugin", "插件", "marketplace", "zcode"]):
         module_key = "plugin_spec"
-    elif any(k in full_text for k in ["topic: dispatch", "调度专题"]):
-        category = "任务循环调度专题"
-        func1 = "任务分发"
-        func2 = "状态机管理"
-        module_key = "task_loop"
-    else:
-        clean_text = re.sub(r"[^\w\s\u4e00-\u9fa5]", " ", raw_title)
-        stop_words = {"请你", "一个", "当前", "这个", "作为", "可以", "需要", "进行", "如何", "为什么", "是否", "实现", "相关", "检查", "项目"}
-        words = [w for w in clean_text.split() if len(w) >= 2 and w not in stop_words]
+        topic_name = "[插件专题] 多厂商插件规范与导出安装"
+    elif any(k in full_text for k in ["test_spec", "自动化测试", "测试专题"]):
+        module_key = "test_spec"
+        topic_name = "[测试专题] 自动化会话创建验证"
 
-        kw1 = words[0] if len(words) > 0 else "核心业务"
-        kw2 = words[1] if len(words) > 1 else "功能实现"
-        category = f"{kw1}专题"
-        func1 = kw1
-        func2 = kw2
-        raw_key = words[0] if len(words) > 0 else "custom_topic"
-        candidate = re.sub(r"[^\w\u4e00-\u9fa5]", "_", raw_key)
-        candidate = re.sub(r"_+", "_", candidate).strip("_")[:25]
-        # 模块 Key 卫生门禁: 仅允许 [a-z0-9_], 非法降级 custom_topic 待人工命名
-        if not candidate or not is_valid_module_key(candidate.lower()):
-            module_key = "custom_topic"
-            needs_naming = True
-        else:
-            module_key = candidate.lower()
+    # 严格性校验: 若推断出的 module_key 不在 known_memory_keys 范围内，则不予作为常驻专题模块
+    if known_memory_keys and isinstance(known_memory_keys, (list, set)):
+        if module_key and module_key not in known_memory_keys:
+            module_key = None
 
-    standardized_title = f"[{category}] {func1} & {func2}"
+    if module_key:
+        return {
+            "module_key": module_key,
+            "needs_naming": False,
+            "topic_name": topic_name,
+            "tags": [module_key, "topic"],
+            "memory_doc": "docs/MEMORY.md" if module_key == "main" else f"docs/memory/{module_key}.md"
+        }
+
+    # 非法定记忆专题的临时会话不生成假专题
     return {
-        "module_key": module_key,
-        "needs_naming": needs_naming,
-        "topic_name": standardized_title,
-        "tags": [module_key, "topic"],
-        "memory_doc": f"docs/memory/{module_key}.md"
+        "module_key": None,
+        "needs_naming": False,
+        "topic_name": raw_title,
+        "tags": [],
+        "memory_doc": None
     }
 
 
@@ -204,13 +164,25 @@ def spawn_root_conversation(title, prompt, ws_root):
     return None
 
 
-def resolve_module_assignments(suggestions):
-    """单一事实源: 模块 Key -> 建议项的首个匹配分配 (预览与落盘共用)。"""
+def resolve_module_assignments(suggestions, memory_docs=None):
+    """单一事实源: 严格以 docs/memory/*.md 中的法定模块为准进行 1:1 对齐匹配。"""
     assignments = {}
-    for s in suggestions:
-        key = s["suggested_module_key"]
-        if key not in assignments:
-            assignments[key] = s
+
+    # 1. 先匹配 main
+    main_cand = next((s for s in suggestions if s.get("is_main_candidate")), None) or next(
+        (s for s in suggestions if s.get("suggested_module_key") == "main"), None
+    )
+    if main_cand:
+        assignments["main"] = main_cand
+
+    # 2. 为每个受控记忆文档匹配首个最合适的建议项
+    for doc in (memory_docs or []):
+        if doc["module_key"] == "main":
+            continue
+        matched = next((s for s in suggestions if s.get("suggested_module_key") == doc["module_key"]), None)
+        if matched:
+            assignments[doc["module_key"]] = matched
+
     return assignments
 
 
@@ -259,12 +231,16 @@ def scaffold_memory_doc(ws_root, relative_path, topic_name):
 def survey_existing_sessions(ws_root, options=None):
     if options is None:
         options = {}
+    target_vendor = options.get("vendor") or detect_current_vendor(options.get("env")) or "antigravity"
     caller_session_id = (
         options.get("current_session") or options.get("current_session_id") or options.get("currentSessionId")
         or os.environ.get("ANTIGRAVITY_CONVERSATION_ID") or os.environ.get("ZCODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")
     )
     explicit_main_session_id = options.get("main_session") or options.get("main_session_id") or options.get("mainSessionId")
-    current_vendor = detect_current_vendor()
+    current_vendor = target_vendor
+
+    memory_docs = scan_existing_memory_docs(ws_root)
+    memory_keys = [d["module_key"] for d in memory_docs]
 
     agy_s = scan_agy_sessions(ws_root) or []
     codex_s = scan_codex_sessions(ws_root) or []
@@ -279,15 +255,15 @@ def survey_existing_sessions(ws_root, options=None):
             unique_map[s_id] = s
 
     # 若 caller_session_id 存在但在扫描中未发现，自动补入
-    fallback_vendor = current_vendor or "antigravity"
     if caller_session_id and caller_session_id not in unique_map:
+        now_iso = datetime.now(timezone.utc).isoformat()
         unique_map[caller_session_id] = {
             "session_id": caller_session_id,
-            "vendor": fallback_vendor,
+            "vendor": current_vendor,
             "title": "[主会话] 任务编排 & 治理中枢",
             "is_main": True,
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "last_active_at": datetime.utcnow().isoformat() + "Z"
+            "created_at": now_iso,
+            "last_active_at": now_iso
         }
 
     # 主会话选定优先级:
@@ -296,25 +272,36 @@ def survey_existing_sessions(ws_root, options=None):
     # 3) 历史扫描中明确属于当前宿主环境且带 [主会话] 标签或 is_main 的会话
     # 4) suggestions 列表中的第一项
     chosen_main_id = None
-    if explicit_main_session_id and explicit_main_session_id in unique_map:
+    if explicit_main_session_id:
         chosen_main_id = explicit_main_session_id
+        if explicit_main_session_id not in unique_map:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            unique_map[explicit_main_session_id] = {
+                "session_id": explicit_main_session_id,
+                "vendor": current_vendor,
+                "title": "[主会话] 任务编排 & 治理中枢",
+                "is_main": True,
+                "created_at": now_iso,
+                "last_active_at": now_iso
+            }
     elif caller_session_id and caller_session_id in unique_map:
         chosen_main_id = caller_session_id
     elif caller_session_id:
         chosen_main_id = caller_session_id
+        now_iso = datetime.now(timezone.utc).isoformat()
         unique_map[caller_session_id] = {
             "session_id": caller_session_id,
-            "vendor": "antigravity",
+            "vendor": current_vendor,
             "title": "[主会话] 任务编排 & 治理中枢",
             "is_main": True,
-            "created_at": datetime.utcnow().isoformat() + "Z",
-            "last_active_at": datetime.utcnow().isoformat() + "Z"
+            "created_at": now_iso,
+            "last_active_at": now_iso
         }
     else:
         for s in unique_map.values():
             raw_title = (s.get("title") or "").lower()
             s_vendor = (s.get("vendor") or "antigravity").lower()
-            if (s.get("is_main") or "[主会话]" in raw_title or "治理中枢" in raw_title) and (s_vendor == "antigravity"):
+            if (s.get("is_main") or "[主会话]" in raw_title or "治理中枢" in raw_title) and (s_vendor == current_vendor):
                 chosen_main_id = s.get("session_id")
                 break
         if not chosen_main_id:
@@ -329,7 +316,8 @@ def survey_existing_sessions(ws_root, options=None):
     suggestions = []
     for s in unique_map.values():
         s_id = s.get("session_id")
-        is_main_candidate = (s_id == chosen_main_id)
+        s_vendor = s.get("vendor", "antigravity")
+        is_main_candidate = (s_id == chosen_main_id and s_vendor == current_vendor)
         is_current_session = (s_id == caller_session_id)
 
         if is_main_candidate:
@@ -337,30 +325,24 @@ def survey_existing_sessions(ws_root, options=None):
                 "module_key": "main",
                 "topic_name": s.get("title") if (s.get("title") and "[主会话]" in s.get("title")) else "[主会话] 任务编排 & 治理中枢",
                 "tags": ["main", "orchestrator"],
-                "memory_doc": "docs/memory/main.md"
+                "memory_doc": "docs/MEMORY.md"
             }
         else:
-            inferred = infer_topic_mapping(s)
-            if inferred["module_key"] == "main":
-                short_id = (s_id or "")[:8]
-                inferred["module_key"] = f"topic_{short_id}"
-                inferred["topic_name"] = f"[业务专题] {s.get('title') or '通用开发'}"
-                inferred["tags"] = [inferred["module_key"], "topic"]
-                inferred["memory_doc"] = f"docs/memory/{inferred['module_key']}.md"
+            inferred = infer_topic_mapping(s, memory_keys)
 
         suggestions.append({
             "session_id": s_id,
-            "vendor": s.get("vendor", "antigravity"),
+            "vendor": s_vendor,
             "original_title": sanitize_title(s.get("title")),
             "suggested_module_key": inferred["module_key"],
             "needs_naming": bool(inferred.get("needs_naming")),
             "suggested_topic_name": inferred["topic_name"],
             "suggested_tags": inferred["tags"],
             "suggested_memory_doc": inferred["memory_doc"],
-            "resumable": (s.get("vendor") or "antigravity") == current_vendor,
+            "resumable": s_vendor == current_vendor,
             "dispatch_hint": (
                 "可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)"
-                if (s.get("vendor") or "antigravity") == current_vendor
+                if s_vendor == current_vendor
                 else "只读遗留: 当前宿主不可续接, 仅支持历史内省; 建议经 new-session 重建为本宿主原生专题"
             ),
             "is_main_candidate": is_main_candidate,
@@ -371,9 +353,8 @@ def survey_existing_sessions(ws_root, options=None):
     suggestions.sort(key=lambda x: 0 if x.get("is_main_candidate") else 1)
 
     # 单一事实源: 一次性计算模块分配, 对齐报告与持久化共用
-    assignments = resolve_module_assignments(suggestions)
+    assignments = resolve_module_assignments(suggestions, memory_docs)
 
-    memory_docs = scan_existing_memory_docs(ws_root)
     memory_alignment = []
     for doc in memory_docs:
         matched = assignments.get(doc["module_key"])
@@ -396,12 +377,15 @@ def init_task_loop(options=None):
     ws_root = options.get("ws_root") or options.get("wsRoot") or os.getcwd()
     dry_run = options.get("dry_run") or options.get("dryRun") or False
     create_missing = options.get("create_missing") or options.get("createMissing") or False
+    target_vendor = options.get("vendor") or detect_current_vendor(options.get("env")) or "antigravity"
+    options["vendor"] = target_vendor
 
     task_loop_dir = os.path.join(ws_root, ".agents", "task-loop")
     sessions_path = os.path.join(task_loop_dir, "sessions.json")
     topics_path = os.path.join(task_loop_dir, "topics.json")
     todo_path = os.path.join(task_loop_dir, "todo.json")
     policy_path = os.path.join(task_loop_dir, "policy.json")
+    vendor_specific_file = os.path.join(task_loop_dir, f"sessions.{target_vendor}.json")
 
     suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id, assignments, current_vendor = survey_existing_sessions(ws_root, options)
 
@@ -410,6 +394,7 @@ def init_task_loop(options=None):
         "storage_directory": normalize_path(task_loop_dir),
         "storage_files": {
             "sessions_json": normalize_path(sessions_path),
+            "sessions_vendor_json": normalize_path(vendor_specific_file),
             "topics_json": normalize_path(topics_path),
             "todo_json": normalize_path(todo_path),
             "policy_json": normalize_path(policy_path)
@@ -418,7 +403,7 @@ def init_task_loop(options=None):
         "existing_memory_docs_count": len(memory_docs),
         "chosen_main_session_id": chosen_main_id,
         "caller_session_id": caller_session_id,
-        "current_vendor": current_vendor,
+        "current_vendor": target_vendor,
         "memory_alignment": memory_alignment,
         "topic_mapping_suggestions": suggestions,
         "created_sessions": []
@@ -438,11 +423,11 @@ def init_task_loop(options=None):
     # 实际写入
     os.makedirs(task_loop_dir, exist_ok=True)
 
-    if create_missing:
+    if create_missing and target_vendor == "antigravity":
         for align in memory_alignment:
             if align["status"] == "MISSING_SESSION":
                 title = align["matched_topic_name"]
-                prompt = f"[{align['module_key']}专题初始化] 你是 task-loop 项目的【{align['module_key']}专题负责人】。你负责维护本专题代码与记忆文档 {align['memory_doc']}。"
+                prompt = f"[{align['module_key']}专题初始化] 你是 task-loop 项目的【${align['module_key']}专题负责人】。你负责维护本专题代码与记忆文档 {align['memory_doc']}。"
                 new_id = spawn_root_conversation(title, prompt, ws_root)
                 if new_id:
                     align["matched_session_id"] = new_id
@@ -450,7 +435,7 @@ def init_task_loop(options=None):
                     result["created_sessions"].append({"module_key": align["module_key"], "session_id": new_id, "title": title})
                     suggestions.append({
                         "session_id": new_id,
-                        "vendor": current_vendor or "antigravity",
+                        "vendor": target_vendor,
                         "original_title": sanitize_title(title),
                         "suggested_module_key": align["module_key"],
                         "suggested_topic_name": title,
@@ -462,7 +447,7 @@ def init_task_loop(options=None):
                         "is_current_session": False
                     })
         # 新建会话后重算分配, 保证与落盘同源
-        assignments = resolve_module_assignments(suggestions)
+        assignments = resolve_module_assignments(suggestions, memory_docs)
 
     # 仅持久化通过批准门禁的模块; 其余会话仅入清单不占绑定
     main_thread_id = chosen_main_id or (suggestions[0]["session_id"] if suggestions else None)
@@ -471,73 +456,135 @@ def init_task_loop(options=None):
         if align["status"] == "CREATED_AND_ALIGNED":
             approved_keys.add(align["module_key"])
 
-    modules = {}
-    sessions_list = []
-
-    for item in suggestions:
-        m_key = item["suggested_module_key"]
-        if m_key in approved_keys and m_key not in modules:
-            modules[m_key] = {
+    target_modules = {}
+    for key, item in assignments.items():
+        if key in approved_keys and item.get("vendor") == target_vendor:
+            target_modules[key] = {
                 "session_id": item["session_id"],
                 "title": item["suggested_topic_name"],
                 "tags": item["suggested_tags"],
                 "memory_doc": item["suggested_memory_doc"],
                 "vendor": item["vendor"],
-                "resumable": item["resumable"],
+                "resumable": True,
                 "dispatch_hint": item["dispatch_hint"],
                 "summary": f"专题模块: {item['suggested_topic_name']}"
             }
-        sessions_list.append({
-            "session_id": item["session_id"],
-            "vendor": item["vendor"],
-            "title": item["suggested_topic_name"],
-            "is_main": (item["session_id"] == main_thread_id),
-            "module_key": m_key if m_key in approved_keys else None,
-            "resumable": item["resumable"],
-            "summary": f"专题模块: {item['suggested_topic_name']}",
-            "memory_docs": [item["suggested_memory_doc"]]
-        })
 
-    sessions_data = {
-        "schema_version": 2,
+    # sessions 列表严格仅由 target_modules 1:1 转换得到，彻底杜绝历史临时/瞬态子代理会话的污染与重复
+    target_sessions_list = [
+        {
+            "session_id": mod["session_id"],
+            "vendor": mod["vendor"],
+            "title": mod["title"],
+            "is_main": (key == "main" or mod["session_id"] == main_thread_id),
+            "module_key": key,
+            "resumable": True,
+            "summary": mod.get("summary") or f"专题模块: {mod['title']}",
+            "memory_docs": [mod["memory_doc"]] if mod.get("memory_doc") else []
+        }
+        for key, mod in target_modules.items()
+    ]
+
+    target_vendor_data = {
+        "schema_version": 3,
+        "vendor": target_vendor,
         "main_thread_id": main_thread_id,
-        "current_vendor": current_vendor,
-        "updated_at": datetime.utcnow().isoformat() + "Z",
-        "modules": modules,
-        "sessions": sessions_list
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "modules": target_modules,
+        "sessions": target_sessions_list
+    }
+
+    # 3. 多厂商分区持久化与历史数据保护 (Schema v3 Namespaced Persistence)
+    vendors = {}
+    existing_sessions_data = None
+    if os.path.exists(sessions_path):
+        try:
+            with open(sessions_path, "r", encoding="utf-8") as f:
+                existing_sessions_data = json.load(f)
+        except Exception:
+            pass
+
+    if existing_sessions_data and isinstance(existing_sessions_data.get("vendors"), dict):
+        for v_key, v_data in existing_sessions_data["vendors"].items():
+            vendors[v_key] = v_data
+    elif existing_sessions_data and "modules" in existing_sessions_data:
+        old_vendor = existing_sessions_data.get("current_vendor") or "antigravity"
+        vendors[old_vendor] = {
+            "schema_version": 3,
+            "vendor": old_vendor,
+            "main_thread_id": existing_sessions_data.get("main_thread_id"),
+            "updated_at": existing_sessions_data.get("updated_at") or datetime.now(timezone.utc).isoformat(),
+            "modules": existing_sessions_data.get("modules", {}),
+            "sessions": existing_sessions_data.get("sessions", [])
+        }
+
+    # 检查磁盘既有独立物理文件
+    for v in ["antigravity", "zcode", "codex", "claude"]:
+        v_path = os.path.join(task_loop_dir, f"sessions.{v}.json")
+        if v not in vendors and os.path.exists(v_path):
+            try:
+                with open(v_path, "r", encoding="utf-8") as f:
+                    vendors[v] = json.load(f)
+            except Exception:
+                pass
+
+    vendors[target_vendor] = target_vendor_data
+
+    # 写入当前厂商独立物理文件
+    with open(vendor_specific_file, "w", encoding="utf-8") as f:
+        json.dump(target_vendor_data, f, indent=2, ensure_ascii=False)
+
+    # 若其他已知厂商在 vendors 中有数据，也确保其物理文件同步更新/落盘
+    for v_key, v_data in vendors.items():
+        v_file = os.path.join(task_loop_dir, f"sessions.{v_key}.json")
+        if not os.path.exists(v_file) or v_key == target_vendor:
+            try:
+                with open(v_file, "w", encoding="utf-8") as f:
+                    json.dump(v_data, f, indent=2, ensure_ascii=False)
+            except Exception:
+                pass
+
+    # 写入全量主 sessions.json (Schema v3)
+    master_sessions_data = {
+        "schema_version": 3,
+        "main_thread_id": main_thread_id,
+        "current_vendor": target_vendor,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "modules": target_modules,
+        "sessions": target_sessions_list,
+        "vendors": vendors
     }
 
     with open(sessions_path, "w", encoding="utf-8") as f:
-        json.dump(sessions_data, f, indent=2, ensure_ascii=False)
+        json.dump(master_sessions_data, f, indent=2, ensure_ascii=False)
 
-    if not os.path.exists(topics_path) or create_missing:
-        topics_data = {
-            "schema_version": 2,
-            "topics": [
-                {
-                    "topic_key": k,
-                    "name": v["title"],
-                    "session_id": v["session_id"],
-                    "vendor": v["vendor"],
-                    "resumable": v["resumable"],
-                    "tags": v["tags"],
-                    "memory_doc": v["memory_doc"]
-                }
-                for k, v in modules.items()
-            ]
-        }
-        with open(topics_path, "w", encoding="utf-8") as f:
-            json.dump(topics_data, f, indent=2, ensure_ascii=False)
+    topics_data = {
+        "schema_version": 3,
+        "topics": [
+            {
+                "topic_key": k,
+                "name": v["title"],
+                "session_id": v["session_id"],
+                "vendor": v["vendor"],
+                "resumable": v["resumable"],
+                "tags": v["tags"],
+                "memory_doc": v["memory_doc"]
+            }
+            for k, v in target_modules.items()
+        ]
+    }
+    with open(topics_path, "w", encoding="utf-8") as f:
+        json.dump(topics_data, f, indent=2, ensure_ascii=False)
 
     if not os.path.exists(todo_path):
         with open(todo_path, "w", encoding="utf-8") as f:
-            json.dump({"schema_version": 2, "items": []}, f, indent=2, ensure_ascii=False)
+            json.dump({"schema_version": 3, "items": []}, f, indent=2, ensure_ascii=False)
 
     if not os.path.exists(policy_path):
         with open(policy_path, "w", encoding="utf-8") as f:
             json.dump({
-                "schema_version": 2,
-                "active_vendor": current_vendor or "antigravity",
+                "schema_version": 3,
+                "active_vendor": target_vendor,
                 "default_lease_timeout_sec": 1800,
                 "enable_file_state_machine": False
             }, f, indent=2, ensure_ascii=False)
@@ -545,7 +592,7 @@ def init_task_loop(options=None):
     # 主会话记忆文档脚手架 (存在则不覆盖)
     if main_thread_id:
         result["scaffolded_memory_docs"] = []
-        main_doc = "docs/memory/main.md"
+        main_doc = "docs/MEMORY.md"
         if scaffold_memory_doc(ws_root, main_doc, "[主会话] 任务编排 & 治理中枢"):
             result["scaffolded_memory_docs"].append(main_doc)
 
@@ -553,7 +600,7 @@ def init_task_loop(options=None):
     result["session_tools"] = {
         "philosophy": "task-loop 以会话为一等公民: 主会话的角色是需求加工与派单, 实施必须派发至专题会话/子代理",
         "dispatch_order": [
-            "1. 查 .agents/task-loop/sessions.json 寻找匹配专题, 优先复用",
+            f"1. 查 .agents/task-loop/sessions.{target_vendor}.json (或 sessions.json vendors.{target_vendor}) 寻找匹配专题, 优先复用",
             "2. 可续接专题 (resumable: true): 经当前宿主 SessionProvider send/resume 原语定向派单",
             "3. 不可续接专题 (resumable: false): 仅只读内省参考; 需要实施时经 new-session 重建本宿主原生专题",
             "4. 无匹配专题: 经 new-session / spawn Provider 拉起新顶层会话后登记, 严禁退化为人肉 UI 操作",
@@ -573,6 +620,12 @@ def main():
         idx = args.index("--workspace")
         if idx + 1 < len(args):
             ws_root = args[idx + 1]
+
+    vendor = None
+    if "--vendor" in args:
+        idx = args.index("--vendor")
+        if idx + 1 < len(args):
+            vendor = args[idx + 1].lower()
 
     current_session = None
     if "--current-session" in args:
@@ -597,6 +650,7 @@ def main():
         "ws_root": ws_root,
         "dry_run": dry_run,
         "create_missing": create_missing,
+        "vendor": vendor,
         "current_session": current_session,
         "main_session": main_session,
         "module_allowlist": parse_list("--modules"),

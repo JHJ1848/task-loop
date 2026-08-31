@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 function normalizePath(p) {
   if (!p) return '';
@@ -27,12 +28,26 @@ function resolveWorkspaceRoot(workspacePaths) {
   return process.cwd();
 }
 
-function findSessionsRegistry(wsRoot) {
-  const candidates = [
-    path.join(wsRoot, '.agents', 'task-loop', 'sessions.json'),
-    path.join(wsRoot, '.agents', 'sessions.json'),
-    path.join(process.cwd(), '.agents', 'task-loop', 'sessions.json')
-  ];
+function findSessionsRegistry(wsRoot, targetVendor) {
+  const candidates = [];
+  if (wsRoot) {
+    if (targetVendor) {
+      candidates.push(path.join(wsRoot, '.agents', 'task-loop', `sessions.${targetVendor}.json`));
+    }
+    candidates.push(
+      path.join(wsRoot, '.agents', 'task-loop', 'sessions.json'),
+      path.join(wsRoot, '.agents', 'sessions.json')
+    );
+  }
+  if (process.cwd() && process.cwd() !== wsRoot) {
+    if (targetVendor) {
+      candidates.push(path.join(process.cwd(), '.agents', 'task-loop', `sessions.${targetVendor}.json`));
+    }
+    candidates.push(
+      path.join(process.cwd(), '.agents', 'task-loop', 'sessions.json'),
+      path.join(process.cwd(), '.agents', 'sessions.json')
+    );
+  }
   for (const c of candidates) {
     if (fs.existsSync(c)) {
       try {
@@ -47,55 +62,30 @@ function findSessionsRegistry(wsRoot) {
 }
 
 function findPromptTemplates(wsRoot) {
-  const candidates = [
-    path.join(wsRoot, 'templates', 'prompt_templates.json'),
-    path.join(wsRoot, '.agents', 'task-loop', 'templates', 'prompt_templates.json'),
-    path.join(__dirname, '..', '..', 'templates', 'prompt_templates.json'),
-    path.join(process.cwd(), 'templates', 'prompt_templates.json')
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) {
-      try {
-        const raw = fs.readFileSync(c, 'utf8');
-        return JSON.parse(raw);
-      } catch {
-        // ignore
-      }
-    }
+  const tplPath = path.join(wsRoot, '.agents', 'task-loop', 'prompt-templates.json');
+  if (fs.existsSync(tplPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(tplPath, 'utf8'));
+    } catch {}
   }
   return null;
 }
 
 function findActiveTodo(wsRoot, conversationId) {
-  const candidates = [
-    path.join(wsRoot, '.agents', 'task-loop', 'todo.json'),
-    path.join(process.cwd(), '.agents', 'task-loop', 'todo.json')
-  ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) {
-      try {
-        const raw = fs.readFileSync(c, 'utf8');
-        const data = JSON.parse(raw);
-        if (Array.isArray(data.items)) {
-          const item = data.items.find(i => 
-            i.assignee_thread_id === conversationId && 
-            ['in_progress', 'dispatched', 'pending'].includes(i.status)
-          );
-          if (item) return item;
-        }
-      } catch {
-        // ignore
+  const todoPath = path.join(wsRoot, '.agents', 'task-loop', 'todo.json');
+  if (fs.existsSync(todoPath)) {
+    try {
+      const todoData = JSON.parse(fs.readFileSync(todoPath, 'utf8'));
+      if (Array.isArray(todoData.items)) {
+        return todoData.items.find(item => item.assignee_thread_id === conversationId && item.status === 'in_progress') || null;
       }
-    }
+    } catch {}
   }
   return null;
 }
 
-/**
- * 匹配 sessions.json 解析会话详细属性
- */
-function getSessionDetails(conversationId, sessionData) {
-  if (!sessionData) {
+function matchInVendorData(conversationId, data) {
+  if (!data || typeof data !== 'object') {
     return {
       session_id: conversationId,
       is_main: false,
@@ -109,18 +99,18 @@ function getSessionDetails(conversationId, sessionData) {
     };
   }
 
-  const isMain = (sessionData.main_thread_id === conversationId);
+  const isMain = (data.main_thread_id === conversationId);
   let sessionItem = null;
 
-  if (Array.isArray(sessionData.sessions)) {
-    sessionItem = sessionData.sessions.find(s => s.session_id === conversationId);
+  if (Array.isArray(data.sessions)) {
+    sessionItem = data.sessions.find(s => s.session_id === conversationId);
   }
 
   let moduleKey = null;
   let moduleMemDocs = [];
 
-  if (sessionData.modules) {
-    for (const [key, val] of Object.entries(sessionData.modules)) {
+  if (data.modules) {
+    for (const [key, val] of Object.entries(data.modules)) {
       if (val && typeof val === 'object' && val.session_id === conversationId) {
         moduleKey = key;
         if (val.memory_doc) {
@@ -149,19 +139,67 @@ function getSessionDetails(conversationId, sessionData) {
     };
   }
 
+  const finalIsMain = sessionItem ? (sessionItem.is_main || isMain) : isMain;
+  let memoryDocs = (sessionItem && Array.isArray(sessionItem.memory_docs) && sessionItem.memory_docs.length > 0)
+    ? sessionItem.memory_docs
+    : moduleMemDocs;
+
+  if (finalIsMain && memoryDocs.length === 0) {
+    memoryDocs = ['docs/MEMORY.md'];
+  }
+
   return {
     session_id: conversationId,
-    is_main: sessionItem ? (sessionItem.is_main || isMain) : isMain,
+    is_main: finalIsMain,
     is_unregistered: false,
     title: sessionItem ? sessionItem.title : (isMain ? '[主会话] 任务编排 & 治理中枢' : '专题会话'),
     module_key: moduleKey || (isMain ? 'main' : 'unknown'),
     created_at: sessionItem ? sessionItem.created_at : null,
     last_active_at: sessionItem ? sessionItem.last_active_at : null,
     summary: (sessionItem && sessionItem.summary) || (moduleKey ? `专题模块: ${moduleKey}` : null),
-    memory_docs: (sessionItem && Array.isArray(sessionItem.memory_docs) && sessionItem.memory_docs.length > 0)
-      ? sessionItem.memory_docs
-      : moduleMemDocs
+    memory_docs: memoryDocs
   };
+}
+
+/**
+ * 匹配 sessions.json (或 sessions.<vendor>.json) 解析会话详细属性
+ * 支持 Schema v3 vendors 命名空间分区检索与跨分区自适应回退
+ */
+function getSessionDetails(conversationId, sessionData, targetVendor) {
+  if (!sessionData) {
+    return {
+      session_id: conversationId,
+      is_main: false,
+      is_unregistered: true,
+      title: '未注册会话 (Unregistered Session)',
+      module_key: 'unknown',
+      created_at: null,
+      last_active_at: null,
+      summary: null,
+      memory_docs: []
+    };
+  }
+
+  // 1. 如果包含 vendors 分区 (Schema v3)
+  if (sessionData.vendors && typeof sessionData.vendors === 'object') {
+    if (targetVendor && sessionData.vendors[targetVendor]) {
+      const vDetails = matchInVendorData(conversationId, sessionData.vendors[targetVendor]);
+      if (!vDetails.is_unregistered) {
+        return vDetails;
+      }
+    }
+    // 跨所有 vendor 分区匹配
+    for (const [vKey, vData] of Object.entries(sessionData.vendors)) {
+      if (vKey === targetVendor) continue;
+      const vDetails = matchInVendorData(conversationId, vData);
+      if (!vDetails.is_unregistered) {
+        return vDetails;
+      }
+    }
+  }
+
+  // 2. 顶层单厂商匹配 (Schema v2 或当前 vendor 顶层数据)
+  return matchInVendorData(conversationId, sessionData);
 }
 
 /**
@@ -180,13 +218,15 @@ function getPluginTopicRules(details, templates) {
     if (Array.isArray(pluginRules.main_session) && pluginRules.main_session.length > 0) {
       lines.push(...pluginRules.main_session);
     } else {
-      lines.push(`- [Plugin: task-loop | 主会话约束规则]:`);
-      lines.push(`  1. 职责边界: 主会话严禁参与任何实际业务代码修改，所有代码更改必须派单至对应专题会话;`);
-      lines.push(`  2. 需求加工与定界: 理解用户意图，提炼单一职责目标、验收准则与任务类型 ([EXPLORE] 或 [WORK]);`);
-      lines.push(`  3. 防冲突与复用: 派发前强制比对现有专题清单 (modules/tags/docs/memory)，复用优先，严禁重复创建重叠专题;`);
-      lines.push(`  4. 任务派单流程: 寻找专题 -> 没有则调用 agentapi new-conversation 新建 -> send_message 定向发信，划定 Allowlist 物理白名单;`);
-      lines.push(`  5. 复杂度分级调度: Level 1 就地闭环，Level 2 标准派单自测，Level 3 临时 Subagent 并行协作;`);
-      lines.push(`  6. 质检与门禁核验: 依据子会话测试与证据验收，输出用户验证指引卡 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md)。`);
+      lines.push(`- [Plugin: task-loop | 主会话定位与治理硬约束]:`);
+      lines.push(`  1. 仅限只读探索 (Explore Only): 主会话仅限执行需求初加工、只读探测与架构诊断 (EXPLORE)，严禁主会话自身直接执行修改落地 (WORK) 或直接编辑业务代码;`);
+      lines.push(`  2. 强制派单执行 (Mandatory Delegation): 所有具体的业务代码修改、功能落地与 BugFix (WORK) 强制要求派单至对应的专题会话 (Topic Session) 实施，杜绝主会话分散多方写入造成的上下文错乱与业务冲突;`);
+      lines.push(`  3. 需求定界与白名单: 提炼单一职责目标、验收准则与严格的物理白名单 (Allowlist)，明确任务类型 ([EXPLORE] 或 [WORK]);`);
+      lines.push(`  4. 防冲突与复用: 派发前强制比对现有专题清单 (modules/tags/docs/memory)，复用优先，严禁重复创建重叠专题;`);
+      lines.push(`  5. 缺失专题与不明确流转铁律: 若无可用专题会话或不清楚如何新建/请求会话，必须先查阅文档指导 (references/sdk/README.md, skills/new-session/SKILL.md, skills/session-control/SKILL.md)，若仍需确认必须主动向用户请求指引并询问，绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理;`);
+      lines.push(`  6. 任务派单流转: 寻找专题 -> 没有则按规范创建顶层专题会话 -> send_message 定向发信，划定 Allowlist 物理白名单;`);
+      lines.push(`  7. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 临时 Subagent 并行协作;`);
+      lines.push(`  8. 质检与门禁核验: 依据子会话测试结果与 Evidence 严格验收，输出用户验证指引卡 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md)。`);
     }
   } else if (details.module_key === 'session_control') {
     if (Array.isArray(pluginRules.session_control) && pluginRules.session_control.length > 0) {
@@ -238,8 +278,8 @@ function getPluginTopicRules(details, templates) {
 /**
  * 构造瞬态注入上下文内容 (100% 纯粹属于 [Plugin: task-loop | 命名空间)
  */
-function generateInjectionMessage(conversationId, sessionData, activeTodo, templates) {
-  const details = getSessionDetails(conversationId, sessionData);
+function generateInjectionMessage(conversationId, sessionData, activeTodo, templates, vendor) {
+  const details = getSessionDetails(conversationId, sessionData, vendor);
   const parts = [];
 
   const headerNamespace = (templates && templates.header_namespace) || (templates && templates.plugin_namespace) || '[Plugin: task-loop | 会话上下文感知]';
@@ -306,12 +346,57 @@ function processPayload(payload) {
       return { injectSteps: [] };
     }
 
+    // 避免工作区插件与全局用户插件同时触发 PreInvocation 产生重复注入 (只要非测试模式即执行 2000ms 独占排他去重)
+    const shouldDedupe = !payload.isTest && !payload.skipDedupe;
+
+    if (shouldDedupe) {
+      const dedupeLock = path.join(os.tmpdir(), `.task-loop-hook-${conversationId || 'default'}.lock`);
+      try {
+        let acquired = false;
+        try {
+          const fd = fs.openSync(dedupeLock, 'wx');
+          fs.writeSync(fd, String(Date.now()));
+          fs.closeSync(fd);
+          acquired = true;
+        } catch (err) {
+          if (err.code === 'EEXIST') {
+            let stats;
+            try { stats = fs.statSync(dedupeLock); } catch (_) {}
+            const mtime = stats ? stats.mtimeMs : 0;
+            if (Date.now() - mtime < 2000) {
+              return { injectSteps: [] };
+            }
+            // 锁已过期 (> 2000ms)，尝试原子争抢：先删除旧文件，再以 'wx' 重新创建
+            try { fs.unlinkSync(dedupeLock); } catch (_) {}
+            try {
+              const fd2 = fs.openSync(dedupeLock, 'wx');
+              fs.writeSync(fd2, String(Date.now()));
+              fs.closeSync(fd2);
+              acquired = true;
+            } catch (err2) {
+              return { injectSteps: [] };
+            }
+          }
+        }
+        if (!acquired) {
+          return { injectSteps: [] };
+        }
+      } catch (e) {
+        try {
+          if (fs.existsSync(dedupeLock) && (Date.now() - fs.statSync(dedupeLock).mtimeMs < 2000)) {
+            return { injectSteps: [] };
+          }
+        } catch (_) {}
+      }
+    }
+
     const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
-    const sessionData = findSessionsRegistry(wsRoot);
+    const targetVendor = payload.vendor || (process.env.ZCODE_SESSION_ID ? 'zcode' : (process.env.CODEX_THREAD_ID ? 'codex' : 'antigravity'));
+    const sessionData = findSessionsRegistry(wsRoot, targetVendor);
     const templates = findPromptTemplates(wsRoot);
     const activeTodo = findActiveTodo(wsRoot, conversationId);
 
-    const ephemeralText = generateInjectionMessage(conversationId, sessionData, activeTodo, templates);
+    const ephemeralText = generateInjectionMessage(conversationId, sessionData, activeTodo, templates, targetVendor);
 
     return {
       injectSteps: [
@@ -362,10 +447,14 @@ if (require.main === module) {
 }
 
 module.exports = {
-  processPayload,
-  getSessionDetails,
-  generateInjectionMessage,
+  normalizePath,
+  resolveWorkspaceRoot,
   findSessionsRegistry,
   findPromptTemplates,
-  findActiveTodo
+  findActiveTodo,
+  matchInVendorData,
+  getSessionDetails,
+  getPluginTopicRules,
+  generateInjectionMessage,
+  processPayload
 };

@@ -71,9 +71,9 @@ function normalizePath(p) {
 
 /**
  * 启发式推断标准化专题名称与模块 Key
- * 规范格式: [专题名称] 核心功能1 & 核心功能2
+ * 严格以 docs/memory/*.md 为法定事实源进行对齐
  */
-function inferTopicMapping(session) {
+function inferTopicMapping(session, knownMemoryKeys) {
   const rawTitle = sanitizeTitle(session.title);
   const titleLower = rawTitle.toLowerCase();
   const summaryLower = (session.summary || '').toLowerCase();
@@ -81,102 +81,53 @@ function inferTopicMapping(session) {
   const touchedLower = (session.recent_touched_files || []).join(' ').toLowerCase();
   const fullText = `${titleLower} ${summaryLower} ${promptsLower} ${touchedLower}`;
 
-  let category = '';
-  let func1 = '';
-  let func2 = '';
-  let moduleKey = '';
-  let needsNaming = false;
+  let moduleKey = null;
+  let topicName = rawTitle;
 
   if (session.is_main || titleLower.includes('main') || fullText.includes('治理中枢') || fullText.includes('开发仓库')) {
-    category = '主会话';
-    func1 = '任务编排';
-    func2 = '治理中枢';
     moduleKey = 'main';
-  } else if (fullText.includes('topic: hook') || fullText.includes('钩子专题') || (titleLower.includes('hook') && !titleLower.includes('main'))) {
-    category = '钩子专题';
-    func1 = '生命周期';
-    func2 = '安全门禁';
+    topicName = '[主会话] 任务编排 & 治理中枢';
+  } else if (fullText.includes('hook') || fullText.includes('钩子') || fullText.includes('生命周期') || fullText.includes('安全门禁')) {
     moduleKey = 'hook';
-  } else if (fullText.includes('topic: subagent') || fullText.includes('子代理专题') || (titleLower.includes('subagent') && !titleLower.includes('main'))) {
-    category = '子代理专题';
-    func1 = '动态模板';
-    func2 = '编排治理';
+    topicName = '[钩子专题] 生命周期 & 安全门禁';
+  } else if (fullText.includes('subagent') || fullText.includes('子代理') || fullText.includes('动态模板') || fullText.includes('编排治理')) {
     moduleKey = 'subagent';
-  } else if (fullText.includes('topic: session_control') || fullText.includes('session_control') || fullText.includes('会话专题') || (titleLower.includes('session') && !titleLower.includes('main'))) {
-    category = '会话控制专题';
-    func1 = '跨厂商内省';
-    func2 = '会话管理';
+    topicName = '[子代理专题] Subagent机制 & 动态模板';
+  } else if (fullText.includes('session_control') || fullText.includes('session') || fullText.includes('会话控制') || fullText.includes('会话管理')) {
     moduleKey = 'session_control';
-  } else if (fullText.includes('topic: memory') || fullText.includes('记忆专题') || titleLower.includes('memory')) {
-    category = '受控记忆专题';
-    func1 = '文档维护';
-    func2 = '经验沉淀';
-    moduleKey = 'memory';
-  } else if (fullText.includes('code review') || fullText.includes('代码审查') || fullText.includes('高级代码审查员') || fullText.includes('走查')) {
-    category = '代码审查专题';
-    func1 = '质量走查';
-    func2 = '门禁核验';
-    moduleKey = 'code_review';
-  } else if (fullText.includes('debug') || fullText.includes('排障') || fullText.includes('卡顿') || fullText.includes('故障') || fullText.includes('报错')) {
-    category = '排障诊断专题';
-    func1 = '缺陷定位';
-    func2 = '故障分析';
-    moduleKey = 'debug';
-  } else if (fullText.includes('claude code') || fullText.includes('claude sdk') || (titleLower.includes('claude') && !titleLower.includes('main'))) {
-    category = 'Claude协同专题';
-    func1 = 'SDK适配';
-    func2 = '跨平台支持';
-    moduleKey = 'claude_sdk';
-  } else if (fullText.includes('topic: codex') || (titleLower.includes('codex') && !titleLower.includes('main'))) {
-    category = 'Codex协同专题';
-    func1 = '跨端同步';
-    func2 = '会话管理';
-    moduleKey = 'codex_sync';
-  } else if (fullText.includes('topic: plugin') || fullText.includes('plugin规范') || (titleLower.includes('plugin') && !titleLower.includes('main'))) {
-    category = 'Plugin规范专题';
-    func1 = '接口定义';
-    func2 = '插件集成';
+    topicName = '[Session] SDK & Scripting';
+  } else if (fullText.includes('plugin_spec') || fullText.includes('plugin') || fullText.includes('插件') || fullText.includes('marketplace') || fullText.includes('zcode')) {
     moduleKey = 'plugin_spec';
-  } else if (fullText.includes('topic: dispatch') || fullText.includes('调度专题')) {
-    category = '任务循环调度专题';
-    func1 = '任务分发';
-    func2 = '状态机管理';
-    moduleKey = 'task_loop';
-  } else {
-    // 通用启发式智能关键词提取
-    const cleanText = rawTitle.replace(/[^\w\s\u4e00-\u9fa5]/g, ' ');
-    const stopWords = new Set(['请你', '一个', '当前', '这个', '作为', '可以', '需要', '进行', '如何', '为什么', '是否', '实现', '相关', '检查', '项目']);
-    const words = cleanText.split(/\s+/).filter(w => w.length >= 2 && !stopWords.has(w));
+    topicName = '[插件专题] 多厂商插件规范与导出安装';
+  } else if (fullText.includes('test_spec') || fullText.includes('自动化测试') || fullText.includes('测试专题')) {
+    moduleKey = 'test_spec';
+    topicName = '[测试专题] 自动化会话创建验证';
+  }
 
-    const kw1 = words[0] || '核心业务';
-    const kw2 = words[1] || '功能实现';
-    category = `${kw1}专题`;
-    func1 = kw1;
-    func2 = kw2;
-    const candidate = (words[0] ? words[0] : 'custom_topic')
-      .replace(/[^\w\u4e00-\u9fa5]/g, '_')
-      .replace(/_+/g, '_')
-      .slice(0, 25);
-    // 模块 Key 卫生门禁: 仅允许 [a-z0-9_], 非法 (中文碎片/角色扮演前缀等) 降级 custom_topic 待人工命名
-    if (!candidate || candidate === '_' || !isValidModuleKey(candidate.toLowerCase())) {
-      moduleKey = 'custom_topic';
-      needsNaming = true;
-    } else {
-      moduleKey = candidate.toLowerCase();
-    }
-    if (!moduleKey || moduleKey === '_') {
-      moduleKey = 'custom_topic';
-      needsNaming = true;
+  // 严格性校验: 若推断出的 moduleKey 不在 knownMemoryKeys 范围内，则不予作为常驻专题模块
+  if (knownMemoryKeys && Array.isArray(knownMemoryKeys) && knownMemoryKeys.length > 0) {
+    if (moduleKey && !knownMemoryKeys.includes(moduleKey)) {
+      moduleKey = null;
     }
   }
 
-  const standardizedTitle = `[${category}] ${func1} & ${func2}`;
+  if (moduleKey) {
+    return {
+      module_key: moduleKey,
+      needs_naming: false,
+      topic_name: topicName,
+      tags: [moduleKey, 'topic'],
+      memory_doc: (moduleKey === 'main') ? 'docs/MEMORY.md' : `docs/memory/${moduleKey}.md`
+    };
+  }
+
+  // 非法定记忆专题的临时会话不生成假专题
   return {
-    module_key: moduleKey,
-    needs_naming: needsNaming,
-    topic_name: standardizedTitle,
-    tags: [moduleKey, 'topic'],
-    memory_doc: `docs/memory/${moduleKey}.md`
+    module_key: null,
+    needs_naming: false,
+    topic_name: rawTitle,
+    tags: [],
+    memory_doc: null
   };
 }
 
@@ -233,24 +184,37 @@ function spawnRootConversation(title, prompt, wsRoot) {
 }
 
 /**
- * 单一事实源: 模块 Key -> 建议项的首个匹配分配。
- * 预览报告与真实落盘必须共用本函数的计算结果, 结构上杜绝两边分叉。
+ * 单一事实源: 严格以 docs/memory/*.md 中的法定模块为准进行 1:1 对齐匹配。
+ * 预览报告与真实落盘必须共用本函数的计算结果。
  */
-function resolveModuleAssignments(suggestions) {
-  const assignments = new Map(); // module_key -> suggestion (首个胜出)
-  for (const s of suggestions) {
-    const key = s.suggested_module_key;
-    if (!assignments.has(key)) {
-      assignments.set(key, s);
+function resolveModuleAssignments(suggestions, memoryDocs) {
+  const assignments = new Map(); // module_key -> suggestion (1:1 绑定)
+
+  // 1. 先匹配 main
+  const mainCand = suggestions.find(s => s.is_main_candidate) || suggestions.find(s => s.suggested_module_key === 'main');
+  if (mainCand) {
+    assignments.set('main', mainCand);
+  }
+
+  // 2. 为每个受控记忆文档匹配首个最合适的建议项
+  for (const doc of (memoryDocs || [])) {
+    if (doc.module_key === 'main') continue;
+    const matched = suggestions.find(s => s.suggested_module_key === doc.module_key);
+    if (matched) {
+      assignments.set(doc.module_key, matched);
     }
   }
+
   return assignments;
 }
 
 function surveyExistingSessions(wsRoot, options = {}) {
+  const currentVendor = options.vendor || detectCurrentVendor(options.env || process.env) || 'antigravity';
   const callerSessionId = options.currentSession || options.currentSessionId || process.env.ANTIGRAVITY_CONVERSATION_ID || process.env.ZCODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || null;
   const explicitMainSessionId = options.mainSession || options.mainSessionId || null;
-  const currentVendor = detectCurrentVendor(process.env);
+
+  const memoryDocs = scanExistingMemoryDocs(wsRoot);
+  const memoryKeys = memoryDocs.map(d => d.module_key);
 
   const registry = loadProviderRegistry();
   const all = [];
@@ -274,7 +238,7 @@ function surveyExistingSessions(wsRoot, options = {}) {
   if (callerSessionId && !uniqueMap.has(callerSessionId)) {
     uniqueMap.set(callerSessionId, {
       session_id: callerSessionId,
-      vendor: currentVendor || 'antigravity',
+      vendor: currentVendor,
       title: '[主会话] 任务编排 & 治理中枢',
       is_main: true,
       created_at: new Date().toISOString(),
@@ -289,8 +253,18 @@ function surveyExistingSessions(wsRoot, options = {}) {
   // 4) 历史扫描中明确属于当前宿主环境且带 [主会话] 标签或 is_main 的会话
   // 5) suggestions 列表中的第一项
   let chosenMainId = null;
-  if (explicitMainSessionId && uniqueMap.has(explicitMainSessionId)) {
+  if (explicitMainSessionId) {
     chosenMainId = explicitMainSessionId;
+    if (!uniqueMap.has(explicitMainSessionId)) {
+      uniqueMap.set(explicitMainSessionId, {
+        session_id: explicitMainSessionId,
+        vendor: currentVendor || 'antigravity',
+        title: '[主会话] 任务编排 & 治理中枢',
+        is_main: true,
+        created_at: new Date().toISOString(),
+        last_active_at: new Date().toISOString()
+      });
+    }
   } else if (callerSessionId && uniqueMap.has(callerSessionId)) {
     chosenMainId = callerSessionId;
   } else if (callerSessionId) {
@@ -338,10 +312,10 @@ function surveyExistingSessions(wsRoot, options = {}) {
         module_key: 'main',
         topic_name: (s.title && s.title.includes('[主会话]')) ? s.title : '[主会话] 任务编排 & 治理中枢',
         tags: ['main', 'orchestrator'],
-        memory_doc: 'docs/memory/main.md'
+        memory_doc: 'docs/MEMORY.md'
       };
     } else {
-      inferred = inferTopicMapping(s);
+      inferred = inferTopicMapping(s, memoryKeys);
       // 如果不是 chosenMainId 但被误推断成 main，修正 module_key
       if (inferred.module_key === 'main') {
         const shortId = (s.session_id || '').slice(0, 8);
@@ -378,10 +352,9 @@ function surveyExistingSessions(wsRoot, options = {}) {
   });
 
   // 单一事实源: 一次性计算模块分配, 对齐报告与持久化共用
-  const assignments = resolveModuleAssignments(suggestions);
+  const assignments = resolveModuleAssignments(suggestions, memoryDocs);
 
   // 扫描受控记忆文档并进行 1:1 对齐 (对齐结果同样取自 assignments, 与落盘同源)
-  const memoryDocs = scanExistingMemoryDocs(wsRoot);
   const memoryAlignment = memoryDocs.map(doc => {
     const matchedSession = assignments.get(doc.module_key) || null;
     return {
@@ -449,6 +422,9 @@ function initTaskLoop(options = {}) {
   const wsRoot = options.wsRoot || process.cwd();
   const dryRun = options.dryRun || false;
   const createMissing = options.createMissing || false;
+  const targetVendor = options.vendor || detectCurrentVendor(options.env) || 'antigravity';
+  options.vendor = targetVendor;
+
   const taskLoopDir = path.join(wsRoot, '.agents', 'task-loop');
   const sessionsPath = path.join(taskLoopDir, 'sessions.json');
   const topicsPath = path.join(taskLoopDir, 'topics.json');
@@ -457,11 +433,14 @@ function initTaskLoop(options = {}) {
 
   const { suggestions, memoryDocs, memoryAlignment, assignments, chosenMainId, callerSessionId, currentVendor } = surveyExistingSessions(wsRoot, options);
 
+  const vendorSpecificFile = path.join(taskLoopDir, `sessions.${targetVendor}.json`);
+
   const result = {
     workspace_root: normalizePath(wsRoot),
     storage_directory: normalizePath(taskLoopDir),
     storage_files: {
       sessions_json: normalizePath(sessionsPath),
+      sessions_vendor_json: normalizePath(vendorSpecificFile),
       topics_json: normalizePath(topicsPath),
       todo_json: normalizePath(todoPath),
       policy_json: normalizePath(policyPath)
@@ -470,7 +449,7 @@ function initTaskLoop(options = {}) {
     existing_memory_docs_count: memoryDocs.length,
     chosen_main_session_id: chosenMainId,
     caller_session_id: callerSessionId,
-    current_vendor: currentVendor,
+    current_vendor: targetVendor,
     memory_alignment: memoryAlignment,
     topic_mapping_suggestions: suggestions,
     created_sessions: []
@@ -491,8 +470,8 @@ function initTaskLoop(options = {}) {
   // 实际写入
   os_mkdir_p(taskLoopDir);
 
-  // 1. 若开启了 createMissing，对缺失会话的记忆文档 1:1 自动拉起独立根会话
-  if (createMissing) {
+  // 1. 若开启了 createMissing，对缺失会话的记忆文档 1:1 自动拉起独立根会话 (仅在 Antigravity 宿主下有效)
+  if (createMissing && targetVendor === 'antigravity') {
     for (const align of memoryAlignment) {
       if (align.status === 'MISSING_SESSION') {
         const title = align.matched_topic_name;
@@ -504,7 +483,7 @@ function initTaskLoop(options = {}) {
           result.created_sessions.push({ module_key: align.module_key, session_id: newId, title });
           suggestions.push({
             session_id: newId,
-            vendor: currentVendor || 'antigravity',
+            vendor: targetVendor,
             original_title: sanitizeTitle(title),
             suggested_module_key: align.module_key,
             suggested_topic_name: title,
@@ -524,100 +503,159 @@ function initTaskLoop(options = {}) {
     for (const [k, v] of refreshed.entries()) assignments.set(k, v);
   }
 
-  // 2. 构建 sessions.json (仅持久化通过批准门禁的模块; 其余会话仅入清单不占绑定)
+  // 2. 构建当前厂商的数据 (仅持久化通过批准门禁的模块; 其余会话仅入清单不占绑定)
   const mainThreadId = chosenMainId || (suggestions[0] ? suggestions[0].session_id : null);
   const approvedKeys = new Set(gate.approved.map(a => a.module_key));
-  // createMissing 新建的对齐模块同样视为已批准
   for (const align of memoryAlignment) {
     if (align.status === 'CREATED_AND_ALIGNED') approvedKeys.add(align.module_key);
   }
 
-  const modules = {};
-  const sessionsList = [];
-
-  for (const item of suggestions) {
-    const key = item.suggested_module_key;
-    if (approvedKeys.has(key) && !modules[key]) {
-      modules[key] = {
+  const targetModules = {};
+  for (const [key, item] of assignments.entries()) {
+    if (approvedKeys.has(key) && item.vendor === targetVendor) {
+      targetModules[key] = {
         session_id: item.session_id,
         title: item.suggested_topic_name,
         tags: item.suggested_tags,
         memory_doc: item.suggested_memory_doc,
         vendor: item.vendor,
-        resumable: item.resumable,
+        resumable: true,
         dispatch_hint: item.dispatch_hint,
         summary: `专题模块: ${item.suggested_topic_name}`
       };
     }
-    sessionsList.push({
-      session_id: item.session_id,
-      vendor: item.vendor,
-      title: item.suggested_topic_name,
-      is_main: (item.session_id === mainThreadId),
-      module_key: approvedKeys.has(key) ? key : null,
-      resumable: item.resumable,
-      summary: `专题模块: ${item.suggested_topic_name}`,
-      memory_docs: [item.suggested_memory_doc]
-    });
   }
 
-  const sessionsData = {
-    schema_version: 2,
+  // sessions 列表严格仅由 targetModules 1:1 转换得到，彻底杜绝历史临时/瞬态子代理会话的污染与重复
+  const targetSessionsList = Object.entries(targetModules).map(([key, mod]) => ({
+    session_id: mod.session_id,
+    vendor: mod.vendor,
+    title: mod.title,
+    is_main: (key === 'main' || mod.session_id === mainThreadId),
+    module_key: key,
+    resumable: true,
+    summary: mod.summary || `专题模块: ${mod.title}`,
+    memory_docs: mod.memory_doc ? [mod.memory_doc] : []
+  }));
+
+  const targetVendorData = {
+    schema_version: 3,
+    vendor: targetVendor,
     main_thread_id: mainThreadId,
-    current_vendor: currentVendor,
     updated_at: new Date().toISOString(),
-    modules: modules,
-    sessions: sessionsList
+    modules: targetModules,
+    sessions: targetSessionsList
   };
 
-  fs.writeFileSync(sessionsPath, JSON.stringify(sessionsData, null, 2), 'utf8');
+  // 3. 多厂商分区持久化与历史数据保护 (Schema v3 Namespaced Persistence)
+  const vendors = {};
+  let existingSessionsData = null;
+  if (fs.existsSync(sessionsPath)) {
+    try {
+      existingSessionsData = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+    } catch {}
+  }
 
-  // 3. topics.json
-  if (!fs.existsSync(topicsPath) || createMissing) {
-    const topicsData = {
-      schema_version: 2,
-      topics: Object.entries(modules).map(([k, v]) => ({
-        topic_key: k,
-        name: v.title,
-        session_id: v.session_id,
-        vendor: v.vendor,
-        resumable: v.resumable,
-        tags: v.tags,
-        memory_doc: v.memory_doc
-      }))
+  if (existingSessionsData && existingSessionsData.vendors && typeof existingSessionsData.vendors === 'object') {
+    for (const [vKey, vData] of Object.entries(existingSessionsData.vendors)) {
+      vendors[vKey] = vData;
+    }
+  } else if (existingSessionsData && existingSessionsData.modules) {
+    const oldVendor = existingSessionsData.current_vendor || 'antigravity';
+    vendors[oldVendor] = {
+      schema_version: 3,
+      vendor: oldVendor,
+      main_thread_id: existingSessionsData.main_thread_id || null,
+      updated_at: existingSessionsData.updated_at || new Date().toISOString(),
+      modules: existingSessionsData.modules || {},
+      sessions: existingSessionsData.sessions || []
     };
-    fs.writeFileSync(topicsPath, JSON.stringify(topicsData, null, 2), 'utf8');
   }
 
-  // 4. todo.json
+  // 检查磁盘既有独立物理文件
+  const knownVendors = ['antigravity', 'zcode', 'codex', 'claude'];
+  for (const v of knownVendors) {
+    const vPath = path.join(taskLoopDir, `sessions.${v}.json`);
+    if (!vendors[v] && fs.existsSync(vPath)) {
+      try {
+        vendors[v] = JSON.parse(fs.readFileSync(vPath, 'utf8'));
+      } catch {}
+    }
+  }
+
+  // 更新当前厂商分区
+  vendors[targetVendor] = targetVendorData;
+
+  // 写入当前厂商独立物理文件
+  fs.writeFileSync(vendorSpecificFile, JSON.stringify(targetVendorData, null, 2), 'utf8');
+
+  // 若其他已知厂商在 vendors 中有数据，也确保其物理文件同步更新/落盘
+  for (const [vKey, vData] of Object.entries(vendors)) {
+    const vFile = path.join(taskLoopDir, `sessions.${vKey}.json`);
+    if (!fs.existsSync(vFile) || vKey === targetVendor) {
+      try {
+        fs.writeFileSync(vFile, JSON.stringify(vData, null, 2), 'utf8');
+      } catch {}
+    }
+  }
+
+  // 写入全量主 sessions.json (Schema v3)
+  const masterSessionsData = {
+    schema_version: 3,
+    main_thread_id: mainThreadId,
+    current_vendor: targetVendor,
+    updated_at: new Date().toISOString(),
+    modules: targetModules,
+    sessions: targetSessionsList,
+    vendors: vendors
+  };
+
+  fs.writeFileSync(sessionsPath, JSON.stringify(masterSessionsData, null, 2), 'utf8');
+
+  // 4. topics.json
+  const topicsData = {
+    schema_version: 3,
+    topics: Object.entries(targetModules).map(([k, v]) => ({
+      topic_key: k,
+      name: v.title,
+      session_id: v.session_id,
+      vendor: v.vendor,
+      resumable: v.resumable,
+      tags: v.tags,
+      memory_doc: v.memory_doc
+    }))
+  };
+  fs.writeFileSync(topicsPath, JSON.stringify(topicsData, null, 2), 'utf8');
+
+  // 5. todo.json
   if (!fs.existsSync(todoPath)) {
-    fs.writeFileSync(todoPath, JSON.stringify({ schema_version: 2, items: [] }, null, 2), 'utf8');
+    fs.writeFileSync(todoPath, JSON.stringify({ schema_version: 3, items: [] }, null, 2), 'utf8');
   }
 
-  // 5. policy.json
+  // 6. policy.json
   if (!fs.existsSync(policyPath)) {
     fs.writeFileSync(policyPath, JSON.stringify({
-      schema_version: 2,
-      active_vendor: currentVendor || 'antigravity',
+      schema_version: 3,
+      active_vendor: targetVendor,
       default_lease_timeout_sec: 1800,
       enable_file_state_machine: false
     }, null, 2), 'utf8');
   }
 
-  // 6. 主会话记忆文档脚手架 (存在则不覆盖)
+  // 7. 主会话记忆文档脚手架 (存在则不覆盖)
   if (mainThreadId) {
     result.scaffolded_memory_docs = [];
-    const mainDoc = 'docs/memory/main.md';
+    const mainDoc = 'docs/MEMORY.md';
     if (scaffoldMemoryDoc(wsRoot, mainDoc, '[主会话] 任务编排 & 治理中枢')) {
       result.scaffolded_memory_docs.push(mainDoc);
     }
   }
 
-  // 7. 会话工具优先指引 (核心思想: 基于会话 SDK 的长期会话编排)
+  // 8. 会话工具优先指引 (核心思想: 基于会话 SDK 的长期会话编排)
   result.session_tools = {
     philosophy: 'task-loop 以会话为一等公民: 主会话的角色是需求加工与派单, 实施必须派发至专题会话/子代理',
     dispatch_order: [
-      '1. 查 .agents/task-loop/sessions.json 寻找匹配专题, 优先复用',
+      `1. 查 .agents/task-loop/sessions.${targetVendor}.json (或 sessions.json vendors.${targetVendor}) 寻找匹配专题, 优先复用`,
       '2. 可续接专题 (resumable: true): 经当前宿主 SessionProvider send/resume 原语定向派单',
       '3. 不可续接专题 (resumable: false): 仅只读内省参考; 需要实施时经 new-session 重建本宿主原生专题',
       '4. 无匹配专题: 经 new-session / spawn Provider 拉起新顶层会话后登记, 严禁退化为人肉 UI 操作'
@@ -641,6 +679,12 @@ function main() {
   const wsIndex = args.indexOf('--workspace');
   const wsRoot = (wsIndex !== -1 && args[wsIndex + 1]) ? args[wsIndex + 1] : process.cwd();
 
+  let vendor = null;
+  const vendorIdx = args.indexOf('--vendor');
+  if (vendorIdx !== -1 && args[vendorIdx + 1]) {
+    vendor = args[vendorIdx + 1].toLowerCase();
+  }
+
   let currentSessionId = null;
   const currIdx = args.indexOf('--current-session');
   if (currIdx !== -1 && args[currIdx + 1]) {
@@ -661,7 +705,7 @@ function main() {
   const moduleAllowlist = parseList('--modules');
   const moduleExclude = parseList('--exclude');
 
-  const res = initTaskLoop({ wsRoot, dryRun, createMissing, currentSessionId, mainSessionId, moduleAllowlist, moduleExclude });
+  const res = initTaskLoop({ wsRoot, dryRun, createMissing, vendor, currentSessionId, mainSessionId, moduleAllowlist, moduleExclude });
 
   console.log('================================================================================');
   console.log(' [task-loop] 项目初始化与已有会话调查 (带记忆文档 1:1 自动映射)');

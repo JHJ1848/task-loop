@@ -1,0 +1,10 @@
+{
+  "name": "task-loop",
+  "version": "1.3.0-zcode",
+  "description": "Task Loop plugin adapted for ZCode: session-aware context injection, allowlist hard gate hooks, and multi-vendor session introspection providers.",
+  "author": {
+    "name": "task-loop Team"
+  },
+  "license": "MIT",
+  "skills": "skills"
+}

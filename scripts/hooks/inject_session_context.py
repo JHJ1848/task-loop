@@ -37,12 +37,22 @@ def resolve_workspace_root(workspace_paths):
     return os.getcwd()
 
 
-def find_sessions_registry(ws_root):
-    candidates = [
-        os.path.join(ws_root, ".agents", "task-loop", "sessions.json"),
-        os.path.join(ws_root, ".agents", "sessions.json"),
-        os.path.join(os.getcwd(), ".agents", "task-loop", "sessions.json")
-    ]
+def find_sessions_registry(ws_root, target_vendor=None):
+    candidates = []
+    if ws_root:
+        if target_vendor:
+            candidates.append(os.path.join(ws_root, ".agents", "task-loop", f"sessions.{target_vendor}.json"))
+        candidates.extend([
+            os.path.join(ws_root, ".agents", "task-loop", "sessions.json"),
+            os.path.join(ws_root, ".agents", "sessions.json")
+        ])
+    if os.getcwd() and os.getcwd() != ws_root:
+        if target_vendor:
+            candidates.append(os.path.join(os.getcwd(), ".agents", "task-loop", f"sessions.{target_vendor}.json"))
+        candidates.extend([
+            os.path.join(os.getcwd(), ".agents", "task-loop", "sessions.json"),
+            os.path.join(os.getcwd(), ".agents", "sessions.json")
+        ])
     for c in candidates:
         if os.path.exists(c):
             try:
@@ -54,44 +64,33 @@ def find_sessions_registry(ws_root):
 
 
 def find_prompt_templates(ws_root):
-    candidates = [
-        os.path.join(ws_root, "templates", "prompt_templates.json"),
-        os.path.join(ws_root, ".agents", "task-loop", "templates", "prompt_templates.json"),
-        os.path.join(os.path.dirname(__file__), "..", "..", "templates", "prompt_templates.json"),
-        os.path.join(os.getcwd(), "templates", "prompt_templates.json")
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            try:
-                with open(c, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
+    tpl_path = os.path.join(ws_root, ".agents", "task-loop", "prompt-templates.json")
+    if os.path.exists(tpl_path):
+        try:
+            with open(tpl_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
     return None
 
 
 def find_active_todo(ws_root, conversation_id):
-    candidates = [
-        os.path.join(ws_root, ".agents", "task-loop", "todo.json"),
-        os.path.join(os.getcwd(), ".agents", "task-loop", "todo.json")
-    ]
-    for c in candidates:
-        if os.path.exists(c):
-            try:
-                with open(c, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    items = data.get("items", [])
-                    if isinstance(items, list):
-                        for item in items:
-                            if item.get("assignee_thread_id") == conversation_id and item.get("status") in ["in_progress", "dispatched", "pending"]:
-                                return item
-            except Exception:
-                pass
+    todo_path = os.path.join(ws_root, ".agents", "task-loop", "todo.json")
+    if os.path.exists(todo_path):
+        try:
+            with open(todo_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                items = data.get("items", [])
+                for item in items:
+                    if item.get("assignee_thread_id") == conversation_id and item.get("status") == "in_progress":
+                        return item
+        except Exception:
+            pass
     return None
 
 
-def get_session_details(conversation_id, session_data):
-    if not session_data:
+def match_in_vendor_data(conversation_id, data):
+    if not data or not isinstance(data, dict):
         return {
             "session_id": conversation_id,
             "is_main": False,
@@ -104,11 +103,11 @@ def get_session_details(conversation_id, session_data):
             "memory_docs": []
         }
 
-    main_thread_id = session_data.get("main_thread_id")
+    main_thread_id = data.get("main_thread_id")
     is_main = (main_thread_id == conversation_id)
 
     session_item = None
-    sessions = session_data.get("sessions", [])
+    sessions = data.get("sessions", [])
     if isinstance(sessions, list):
         for s in sessions:
             if s.get("session_id") == conversation_id:
@@ -117,7 +116,7 @@ def get_session_details(conversation_id, session_data):
 
     module_key = None
     mem_docs = []
-    modules = session_data.get("modules", {})
+    modules = data.get("modules", {})
     if isinstance(modules, dict):
         for k, v in modules.items():
             if isinstance(v, dict) and v.get("session_id") == conversation_id:
@@ -146,6 +145,10 @@ def get_session_details(conversation_id, session_data):
     if session_item and isinstance(session_item.get("memory_docs"), list) and len(session_item["memory_docs"]) > 0:
         mem_docs = session_item["memory_docs"]
 
+    final_is_main = session_item.get("is_main") if (session_item and "is_main" in session_item) else is_main
+    if final_is_main and not mem_docs:
+        mem_docs = ["docs/MEMORY.md"]
+
     title = "专题会话"
     if session_item and session_item.get("title"):
         title = session_item["title"]
@@ -154,7 +157,7 @@ def get_session_details(conversation_id, session_data):
 
     return {
         "session_id": conversation_id,
-        "is_main": (session_item.get("is_main") if (session_item and "is_main" in session_item) else is_main),
+        "is_main": final_is_main,
         "is_unregistered": False,
         "title": title,
         "module_key": module_key or ("main" if is_main else "unknown"),
@@ -163,6 +166,39 @@ def get_session_details(conversation_id, session_data):
         "summary": session_item.get("summary") if session_item else (f"专题模块: {module_key}" if module_key else None),
         "memory_docs": mem_docs or []
     }
+
+
+def get_session_details(conversation_id, session_data, target_vendor=None):
+    if not session_data:
+        return {
+            "session_id": conversation_id,
+            "is_main": False,
+            "is_unregistered": True,
+            "title": "未注册会话 (Unregistered Session)",
+            "module_key": "unknown",
+            "created_at": None,
+            "last_active_at": None,
+            "summary": None,
+            "memory_docs": []
+        }
+
+    # 1. 如果包含 vendors 分区 (Schema v3)
+    if isinstance(session_data.get("vendors"), dict):
+        if target_vendor and target_vendor in session_data["vendors"]:
+            v_details = match_in_vendor_data(conversation_id, session_data["vendors"][target_vendor])
+            if not v_details["is_unregistered"]:
+                return v_details
+
+        # 跨所有 vendor 分区匹配
+        for v_key, v_data in session_data["vendors"].items():
+            if v_key == target_vendor:
+                continue
+            v_details = match_in_vendor_data(conversation_id, v_data)
+            if not v_details["is_unregistered"]:
+                return v_details
+
+    # 2. 顶层单厂商匹配 (Schema v2 或当前 vendor 顶层数据)
+    return match_in_vendor_data(conversation_id, session_data)
 
 
 def get_plugin_topic_rules(details, templates):
@@ -178,13 +214,15 @@ def get_plugin_topic_rules(details, templates):
         if main_rules and isinstance(main_rules, list):
             lines.extend(main_rules)
         else:
-            lines.append("- [Plugin: task-loop | 主会话约束规则]:")
-            lines.append("  1. 职责边界: 主会话严禁参与任何实际业务代码修改，所有代码更改必须派单至对应专题会话;")
-            lines.append("  2. 需求加工与定界: 理解用户意图，提炼单一职责目标、验收准则与任务类型 ([EXPLORE] 或 [WORK]);")
-            lines.append("  3. 防冲突与复用: 派发前强制比对现有专题清单 (modules/tags/docs/memory)，复用优先，严禁重复创建重叠专题;")
-            lines.append("  4. 任务派单流程: 寻找专题 -> 没有则调用 agentapi new-conversation 新建 -> send_message 定向发信，划定 Allowlist 物理白名单;")
-            lines.append("  5. 复杂度分级调度: Level 1 就地闭环，Level 2 标准派单自测，Level 3 临时 Subagent 并行协作;")
-            lines.append("  6. 质检与门禁核验: 依据子会话测试与证据验收，输出用户验证指引卡 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md)。")
+            lines.append("- [Plugin: task-loop | 主会话定位与治理硬约束]:")
+            lines.append("  1. 仅限只读探索 (Explore Only): 主会话仅限执行需求初加工、只读探测与架构诊断 (EXPLORE)，严禁主会话自身直接执行修改落地 (WORK) 或直接编辑业务代码;")
+            lines.append("  2. 强制派单执行 (Mandatory Delegation): 所有具体的业务代码修改、功能落地与 BugFix (WORK) 强制要求派单至对应的专题会话 (Topic Session) 实施，杜绝主会话分散多方写入造成的上下文错乱与业务冲突;")
+            lines.append("  3. 需求定界与白名单: 提炼单一职责目标、验收准则与严格的物理白名单 (Allowlist)，明确任务类型 ([EXPLORE] 或 [WORK]);")
+            lines.append("  4. 防冲突与复用: 派发前强制比对现有专题清单 (modules/tags/docs/memory)，复用优先，严禁重复创建重叠专题;")
+            lines.append("  5. 缺失专题与不明确流转铁律: 若无可用专题会话或不清楚如何新建/请求会话，必须先查阅文档指导 (references/sdk/README.md, skills/new-session/SKILL.md, skills/session-control/SKILL.md)，若仍需确认必须主动向用户请求指引并询问，绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理;")
+            lines.append("  6. 任务派单流转: 寻找专题 -> 没有则按规范创建顶层专题会话 -> send_message 定向发信，划定 Allowlist 物理白名单;")
+            lines.append("  7. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 临时 Subagent 并行协作;")
+            lines.append("  8. 质检与门禁核验: 依据子会话测试结果与 Evidence 严格验收，输出用户验证指引卡 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md)。")
     elif details.get("module_key") == "session_control":
         sess_rules = plugin_rules.get("session_control")
         if sess_rules and isinstance(sess_rules, list):
@@ -230,8 +268,8 @@ def get_plugin_topic_rules(details, templates):
     return lines
 
 
-def generate_injection_message(conversation_id, session_data, active_todo, templates=None):
-    details = get_session_details(conversation_id, session_data)
+def generate_injection_message(conversation_id, session_data, active_todo, templates=None, vendor=None):
+    details = get_session_details(conversation_id, session_data, vendor)
     header_namespace = (templates.get("header_namespace") if templates else None) or (templates.get("plugin_namespace") if templates else None) or "[Plugin: task-loop | 会话上下文感知]"
     
     parts = [header_namespace]
@@ -285,12 +323,55 @@ def process_payload(payload):
         if not conversation_id:
             return {"injectSteps": []}
 
+        # 避免工作区插件与全局用户插件同时触发 PreInvocation 产生重复注入 (只要非测试模式即执行 2000ms 独占排他去重)
+        should_dedupe = not payload.get("isTest") and not payload.get("skipDedupe")
+
+        if should_dedupe:
+            import tempfile
+            import time
+            dedupe_lock = os.path.join(tempfile.gettempdir(), f".task-loop-hook-{conversation_id or 'default'}.lock")
+            try:
+                acquired = False
+                try:
+                    fd = os.open(dedupe_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(str(time.time()))
+                    acquired = True
+                except FileExistsError:
+                    try:
+                        mtime = os.path.getmtime(dedupe_lock)
+                    except Exception:
+                        mtime = 0
+                    if (time.time() - mtime) < 2.0:
+                        return {"injectSteps": []}
+                    # 锁已过期，尝试原子争抢：删除后重新以 O_CREAT | O_EXCL 创建
+                    try:
+                        os.remove(dedupe_lock)
+                    except Exception:
+                        pass
+                    try:
+                        fd2 = os.open(dedupe_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                        with os.fdopen(fd2, "w", encoding="utf-8") as f:
+                            f.write(str(time.time()))
+                        acquired = True
+                    except Exception:
+                        return {"injectSteps": []}
+                if not acquired:
+                    return {"injectSteps": []}
+            except Exception:
+                try:
+                    if os.path.exists(dedupe_lock) and (time.time() - os.path.getmtime(dedupe_lock)) < 2.0:
+                        return {"injectSteps": []}
+                except Exception:
+                    pass
+
         ws_root = resolve_workspace_root(payload.get("workspacePaths"))
-        session_data = find_sessions_registry(ws_root)
+        target_vendor = payload.get("vendor") or ("zcode" if os.environ.get("ZCODE_SESSION_ID") else ("codex" if os.environ.get("CODEX_THREAD_ID") else "antigravity"))
+        session_data = find_sessions_registry(ws_root, target_vendor)
         templates = find_prompt_templates(ws_root)
         active_todo = find_active_todo(ws_root, conversation_id)
 
-        ephemeral_text = generate_injection_message(conversation_id, session_data, active_todo, templates)
+        ephemeral_text = generate_injection_message(conversation_id, session_data, active_todo, templates, target_vendor)
 
         return {
             "injectSteps": [

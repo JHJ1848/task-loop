@@ -155,6 +155,70 @@ function isPathAllowed(targetFile, allowlist, wsRoot) {
   return false;
 }
 
+function findSessionsRegistry(wsRoot) {
+  const candidates = [
+    path.join(wsRoot, '.agents', 'task-loop', 'sessions.json'),
+    path.join(wsRoot, '.agents', 'sessions.json'),
+    path.join(process.cwd(), '.agents', 'task-loop', 'sessions.json')
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      try {
+        const raw = fs.readFileSync(c, 'utf8');
+        return JSON.parse(raw);
+      } catch {}
+    }
+  }
+  return null;
+}
+
+function isGovernanceOrStateFile(normTarget, normWsRoot) {
+  // 允许主会话维护状态机、治理规则、受控记忆、插件定义与临时派单文件
+  const allowedPrefixes = [
+    normalizePath(path.join(normWsRoot, '.agents')),
+    normalizePath(path.join(normWsRoot, 'docs')),
+    normalizePath(path.join(normWsRoot, 'rules')),
+    normalizePath(path.join(normWsRoot, 'templates')),
+    normalizePath(path.join(normWsRoot, 'references')),
+    normalizePath(path.join(normWsRoot, 'config')),
+    normalizePath(os.tmpdir()),
+    normalizePath(path.join(os.homedir(), '.gemini', 'antigravity', 'brain'))
+  ];
+
+  for (const p of allowedPrefixes) {
+    if (normTarget.startsWith(p)) return true;
+  }
+
+  const allowedExactFiles = [
+    normalizePath(path.join(normWsRoot, 'AGENTS.md')),
+    normalizePath(path.join(normWsRoot, '.gitignore')),
+    normalizePath(path.join(normWsRoot, 'plugin.json')),
+    normalizePath(path.join(normWsRoot, 'hooks.json')),
+    normalizePath(path.join(normWsRoot, 'SKILL.md'))
+  ];
+
+  for (const f of allowedExactFiles) {
+    if (normTarget === f) return true;
+  }
+
+  return false;
+}
+
+function checkIsMainSession(sessionData, conversationId) {
+  if (!sessionData || !conversationId) return false;
+  if (sessionData.main_thread_id === conversationId) return true;
+  if (Array.isArray(sessionData.sessions) && sessionData.sessions.some(s => s.session_id === conversationId && s.is_main)) return true;
+  if (sessionData.vendors && typeof sessionData.vendors === 'object') {
+    for (const vData of Object.values(sessionData.vendors)) {
+      if (vData && typeof vData === 'object') {
+        if (vData.main_thread_id === conversationId) return true;
+        if (Array.isArray(vData.sessions) && vData.sessions.some(s => s.session_id === conversationId && s.is_main)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function processPayload(payload) {
   try {
     const toolCall = payload.toolCall;
@@ -175,6 +239,21 @@ function processPayload(payload) {
 
     const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
     const conversationId = payload.conversationId;
+
+    // 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
+    const sessionData = findSessionsRegistry(wsRoot);
+    const isMain = checkIsMainSession(sessionData, conversationId);
+
+    if (isMain) {
+      const normTarget = normalizePath(path.isAbsolute(targetFile) ? targetFile : path.resolve(wsRoot, targetFile));
+      const normWsRoot = normalizePath(wsRoot);
+      if (!isGovernanceOrStateFile(normTarget, normWsRoot)) {
+        return {
+          decision: 'deny',
+          reason: `[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 (${targetFile})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。`
+        };
+      }
+    }
 
     const allowlist = findAllowlistForSession(wsRoot, conversationId);
 
