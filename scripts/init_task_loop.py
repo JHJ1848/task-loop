@@ -36,6 +36,11 @@ try:
 except ImportError:
     def scan_claude_sessions(ws): return []
 
+try:
+    from get_zcode_project_sessions import scan_zcode_sessions
+except ImportError:
+    def scan_zcode_sessions(ws): return []
+
 
 def normalize_path(p):
     if not p:
@@ -178,8 +183,9 @@ def survey_existing_sessions(ws_root, options=None):
     agy_s = scan_agy_sessions(ws_root) or []
     codex_s = scan_codex_sessions(ws_root) or []
     claude_s = scan_claude_sessions(ws_root) or []
+    zcode_s = scan_zcode_sessions(ws_root) or []
 
-    all_sessions = agy_s + codex_s + claude_s
+    all_sessions = agy_s + codex_s + claude_s + zcode_s
     unique_map = {}
     for s in all_sessions:
         s_id = s.get("session_id")
