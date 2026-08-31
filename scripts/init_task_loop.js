@@ -14,6 +14,12 @@ const { scanAgySessions } = require('./providers/get_agy_project_sessions');
 const { scanCodexSessions } = require('./providers/get_codex_project_sessions');
 const { scanClaudeSessions } = require('./providers/get_claude_project_sessions');
 
+let scanZCodeSessions = null;
+try {
+  const zcodeMod = require('./providers/get_zcode_project_sessions');
+  scanZCodeSessions = zcodeMod.scanZCodeSessions;
+} catch (e) {}
+
 function normalizePath(p) {
   if (!p) return '';
   return p.replace(/\\/g, '/');
@@ -177,8 +183,9 @@ function surveyExistingSessions(wsRoot, options = {}) {
   const agySessions = scanAgySessions(wsRoot) || [];
   const codexSessions = scanCodexSessions(wsRoot) || [];
   const claudeSessions = scanClaudeSessions ? scanClaudeSessions(wsRoot) : [];
+  const zcodeSessions = scanZCodeSessions ? (scanZCodeSessions(wsRoot) || []) : [];
 
-  const all = [...agySessions, ...codexSessions, ...claudeSessions];
+  const all = [...agySessions, ...codexSessions, ...claudeSessions, ...zcodeSessions];
   const uniqueMap = new Map();
 
   for (const s of all) {
