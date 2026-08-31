@@ -10,15 +10,59 @@
 
 const fs = require('fs');
 const path = require('path');
-const { scanAgySessions } = require('./providers/get_agy_project_sessions');
-const { scanCodexSessions } = require('./providers/get_codex_project_sessions');
-const { scanClaudeSessions } = require('./providers/get_claude_project_sessions');
 
-let scanZCodeSessions = null;
-try {
-  const zcodeMod = require('./providers/get_zcode_project_sessions');
-  scanZCodeSessions = zcodeMod.scanZCodeSessions;
-} catch (e) {}
+/**
+ * 容错 Provider 注册表: 已知厂商扫描器按序尝试加载, 缺失即跳过。
+ * 各分支可自带额外 Provider (如 ZCode), 只要文件存在即被自动纳入,
+ * 导出名归一化兼容 scanZcodeSessions / scanZCodeSessions 两种拼写。
+ */
+const PROVIDER_MODULES = [
+  { vendor: 'antigravity', path: './providers/get_agy_project_sessions', names: ['scanAgySessions'] },
+  { vendor: 'codex', path: './providers/get_codex_project_sessions', names: ['scanCodexSessions'] },
+  { vendor: 'claude', path: './providers/get_claude_project_sessions', names: ['scanClaudeSessions'] },
+  { vendor: 'zcode', path: './providers/get_zcode_project_sessions', names: ['scanZcodeSessions', 'scanZCodeSessions'] }
+];
+
+function loadProviderRegistry() {
+  const registry = [];
+  for (const def of PROVIDER_MODULES) {
+    try {
+      const mod = require(def.path);
+      const fnName = def.names.find(n => typeof mod[n] === 'function');
+      if (fnName) {
+        registry.push({ vendor: def.vendor, scan: mod[fnName] });
+      }
+    } catch (e) {
+      // Provider 文件不存在 (通用主线未携带某厂商适配) -> 优雅跳过
+    }
+  }
+  return registry;
+}
+
+/** 检测当前宿主厂商, 用于可续接性 (resumable) 判定 */
+function detectCurrentVendor(env) {
+  env = env || process.env;
+  if (env.ANTIGRAVITY_CONVERSATION_ID) return 'antigravity';
+  if (env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID) return 'zcode';
+  if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
+  return null;
+}
+
+/** 标题清洗: 去链接标记/首尾残片/多余空白 */
+function sanitizeTitle(raw) {
+  let t = String(raw || '')
+    .replace(/\[[^\]]+\]\([^\)]+\)/g, '')
+    .replace(/\\+/g, '')
+    .replace(/[\r\n]+/g, ' ')
+    .trim();
+  t = t.replace(/[\s\u3000]+$/g, '').replace(/^[\s\u3000]+/g, '');
+  return t || '(无标题)';
+}
+
+/** 模块 Key 卫生校验: 仅允许小写字母/数字/下划线 */
+function isValidModuleKey(key) {
+  return typeof key === 'string' && /^[a-z0-9_]+$/.test(key);
+}
 
 function normalizePath(p) {
   if (!p) return '';
@@ -30,7 +74,7 @@ function normalizePath(p) {
  * 规范格式: [专题名称] 核心功能1 & 核心功能2
  */
 function inferTopicMapping(session) {
-  const rawTitle = (session.title || '').replace(/\[[^\]]+\]\([^\)]+\)/g, '').trim();
+  const rawTitle = sanitizeTitle(session.title);
   const titleLower = rawTitle.toLowerCase();
   const summaryLower = (session.summary || '').toLowerCase();
   const promptsLower = (session.recent_prompts || []).join(' ').toLowerCase();
@@ -41,8 +85,9 @@ function inferTopicMapping(session) {
   let func1 = '';
   let func2 = '';
   let moduleKey = '';
+  let needsNaming = false;
 
-  if (session.is_main || titleLower.includes('main') || (session.session_id === 'ee94b2c5-c0c2-473f-8f71-213250ba5295') || fullText.includes('治理中枢') || fullText.includes('开发仓库')) {
+  if (session.is_main || titleLower.includes('main') || fullText.includes('治理中枢') || fullText.includes('开发仓库')) {
     category = '主会话';
     func1 = '任务编排';
     func2 = '治理中枢';
@@ -57,7 +102,7 @@ function inferTopicMapping(session) {
     func1 = '动态模板';
     func2 = '编排治理';
     moduleKey = 'subagent';
-  } else if (fullText.includes('topic: session_control') || fullText.includes('session_control') || fullText.includes('会话专题') || fullText.includes('会话') || (titleLower.includes('session') && !titleLower.includes('main'))) {
+  } else if (fullText.includes('topic: session_control') || fullText.includes('session_control') || fullText.includes('会话专题') || (titleLower.includes('session') && !titleLower.includes('main'))) {
     category = '会话控制专题';
     func1 = '跨厂商内省';
     func2 = '会话管理';
@@ -108,16 +153,27 @@ function inferTopicMapping(session) {
     category = `${kw1}专题`;
     func1 = kw1;
     func2 = kw2;
-    moduleKey = (words[0] ? words[0] : 'custom_topic')
+    const candidate = (words[0] ? words[0] : 'custom_topic')
       .replace(/[^\w\u4e00-\u9fa5]/g, '_')
       .replace(/_+/g, '_')
       .slice(0, 25);
-    if (!moduleKey || moduleKey === '_') moduleKey = `topic_${(session.session_id || '').slice(0, 8)}`;
+    // 模块 Key 卫生门禁: 仅允许 [a-z0-9_], 非法 (中文碎片/角色扮演前缀等) 降级 custom_topic 待人工命名
+    if (!candidate || candidate === '_' || !isValidModuleKey(candidate.toLowerCase())) {
+      moduleKey = 'custom_topic';
+      needsNaming = true;
+    } else {
+      moduleKey = candidate.toLowerCase();
+    }
+    if (!moduleKey || moduleKey === '_') {
+      moduleKey = 'custom_topic';
+      needsNaming = true;
+    }
   }
 
   const standardizedTitle = `[${category}] ${func1} & ${func2}`;
   return {
     module_key: moduleKey,
+    needs_naming: needsNaming,
     topic_name: standardizedTitle,
     tags: [moduleKey, 'topic'],
     memory_doc: `docs/memory/${moduleKey}.md`
@@ -176,16 +232,36 @@ function spawnRootConversation(title, prompt, wsRoot) {
   return null;
 }
 
+/**
+ * 单一事实源: 模块 Key -> 建议项的首个匹配分配。
+ * 预览报告与真实落盘必须共用本函数的计算结果, 结构上杜绝两边分叉。
+ */
+function resolveModuleAssignments(suggestions) {
+  const assignments = new Map(); // module_key -> suggestion (首个胜出)
+  for (const s of suggestions) {
+    const key = s.suggested_module_key;
+    if (!assignments.has(key)) {
+      assignments.set(key, s);
+    }
+  }
+  return assignments;
+}
+
 function surveyExistingSessions(wsRoot, options = {}) {
-  const callerSessionId = options.currentSession || options.currentSessionId || process.env.ANTIGRAVITY_CONVERSATION_ID || null;
+  const callerSessionId = options.currentSession || options.currentSessionId || process.env.ANTIGRAVITY_CONVERSATION_ID || process.env.ZCODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || null;
   const explicitMainSessionId = options.mainSession || options.mainSessionId || null;
+  const currentVendor = detectCurrentVendor(process.env);
 
-  const agySessions = scanAgySessions(wsRoot) || [];
-  const codexSessions = scanCodexSessions(wsRoot) || [];
-  const claudeSessions = scanClaudeSessions ? scanClaudeSessions(wsRoot) : [];
-  const zcodeSessions = scanZCodeSessions ? (scanZCodeSessions(wsRoot) || []) : [];
-
-  const all = [...agySessions, ...codexSessions, ...claudeSessions, ...zcodeSessions];
+  const registry = loadProviderRegistry();
+  const all = [];
+  for (const p of registry) {
+    try {
+      const found = p.scan(wsRoot) || [];
+      all.push(...found);
+    } catch (e) {
+      // 单个 provider 失败不阻断整体调查
+    }
+  }
   const uniqueMap = new Map();
 
   for (const s of all) {
@@ -198,7 +274,7 @@ function surveyExistingSessions(wsRoot, options = {}) {
   if (callerSessionId && !uniqueMap.has(callerSessionId)) {
     uniqueMap.set(callerSessionId, {
       session_id: callerSessionId,
-      vendor: 'antigravity',
+      vendor: currentVendor || 'antigravity',
       title: '[主会话] 任务编排 & 治理中枢',
       is_main: true,
       created_at: new Date().toISOString(),
@@ -208,20 +284,42 @@ function surveyExistingSessions(wsRoot, options = {}) {
 
   // 主会话选定优先级:
   // 1) --main-session <id> (用户显式指定)
-  // 2) --current-session 或环境变量读取到的当前活跃会话 ID (推荐当前发起会话为主会话)
-  // 3) 历史扫描中明确带 [主会话] 标签或 is_main 的会话
-  // 4) suggestions 列表中的第一项
+  // 2) --current-session 或环境变量读取到的当前活跃会话 ID (发起初始化的宿主会话最高优先级)
+  // 3) 既有有效 sessions.json 中持久化的 main_thread_id (若属于当前宿主环境且存在)
+  // 4) 历史扫描中明确属于当前宿主环境且带 [主会话] 标签或 is_main 的会话
+  // 5) suggestions 列表中的第一项
   let chosenMainId = null;
   if (explicitMainSessionId && uniqueMap.has(explicitMainSessionId)) {
     chosenMainId = explicitMainSessionId;
   } else if (callerSessionId && uniqueMap.has(callerSessionId)) {
     chosenMainId = callerSessionId;
+  } else if (callerSessionId) {
+    // callerSessionId 必定作为主会话
+    chosenMainId = callerSessionId;
+    uniqueMap.set(callerSessionId, {
+      session_id: callerSessionId,
+      vendor: currentVendor || 'antigravity',
+      title: '[主会话] 任务编排 & 治理中枢',
+      is_main: true,
+      created_at: new Date().toISOString(),
+      last_active_at: new Date().toISOString()
+    });
   } else {
     for (const s of uniqueMap.values()) {
       const rawTitle = (s.title || '').toLowerCase();
-      if (s.is_main || rawTitle.includes('[主会话]') || rawTitle.includes('治理中枢')) {
+      const sVendor = (s.vendor || 'antigravity').toLowerCase();
+      if ((s.is_main || rawTitle.includes('[主会话]') || rawTitle.includes('治理中枢')) && (sVendor === currentVendor)) {
         chosenMainId = s.session_id;
         break;
+      }
+    }
+    if (!chosenMainId) {
+      for (const s of uniqueMap.values()) {
+        const rawTitle = (s.title || '').toLowerCase();
+        if (s.is_main || rawTitle.includes('[主会话]') || rawTitle.includes('治理中枢')) {
+          chosenMainId = s.session_id;
+          break;
+        }
       }
     }
     if (!chosenMainId && uniqueMap.size > 0) {
@@ -257,11 +355,16 @@ function surveyExistingSessions(wsRoot, options = {}) {
     return {
       session_id: s.session_id,
       vendor: s.vendor || 'antigravity',
-      original_title: s.title || '(无标题)',
+      original_title: s.original_title || sanitizeTitle(s.title),
       suggested_module_key: inferred.module_key,
+      needs_naming: Boolean(inferred.needs_naming),
       suggested_topic_name: inferred.topic_name,
       suggested_tags: inferred.tags,
       suggested_memory_doc: inferred.memory_doc,
+      resumable: (s.vendor || 'antigravity') === currentVendor,
+      dispatch_hint: (s.vendor || 'antigravity') === currentVendor
+        ? '可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)'
+        : '只读遗留: 当前宿主不可续接, 仅支持历史内省; 建议经 new-session 重建为本宿主原生专题',
       is_main_candidate: isMainCandidate,
       is_current_session: isCurrentSession
     };
@@ -274,20 +377,72 @@ function surveyExistingSessions(wsRoot, options = {}) {
     return 0;
   });
 
-  // 扫描受控记忆文档并进行 1:1 对齐
+  // 单一事实源: 一次性计算模块分配, 对齐报告与持久化共用
+  const assignments = resolveModuleAssignments(suggestions);
+
+  // 扫描受控记忆文档并进行 1:1 对齐 (对齐结果同样取自 assignments, 与落盘同源)
   const memoryDocs = scanExistingMemoryDocs(wsRoot);
   const memoryAlignment = memoryDocs.map(doc => {
-    const matchedSession = suggestions.find(s => s.suggested_module_key === doc.module_key);
+    const matchedSession = assignments.get(doc.module_key) || null;
     return {
       module_key: doc.module_key,
       memory_doc: doc.relative_path,
       matched_session_id: matchedSession ? matchedSession.session_id : null,
+      matched_vendor: matchedSession ? matchedSession.vendor : null,
+      resumable: matchedSession ? matchedSession.resumable : false,
       matched_topic_name: matchedSession ? matchedSession.suggested_topic_name : `[${doc.module_key}专题] 核心功能维护 & 记忆沉淀`,
       status: matchedSession ? 'ALIGNED' : 'MISSING_SESSION'
     };
   });
 
-  return { suggestions, memoryDocs, memoryAlignment, chosenMainId, callerSessionId };
+  return { suggestions, memoryDocs, memoryAlignment, assignments, chosenMainId, callerSessionId, currentVendor };
+}
+
+/**
+ * 批准门禁 (纯函数): 决定哪些模块建议允许持久化。
+ * 默认仅 main + 记忆文档已对齐模块; 其余进入 pending_approval, 需经
+ * --modules <a,b,c> 显式批准或 --exclude 显式排除。
+ */
+function applyApprovalGate(assignments, memoryAlignment, options = {}) {
+  const allow = new Set((options.moduleAllowlist || []).filter(Boolean));
+  const exclude = new Set((options.moduleExclude || []).filter(Boolean));
+  const alignedKeys = new Set(memoryAlignment.filter(a => a.status === 'ALIGNED' || a.status === 'CREATED_AND_ALIGNED').map(a => a.module_key));
+
+  const approved = [];
+  const pending = [];
+  for (const [key, suggestion] of assignments.entries()) {
+    if (exclude.has(key)) {
+      pending.push({ module_key: key, session_id: suggestion.session_id, reason: 'explicitly_excluded' });
+      continue;
+    }
+    if (key === 'main' || alignedKeys.has(key) || allow.has(key)) {
+      approved.push({ module_key: key, session_id: suggestion.session_id, via: key === 'main' ? 'main_session' : (alignedKeys.has(key) ? 'memory_doc_aligned' : 'explicit_approval') });
+    } else {
+      pending.push({ module_key: key, session_id: suggestion.session_id, reason: 'not_approved (使用 --modules <key> 批准持久化)' });
+    }
+  }
+  return { approved, pending, alignedKeys, allow, exclude };
+}
+
+/** 脚手架: 记忆文档缺失时生成最小模板 (已存在则绝不覆盖) */
+function scaffoldMemoryDoc(wsRoot, relativePath, topicName) {
+  const abs = path.join(wsRoot, relativePath);
+  if (fs.existsSync(abs)) {
+    return false;
+  }
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  const template = [
+    `# [${topicName}] 受控记忆`,
+    '',
+    '## 架构已知事实',
+    '',
+    '## 设计决策',
+    '',
+    '## 排障经验',
+    ''
+  ].join('\n');
+  fs.writeFileSync(abs, template, 'utf8');
+  return true;
 }
 
 function initTaskLoop(options = {}) {
@@ -300,7 +455,7 @@ function initTaskLoop(options = {}) {
   const todoPath = path.join(taskLoopDir, 'todo.json');
   const policyPath = path.join(taskLoopDir, 'policy.json');
 
-  const { suggestions, memoryDocs, memoryAlignment, chosenMainId, callerSessionId } = surveyExistingSessions(wsRoot, options);
+  const { suggestions, memoryDocs, memoryAlignment, assignments, chosenMainId, callerSessionId, currentVendor } = surveyExistingSessions(wsRoot, options);
 
   const result = {
     workspace_root: normalizePath(wsRoot),
@@ -315,10 +470,19 @@ function initTaskLoop(options = {}) {
     existing_memory_docs_count: memoryDocs.length,
     chosen_main_session_id: chosenMainId,
     caller_session_id: callerSessionId,
+    current_vendor: currentVendor,
     memory_alignment: memoryAlignment,
     topic_mapping_suggestions: suggestions,
     created_sessions: []
   };
+
+  // 批准门禁 (dry-run 也计算, 便于预览 pending_approval)
+  const gate = applyApprovalGate(assignments, memoryAlignment, {
+    moduleAllowlist: options.moduleAllowlist || [],
+    moduleExclude: options.moduleExclude || []
+  });
+  result.approved_modules = gate.approved;
+  result.pending_approval = gate.pending;
 
   if (dryRun) {
     return result;
@@ -340,39 +504,58 @@ function initTaskLoop(options = {}) {
           result.created_sessions.push({ module_key: align.module_key, session_id: newId, title });
           suggestions.push({
             session_id: newId,
-            vendor: 'antigravity',
-            original_title: title,
+            vendor: currentVendor || 'antigravity',
+            original_title: sanitizeTitle(title),
             suggested_module_key: align.module_key,
             suggested_topic_name: title,
             suggested_tags: [align.module_key, 'topic'],
             suggested_memory_doc: align.memory_doc,
+            resumable: true,
+            dispatch_hint: '可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)',
             is_main_candidate: false,
             is_current_session: false
           });
         }
       }
     }
+    // 新建会话后重算分配, 保证与落盘同源
+    const refreshed = resolveModuleAssignments(suggestions);
+    assignments.clear();
+    for (const [k, v] of refreshed.entries()) assignments.set(k, v);
   }
 
-  // 2. 构建 sessions.json
+  // 2. 构建 sessions.json (仅持久化通过批准门禁的模块; 其余会话仅入清单不占绑定)
   const mainThreadId = chosenMainId || (suggestions[0] ? suggestions[0].session_id : null);
+  const approvedKeys = new Set(gate.approved.map(a => a.module_key));
+  // createMissing 新建的对齐模块同样视为已批准
+  for (const align of memoryAlignment) {
+    if (align.status === 'CREATED_AND_ALIGNED') approvedKeys.add(align.module_key);
+  }
+
   const modules = {};
   const sessionsList = [];
 
   for (const item of suggestions) {
-    modules[item.suggested_module_key] = {
-      session_id: item.session_id,
-      title: item.suggested_topic_name,
-      tags: item.suggested_tags,
-      memory_doc: item.suggested_memory_doc,
-      summary: `专题模块: ${item.suggested_topic_name}`
-    };
+    const key = item.suggested_module_key;
+    if (approvedKeys.has(key) && !modules[key]) {
+      modules[key] = {
+        session_id: item.session_id,
+        title: item.suggested_topic_name,
+        tags: item.suggested_tags,
+        memory_doc: item.suggested_memory_doc,
+        vendor: item.vendor,
+        resumable: item.resumable,
+        dispatch_hint: item.dispatch_hint,
+        summary: `专题模块: ${item.suggested_topic_name}`
+      };
+    }
     sessionsList.push({
       session_id: item.session_id,
       vendor: item.vendor,
       title: item.suggested_topic_name,
       is_main: (item.session_id === mainThreadId),
-      module_key: item.suggested_module_key,
+      module_key: approvedKeys.has(key) ? key : null,
+      resumable: item.resumable,
       summary: `专题模块: ${item.suggested_topic_name}`,
       memory_docs: [item.suggested_memory_doc]
     });
@@ -381,6 +564,7 @@ function initTaskLoop(options = {}) {
   const sessionsData = {
     schema_version: 2,
     main_thread_id: mainThreadId,
+    current_vendor: currentVendor,
     updated_at: new Date().toISOString(),
     modules: modules,
     sessions: sessionsList
@@ -396,6 +580,8 @@ function initTaskLoop(options = {}) {
         topic_key: k,
         name: v.title,
         session_id: v.session_id,
+        vendor: v.vendor,
+        resumable: v.resumable,
         tags: v.tags,
         memory_doc: v.memory_doc
       }))
@@ -412,11 +598,32 @@ function initTaskLoop(options = {}) {
   if (!fs.existsSync(policyPath)) {
     fs.writeFileSync(policyPath, JSON.stringify({
       schema_version: 2,
-      active_vendor: 'antigravity',
+      active_vendor: currentVendor || 'antigravity',
       default_lease_timeout_sec: 1800,
       enable_file_state_machine: false
     }, null, 2), 'utf8');
   }
+
+  // 6. 主会话记忆文档脚手架 (存在则不覆盖)
+  if (mainThreadId) {
+    result.scaffolded_memory_docs = [];
+    const mainDoc = 'docs/memory/main.md';
+    if (scaffoldMemoryDoc(wsRoot, mainDoc, '[主会话] 任务编排 & 治理中枢')) {
+      result.scaffolded_memory_docs.push(mainDoc);
+    }
+  }
+
+  // 7. 会话工具优先指引 (核心思想: 基于会话 SDK 的长期会话编排)
+  result.session_tools = {
+    philosophy: 'task-loop 以会话为一等公民: 主会话的角色是需求加工与派单, 实施必须派发至专题会话/子代理',
+    dispatch_order: [
+      '1. 查 .agents/task-loop/sessions.json 寻找匹配专题, 优先复用',
+      '2. 可续接专题 (resumable: true): 经当前宿主 SessionProvider send/resume 原语定向派单',
+      '3. 不可续接专题 (resumable: false): 仅只读内省参考; 需要实施时经 new-session 重建本宿主原生专题',
+      '4. 无匹配专题: 经 new-session / spawn Provider 拉起新顶层会话后登记, 严禁退化为人肉 UI 操作'
+    ],
+    vendor_mapping_doc: 'references/sdk/README.md'
+  };
 
   return result;
 }
@@ -446,7 +653,15 @@ function main() {
     mainSessionId = args[mainIdx + 1];
   }
 
-  const res = initTaskLoop({ wsRoot, dryRun, createMissing, currentSessionId, mainSessionId });
+  const parseList = (flag) => {
+    const idx = args.indexOf(flag);
+    if (idx === -1 || !args[idx + 1]) return [];
+    return args[idx + 1].split(',').map(s => s.trim()).filter(Boolean);
+  };
+  const moduleAllowlist = parseList('--modules');
+  const moduleExclude = parseList('--exclude');
+
+  const res = initTaskLoop({ wsRoot, dryRun, createMissing, currentSessionId, mainSessionId, moduleAllowlist, moduleExclude });
 
   console.log('================================================================================');
   console.log(' [task-loop] 项目初始化与已有会话调查 (带记忆文档 1:1 自动映射)');
@@ -464,10 +679,11 @@ function main() {
   
   res.memory_alignment.forEach((m, idx) => {
     const statusTag = m.status === 'ALIGNED' ? '[✔ 已匹配]' : (m.status === 'CREATED_AND_ALIGNED' ? '[✔ 已自动创建顶层会话并绑定]' : '[⚠ 缺失会话: 可使用 --create-missing 自动补齐]');
+    const resumeTag = m.matched_session_id ? (m.resumable ? ' [可续接]' : ' [只读遗留]') : '';
     console.log(`\n[M${idx + 1}] 记忆文档: ${m.memory_doc}`);
     console.log(`     模块 Key: ${m.module_key}`);
     console.log(`     专题名称: ${m.matched_topic_name}`);
-    console.log(`     绑定会话: ${m.matched_session_id || '(未绑定)'} ${statusTag}`);
+    console.log(`     绑定会话: ${m.matched_session_id || '(未绑定)'} ${statusTag}${resumeTag}`);
   });
 
   if (res.created_sessions && res.created_sessions.length > 0) {
@@ -485,7 +701,9 @@ function main() {
     console.log(`\n[${idx + 1}] 会话 ID: ${s.session_id}`);
     console.log(`    原标题: ${s.original_title} (${s.vendor})`);
     console.log(`    建议专题名: ${s.suggested_topic_name}`);
-    console.log(`    建议模块Key: ${s.suggested_module_key}`);
+    console.log(`    建议模块Key: ${s.suggested_module_key}${s.needs_naming ? ' [需人工命名]' : ''}`);
+    console.log(`    可续接: ${s.resumable ? '是' : '否 (只读遗留)'}`);
+    console.log(`    派单提示: ${s.dispatch_hint}`);
     console.log(`    关联受控记忆: ${s.suggested_memory_doc}`);
     if (s.is_current_session && s.is_main_candidate) {
       console.log(`    [Current Session & Main Candidate] 当前发起会话 (推荐为主治理中枢)`);
@@ -495,6 +713,21 @@ function main() {
       console.log(`    [Current Session] 当前发起会话`);
     }
   });
+
+  if (res.pending_approval && res.pending_approval.length > 0) {
+    console.log('\n--------------------------------------------------------------------------------');
+    console.log('【待批准模块 (pending_approval)】以下建议默认不落盘, 确需持久化请追加: --modules <key1,key2>');
+    res.pending_approval.forEach((p, i) => {
+      console.log(`  ${i + 1}. [${p.module_key}] ${p.session_id} (${p.reason})`);
+    });
+  }
+
+  if (res.session_tools) {
+    console.log('\n--------------------------------------------------------------------------------');
+    console.log('【会话工具优先指引 (Session-First)】');
+    res.session_tools.dispatch_order.forEach(line => console.log(`  ${line}`));
+    console.log(`  厂商原语映射: ${res.session_tools.vendor_mapping_doc}`);
+  }
 
   console.log('\n================================================================================');
   if (dryRun) {
@@ -519,5 +752,11 @@ if (require.main === module) {
 module.exports = {
   surveyExistingSessions,
   inferTopicMapping,
-  initTaskLoop
+  initTaskLoop,
+  resolveModuleAssignments,
+  applyApprovalGate,
+  sanitizeTitle,
+  isValidModuleKey,
+  detectCurrentVendor,
+  loadProviderRegistry
 };

@@ -48,8 +48,32 @@ def normalize_path(p):
     return p.replace("\\", "/")
 
 
+def sanitize_title(raw):
+    """标题清洗: 去链接标记/反斜杠残片/首尾空白。"""
+    t = re.sub(r"\[[^\]]+\]\([^\)]+\)", "", str(raw or ""))
+    t = re.sub(r"\\+", "", t)
+    t = re.sub(r"[\r\n]+", " ", t).strip()
+    return t or "(无标题)"
+
+
+def is_valid_module_key(key):
+    """模块 Key 卫生校验: 仅允许小写字母/数字/下划线。"""
+    return isinstance(key, str) and re.fullmatch(r"[a-z0-9_]+", key) is not None
+
+
+def detect_current_vendor(env=None):
+    env = env if env is not None else os.environ
+    if env.get("ANTIGRAVITY_CONVERSATION_ID"):
+        return "antigravity"
+    if env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID"):
+        return "zcode"
+    if env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"):
+        return "codex"
+    return None
+
+
 def infer_topic_mapping(session):
-    raw_title = re.sub(r"\[[^\]]+\]\([^\)]+\)", "", (session.get("title") or "")).strip()
+    raw_title = sanitize_title(session.get("title"))
     title_lower = raw_title.lower()
     summary_lower = (session.get("summary") or "").lower()
     prompts_lower = " ".join(session.get("recent_prompts") or []).lower()
@@ -60,8 +84,9 @@ def infer_topic_mapping(session):
     func1 = ""
     func2 = ""
     module_key = ""
+    needs_naming = False
 
-    if session.get("is_main") or "main" in title_lower or (session.get("session_id") == "ee94b2c5-c0c2-473f-8f71-213250ba5295") or any(k in full_text for k in ["治理中枢", "开发仓库"]):
+    if session.get("is_main") or "main" in title_lower or any(k in full_text for k in ["治理中枢", "开发仓库"]):
         category = "主会话"
         func1 = "任务编排"
         func2 = "治理中枢"
@@ -76,7 +101,7 @@ def infer_topic_mapping(session):
         func1 = "动态模板"
         func2 = "编排治理"
         module_key = "subagent"
-    elif any(k in full_text for k in ["topic: session_control", "session_control", "会话专题", "会话"]) or ("session" in title_lower and "main" not in title_lower):
+    elif any(k in full_text for k in ["topic: session_control", "session_control", "会话专题"]) or ("session" in title_lower and "main" not in title_lower):
         category = "会话控制专题"
         func1 = "跨厂商内省"
         func2 = "会话管理"
@@ -127,14 +152,19 @@ def infer_topic_mapping(session):
         func1 = kw1
         func2 = kw2
         raw_key = words[0] if len(words) > 0 else "custom_topic"
-        module_key = re.sub(r"[^\w\u4e00-\u9fa5]", "_", raw_key)
-        module_key = re.sub(r"_+", "_", module_key).strip("_")[:25]
-        if not module_key or module_key == "_":
-            module_key = f"topic_{(session.get('session_id') or '')[:8]}"
+        candidate = re.sub(r"[^\w\u4e00-\u9fa5]", "_", raw_key)
+        candidate = re.sub(r"_+", "_", candidate).strip("_")[:25]
+        # 模块 Key 卫生门禁: 仅允许 [a-z0-9_], 非法降级 custom_topic 待人工命名
+        if not candidate or not is_valid_module_key(candidate.lower()):
+            module_key = "custom_topic"
+            needs_naming = True
+        else:
+            module_key = candidate.lower()
 
     standardized_title = f"[{category}] {func1} & {func2}"
     return {
         "module_key": module_key,
+        "needs_naming": needs_naming,
         "topic_name": standardized_title,
         "tags": [module_key, "topic"],
         "memory_doc": f"docs/memory/{module_key}.md"
@@ -174,11 +204,67 @@ def spawn_root_conversation(title, prompt, ws_root):
     return None
 
 
+def resolve_module_assignments(suggestions):
+    """单一事实源: 模块 Key -> 建议项的首个匹配分配 (预览与落盘共用)。"""
+    assignments = {}
+    for s in suggestions:
+        key = s["suggested_module_key"]
+        if key not in assignments:
+            assignments[key] = s
+    return assignments
+
+
+def apply_approval_gate(assignments, memory_alignment, options=None):
+    """批准门禁 (纯函数): 默认仅 main + 记忆文档已对齐模块可持久化, 其余进入 pending_approval。"""
+    options = options or {}
+    allow = set(options.get("module_allowlist") or options.get("moduleAllowlist") or [])
+    exclude = set(options.get("module_exclude") or options.get("moduleExclude") or [])
+    aligned_keys = {a["module_key"] for a in memory_alignment if a["status"] in ("ALIGNED", "CREATED_AND_ALIGNED")}
+
+    approved = []
+    pending = []
+    for key, suggestion in assignments.items():
+        if key in exclude:
+            pending.append({"module_key": key, "session_id": suggestion["session_id"], "reason": "explicitly_excluded"})
+            continue
+        if key == "main" or key in aligned_keys or key in allow:
+            via = "main_session" if key == "main" else ("memory_doc_aligned" if key in aligned_keys else "explicit_approval")
+            approved.append({"module_key": key, "session_id": suggestion["session_id"], "via": via})
+        else:
+            pending.append({"module_key": key, "session_id": suggestion["session_id"], "reason": "not_approved (使用 --modules <key> 批准持久化)"})
+    return {"approved": approved, "pending": pending, "aligned_keys": aligned_keys, "allow": allow, "exclude": exclude}
+
+
+def scaffold_memory_doc(ws_root, relative_path, topic_name):
+    """脚手架: 记忆文档缺失时生成最小模板 (已存在则绝不覆盖)。"""
+    abs_path = os.path.join(ws_root, relative_path)
+    if os.path.exists(abs_path):
+        return False
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    template = "\n".join([
+        f"# [{topic_name}] 受控记忆",
+        "",
+        "## 架构已知事实",
+        "",
+        "## 设计决策",
+        "",
+        "## 排障经验",
+        "",
+    ])
+    with open(abs_path, "w", encoding="utf-8") as f:
+        f.write(template)
+    return True
+
+
 def survey_existing_sessions(ws_root, options=None):
     if options is None:
         options = {}
-    caller_session_id = options.get("current_session") or options.get("current_session_id") or options.get("currentSessionId") or os.environ.get("ANTIGRAVITY_CONVERSATION_ID")
+    caller_session_id = (
+        options.get("current_session") or options.get("current_session_id") or options.get("currentSessionId")
+        or os.environ.get("ANTIGRAVITY_CONVERSATION_ID") or os.environ.get("ZCODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")
+    )
     explicit_main_session_id = options.get("main_session") or options.get("main_session_id") or options.get("mainSessionId")
+    current_vendor = detect_current_vendor()
 
     agy_s = scan_agy_sessions(ws_root) or []
     codex_s = scan_codex_sessions(ws_root) or []
@@ -193,10 +279,11 @@ def survey_existing_sessions(ws_root, options=None):
             unique_map[s_id] = s
 
     # 若 caller_session_id 存在但在扫描中未发现，自动补入
+    fallback_vendor = current_vendor or "antigravity"
     if caller_session_id and caller_session_id not in unique_map:
         unique_map[caller_session_id] = {
             "session_id": caller_session_id,
-            "vendor": "antigravity",
+            "vendor": fallback_vendor,
             "title": "[主会话] 任务编排 & 治理中枢",
             "is_main": True,
             "created_at": datetime.utcnow().isoformat() + "Z",
@@ -205,20 +292,37 @@ def survey_existing_sessions(ws_root, options=None):
 
     # 主会话选定优先级:
     # 1) --main-session <id> (用户显式指定)
-    # 2) --current-session 或环境变量读取到的当前活跃会话 ID (推荐当前发起会话为主会话)
-    # 3) 历史扫描中明确带 [主会话] 标签或 is_main 的会话
+    # 2) --current-session 或环境变量读取到的当前活跃会话 ID (发起初始化的宿主会话最高优先级)
+    # 3) 历史扫描中明确属于当前宿主环境且带 [主会话] 标签或 is_main 的会话
     # 4) suggestions 列表中的第一项
     chosen_main_id = None
     if explicit_main_session_id and explicit_main_session_id in unique_map:
         chosen_main_id = explicit_main_session_id
     elif caller_session_id and caller_session_id in unique_map:
         chosen_main_id = caller_session_id
+    elif caller_session_id:
+        chosen_main_id = caller_session_id
+        unique_map[caller_session_id] = {
+            "session_id": caller_session_id,
+            "vendor": "antigravity",
+            "title": "[主会话] 任务编排 & 治理中枢",
+            "is_main": True,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+            "last_active_at": datetime.utcnow().isoformat() + "Z"
+        }
     else:
         for s in unique_map.values():
             raw_title = (s.get("title") or "").lower()
-            if s.get("is_main") or "[主会话]" in raw_title or "治理中枢" in raw_title:
+            s_vendor = (s.get("vendor") or "antigravity").lower()
+            if (s.get("is_main") or "[主会话]" in raw_title or "治理中枢" in raw_title) and (s_vendor == "antigravity"):
                 chosen_main_id = s.get("session_id")
                 break
+        if not chosen_main_id:
+            for s in unique_map.values():
+                raw_title = (s.get("title") or "").lower()
+                if s.get("is_main") or "[主会话]" in raw_title or "治理中枢" in raw_title:
+                    chosen_main_id = s.get("session_id")
+                    break
         if not chosen_main_id and len(unique_map) > 0:
             chosen_main_id = next(iter(unique_map.keys()))
 
@@ -247,11 +351,18 @@ def survey_existing_sessions(ws_root, options=None):
         suggestions.append({
             "session_id": s_id,
             "vendor": s.get("vendor", "antigravity"),
-            "original_title": s.get("title") or "(无标题)",
+            "original_title": sanitize_title(s.get("title")),
             "suggested_module_key": inferred["module_key"],
+            "needs_naming": bool(inferred.get("needs_naming")),
             "suggested_topic_name": inferred["topic_name"],
             "suggested_tags": inferred["tags"],
             "suggested_memory_doc": inferred["memory_doc"],
+            "resumable": (s.get("vendor") or "antigravity") == current_vendor,
+            "dispatch_hint": (
+                "可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)"
+                if (s.get("vendor") or "antigravity") == current_vendor
+                else "只读遗留: 当前宿主不可续接, 仅支持历史内省; 建议经 new-session 重建为本宿主原生专题"
+            ),
             "is_main_candidate": is_main_candidate,
             "is_current_session": is_current_session
         })
@@ -259,19 +370,24 @@ def survey_existing_sessions(ws_root, options=None):
     # 让 is_main_candidate 的项排在最前
     suggestions.sort(key=lambda x: 0 if x.get("is_main_candidate") else 1)
 
+    # 单一事实源: 一次性计算模块分配, 对齐报告与持久化共用
+    assignments = resolve_module_assignments(suggestions)
+
     memory_docs = scan_existing_memory_docs(ws_root)
     memory_alignment = []
     for doc in memory_docs:
-        matched = next((s for s in suggestions if s["suggested_module_key"] == doc["module_key"]), None)
+        matched = assignments.get(doc["module_key"])
         memory_alignment.append({
             "module_key": doc["module_key"],
             "memory_doc": doc["relative_path"],
             "matched_session_id": matched["session_id"] if matched else None,
+            "matched_vendor": matched["vendor"] if matched else None,
+            "resumable": matched["resumable"] if matched else False,
             "matched_topic_name": matched["suggested_topic_name"] if matched else f"[{doc['module_key']}专题] 核心功能维护 & 记忆沉淀",
             "status": "ALIGNED" if matched else "MISSING_SESSION"
         })
 
-    return suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id
+    return suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id, assignments, current_vendor
 
 
 def init_task_loop(options=None):
@@ -287,7 +403,7 @@ def init_task_loop(options=None):
     todo_path = os.path.join(task_loop_dir, "todo.json")
     policy_path = os.path.join(task_loop_dir, "policy.json")
 
-    suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id = survey_existing_sessions(ws_root, options)
+    suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id, assignments, current_vendor = survey_existing_sessions(ws_root, options)
 
     result = {
         "workspace_root": normalize_path(ws_root),
@@ -302,10 +418,19 @@ def init_task_loop(options=None):
         "existing_memory_docs_count": len(memory_docs),
         "chosen_main_session_id": chosen_main_id,
         "caller_session_id": caller_session_id,
+        "current_vendor": current_vendor,
         "memory_alignment": memory_alignment,
         "topic_mapping_suggestions": suggestions,
         "created_sessions": []
     }
+
+    # 批准门禁 (dry-run 也计算, 便于预览 pending_approval)
+    gate = apply_approval_gate(assignments, memory_alignment, {
+        "module_allowlist": options.get("module_allowlist") or options.get("moduleAllowlist") or [],
+        "module_exclude": options.get("module_exclude") or options.get("moduleExclude") or [],
+    })
+    result["approved_modules"] = gate["approved"]
+    result["pending_approval"] = gate["pending"]
 
     if dry_run:
         return result
@@ -325,35 +450,50 @@ def init_task_loop(options=None):
                     result["created_sessions"].append({"module_key": align["module_key"], "session_id": new_id, "title": title})
                     suggestions.append({
                         "session_id": new_id,
-                        "vendor": "antigravity",
-                        "original_title": title,
+                        "vendor": current_vendor or "antigravity",
+                        "original_title": sanitize_title(title),
                         "suggested_module_key": align["module_key"],
                         "suggested_topic_name": title,
                         "suggested_tags": [align["module_key"], "topic"],
                         "suggested_memory_doc": align["memory_doc"],
+                        "resumable": True,
+                        "dispatch_hint": "可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)",
                         "is_main_candidate": False,
                         "is_current_session": False
                     })
+        # 新建会话后重算分配, 保证与落盘同源
+        assignments = resolve_module_assignments(suggestions)
 
+    # 仅持久化通过批准门禁的模块; 其余会话仅入清单不占绑定
     main_thread_id = chosen_main_id or (suggestions[0]["session_id"] if suggestions else None)
+    approved_keys = {a["module_key"] for a in gate["approved"]}
+    for align in memory_alignment:
+        if align["status"] == "CREATED_AND_ALIGNED":
+            approved_keys.add(align["module_key"])
+
     modules = {}
     sessions_list = []
 
     for item in suggestions:
         m_key = item["suggested_module_key"]
-        modules[m_key] = {
-            "session_id": item["session_id"],
-            "title": item["suggested_topic_name"],
-            "tags": item["suggested_tags"],
-            "memory_doc": item["suggested_memory_doc"],
-            "summary": f"专题模块: {item['suggested_topic_name']}"
-        }
+        if m_key in approved_keys and m_key not in modules:
+            modules[m_key] = {
+                "session_id": item["session_id"],
+                "title": item["suggested_topic_name"],
+                "tags": item["suggested_tags"],
+                "memory_doc": item["suggested_memory_doc"],
+                "vendor": item["vendor"],
+                "resumable": item["resumable"],
+                "dispatch_hint": item["dispatch_hint"],
+                "summary": f"专题模块: {item['suggested_topic_name']}"
+            }
         sessions_list.append({
             "session_id": item["session_id"],
             "vendor": item["vendor"],
             "title": item["suggested_topic_name"],
             "is_main": (item["session_id"] == main_thread_id),
-            "module_key": m_key,
+            "module_key": m_key if m_key in approved_keys else None,
+            "resumable": item["resumable"],
             "summary": f"专题模块: {item['suggested_topic_name']}",
             "memory_docs": [item["suggested_memory_doc"]]
         })
@@ -361,6 +501,7 @@ def init_task_loop(options=None):
     sessions_data = {
         "schema_version": 2,
         "main_thread_id": main_thread_id,
+        "current_vendor": current_vendor,
         "updated_at": datetime.utcnow().isoformat() + "Z",
         "modules": modules,
         "sessions": sessions_list
@@ -377,6 +518,8 @@ def init_task_loop(options=None):
                     "topic_key": k,
                     "name": v["title"],
                     "session_id": v["session_id"],
+                    "vendor": v["vendor"],
+                    "resumable": v["resumable"],
                     "tags": v["tags"],
                     "memory_doc": v["memory_doc"]
                 }
@@ -394,10 +537,29 @@ def init_task_loop(options=None):
         with open(policy_path, "w", encoding="utf-8") as f:
             json.dump({
                 "schema_version": 2,
-                "active_vendor": "antigravity",
+                "active_vendor": current_vendor or "antigravity",
                 "default_lease_timeout_sec": 1800,
                 "enable_file_state_machine": False
             }, f, indent=2, ensure_ascii=False)
+
+    # 主会话记忆文档脚手架 (存在则不覆盖)
+    if main_thread_id:
+        result["scaffolded_memory_docs"] = []
+        main_doc = "docs/memory/main.md"
+        if scaffold_memory_doc(ws_root, main_doc, "[主会话] 任务编排 & 治理中枢"):
+            result["scaffolded_memory_docs"].append(main_doc)
+
+    # 会话工具优先指引 (核心思想: 基于会话 SDK 的长期会话编排)
+    result["session_tools"] = {
+        "philosophy": "task-loop 以会话为一等公民: 主会话的角色是需求加工与派单, 实施必须派发至专题会话/子代理",
+        "dispatch_order": [
+            "1. 查 .agents/task-loop/sessions.json 寻找匹配专题, 优先复用",
+            "2. 可续接专题 (resumable: true): 经当前宿主 SessionProvider send/resume 原语定向派单",
+            "3. 不可续接专题 (resumable: false): 仅只读内省参考; 需要实施时经 new-session 重建本宿主原生专题",
+            "4. 无匹配专题: 经 new-session / spawn Provider 拉起新顶层会话后登记, 严禁退化为人肉 UI 操作",
+        ],
+        "vendor_mapping_doc": "references/sdk/README.md",
+    }
 
     return result
 
@@ -424,12 +586,21 @@ def main():
         if idx + 1 < len(args):
             main_session = args[idx + 1]
 
+    def parse_list(flag):
+        if flag in args:
+            idx = args.index(flag)
+            if idx + 1 < len(args):
+                return [s.strip() for s in args[idx + 1].split(",") if s.strip()]
+        return []
+
     res = init_task_loop({
         "ws_root": ws_root,
         "dry_run": dry_run,
         "create_missing": create_missing,
         "current_session": current_session,
-        "main_session": main_session
+        "main_session": main_session,
+        "module_allowlist": parse_list("--modules"),
+        "module_exclude": parse_list("--exclude"),
     })
 
     print("================================================================================")
@@ -448,7 +619,9 @@ def main():
         print(f"\n[{idx + 1}] 会话 ID: {s['session_id']}")
         print(f"    原标题: {s['original_title']} ({s['vendor']})")
         print(f"    建议专题名: {s['suggested_topic_name']}")
-        print(f"    建议模块Key: {s['suggested_module_key']}")
+        print(f"    建议模块Key: {s['suggested_module_key']}{' [需人工命名]' if s.get('needs_naming') else ''}")
+        print(f"    可续接: {'是' if s.get('resumable') else '否 (只读遗留)'}")
+        print(f"    派单提示: {s.get('dispatch_hint', '')}")
         print(f"    关联受控记忆: {s['suggested_memory_doc']}")
         if s.get("is_current_session") and s.get("is_main_candidate"):
             print("    [Current Session & Main Candidate] 当前发起会话 (推荐为主治理中枢)")
@@ -456,6 +629,19 @@ def main():
             print("    [Main Candidate] 候选为主会话 (Main Thread)")
         elif s.get("is_current_session"):
             print("    [Current Session] 当前发起会话")
+
+    if res.get("pending_approval"):
+        print("\n--------------------------------------------------------------------------------")
+        print("【待批准模块 (pending_approval)】以下建议默认不落盘, 确需持久化请追加: --modules <key1,key2>")
+        for i, p in enumerate(res["pending_approval"], 1):
+            print(f"  {i}. [{p['module_key']}] {p['session_id']} ({p['reason']})")
+
+    if res.get("session_tools"):
+        print("\n--------------------------------------------------------------------------------")
+        print("【会话工具优先指引 (Session-First)】")
+        for line in res["session_tools"]["dispatch_order"]:
+            print(f"  {line}")
+        print(f"  厂商原语映射: {res['session_tools']['vendor_mapping_doc']}")
 
     print("\n================================================================================")
     if dry_run:
