@@ -220,13 +220,13 @@ function getPluginTopicRules(details, templates) {
     } else {
       lines.push(`- [Plugin: task-loop | 主会话定位与治理硬约束]:`);
       lines.push(`  1. 仅限只读探索 (Explore Only): 主会话仅限执行需求初加工、只读探测与架构诊断 (EXPLORE)，严禁主会话自身直接执行修改落地 (WORK) 或直接编辑业务代码;`);
-      lines.push(`  2. 强制派单执行 (Mandatory Delegation): 所有具体的业务代码修改、功能落地与 BugFix (WORK) 强制要求派单至对应的专题会话 (Topic Session) 实施，杜绝主会话分散多方写入造成的上下文错乱与业务冲突;`);
+      lines.push(`  2. 强制 sidebus 派单执行 (Mandatory Sidebus Delegation): 所有具体的业务代码修改、功能落地与 BugFix (WORK) 强制要求通过 sidebus (send_message / agentapi) 派单至对应的专题会话 (Topic Session) 实施，杜绝主会话直接修改或擅自派遣临时 Worker 造成的上下文错乱与业务冲突;`);
       lines.push(`  3. 需求定界与白名单: 提炼单一职责目标、验收准则与严格的物理白名单 (Allowlist)，明确任务类型 ([EXPLORE] 或 [WORK]);`);
       lines.push(`  4. 防冲突与复用: 派发前强制比对现有专题清单 (modules/tags/docs/memory)，复用优先，严禁重复创建重叠专题;`);
       lines.push(`  5. 缺失专题与不明确流转铁律: 若无可用专题会话或不清楚如何新建/请求会话，必须先查阅文档指导 (references/sdk/README.md, skills/new-session/SKILL.md, skills/session-control/SKILL.md)，若仍需确认必须主动向用户请求指引并询问，绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理;`);
-      lines.push(`  6. 任务派单流转: 寻找专题 -> 没有则按规范创建顶层专题会话 -> send_message 定向发信，划定 Allowlist 物理白名单;`);
-      lines.push(`  7. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 临时 Subagent 并行协作;`);
-      lines.push(`  8. 质检与门禁核验: 依据子会话测试结果与 Evidence 严格验收，输出用户验证指引卡 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md)。`);
+      lines.push(`  6. 任务派单流转: 寻找专题 -> 没有则按规范创建顶层专题会话 -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;`);
+      lines.push(`  7. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 专题会话内 Subagent 并行协作;`);
+      lines.push(`  8. 质检与门禁核验: 依据专题会话 (Topic Session) 测试结果与 Evidence 严格验收，输出用户验证指引卡 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md)。`);
     }
   } else if (details.module_key === 'session_control') {
     if (Array.isArray(pluginRules.session_control) && pluginRules.session_control.length > 0) {
@@ -260,8 +260,8 @@ function getPluginTopicRules(details, templates) {
     } else {
       lines.push(`- [Plugin: task-loop | 专题会话约束规则]:`);
       lines.push(`  1. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;`);
-      lines.push(`  2. 兜底执行工作流: 简单目标直接改动；复杂目标调度 explore -> worker -> viewer，评判失败直接 worker 改动，中途遇异常立即停下反馈专题统筹 (参考 references/default-fallback-workflow.md);`);
-      lines.push(`  3. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 标准结构化交付。`);
+      lines.push(`  2. 专题内子代理协同: 专题会话承接任务后，可按需在专题内拉起子代理 (subagents) 进行多任务拆解协同或直接落地实施;`);
+      lines.push(`  3. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 通过 sidebus 完成标准结构化交付。`);
     }
   }
 

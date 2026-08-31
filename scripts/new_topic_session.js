@@ -57,7 +57,7 @@ function parseMemoryDoc(docPath, wsRoot) {
     `[${baseName}专题初始化] 你是 task-loop 项目的【${baseName}专题负责人】。`,
     `你负责维护本专题专属代码域与受控记忆文档 \`${relPath}\`。`,
     allowlist ? `【物理白名单范围】: ${allowlist}` : '',
-    `【工作流规范】: 遵循子会话标准工作流（边界锁定 -> 白名单精准实施 -> 本地自测 -> 记忆回写 -> 结构化交付）。`
+    `【工作流规范】: 遵循专题会话标准工作流（边界锁定 -> 白名单精准实施 -> 本地自测 -> 记忆回写 -> 结构化交付）。`
   ].filter(Boolean).join('\n');
 
   return {

@@ -87,7 +87,7 @@ description: "[task-loop] Multi-vendor agent session provider, introspection, an
 
 ### 2. 环境变量净化与顶层会话保真机制 (Environment Sanitization)
 
-当在主会话子进程、Node.js / Python 脚本或自动化任务中调用 `agentapi` 创建顶层根会话时，**必须对父级环境变量进行严格净化**。若未清除父级会话标记，新会话将被错误归为子会话或嵌套在当前会话下，无法在 IDE 顶层侧边栏独立呈现。
+当在主会话子进程、Node.js / Python 脚本或自动化任务中调用 `agentapi` 创建顶层根会话时，**必须对父级环境变量进行严格净化**。若未清除父级会话标记，新会话将被错误识别为嵌套子代理或从属分支，无法在 IDE 顶层侧边栏独立呈现。
 
 ```json
 [

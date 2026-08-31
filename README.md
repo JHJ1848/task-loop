@@ -9,7 +9,7 @@
 ## [Core Features] 核心特性
 
 - **多厂商环境感知（Vendor-Agnostic）**：自动扫描并解析当前项目的历史 Agent 会话（AGY / Codex / Claude），提取交互元数据与上下文。
-- **智能打标与专题会话路由（Auto-Tagging & Routing）**：主会话 AI 结合工程架构对子会话进行语义化分类与标签化（`tags` / `module_key`），构建项目专题拓扑。
+- **智能打标与专题会话路由（Auto-Tagging & Routing）**：主会话 AI 结合工程架构对各个专题会话进行语义化分类与标签化（`tags` / `module_key`），构建项目专题拓扑；主会话通过 sidebus 派单至专题会话，由专题会话按需拉起 subagents 实施落地。
 - **1 / 2 / 3 复杂度分级调度（Complexity Tiering）**：
   - **Level 1（简单）**：单点 Bugfix / 单文件修改，直发单线程极速闭环。
   - **Level 2（标准）**：模块内功能开发与重构，边界约束内自测与专题记忆回写。

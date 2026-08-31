@@ -58,7 +58,7 @@ def parse_memory_doc(doc_path, ws_root):
     ]
     if allowlist:
         initial_prompt_lines.append(f"【物理白名单范围】: {allowlist}")
-    initial_prompt_lines.append("【工作流规范】: 遵循子会话标准工作流（边界锁定 -> 白名单精准实施 -> 本地自测 -> 记忆回写 -> 结构化交付）。")
+    initial_prompt_lines.append("【工作流规范】: 遵循专题会话标准工作流（边界锁定 -> 白名单精准实施 -> 本地自测 -> 记忆回写 -> 结构化交付）。")
 
     return {
         "module_key": base_name,

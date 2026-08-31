@@ -15,13 +15,13 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ### 1. 三步路由流转 (调度器主动创建 + Hook 被动护航)
 主会话（Main Session）专注于需求初加工、任务编排、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
-* **主会话行为硬性红线 (Explore Only & Mandatory Delegation)**:
+* **主会话行为硬性红线 (Explore Only & Mandatory Sidebus Delegation)**:
   - **仅限只读探索**: 主会话仅承担需求分析、只读探测与架构诊断 (`explore`)，**严禁主会话自身直接执行修改落地 (`work`) 或修改业务代码**；
-  - **强制派单执行**: 所有具体编码与 BugFix (`work`) **必须且强制要求派发给专题会话 (Topic Session) 实施**，彻底杜绝分散多方写入造成的上下文错乱与代码冲突；
+  - **强制 sidebus 派单执行**: 所有具体编码与 BugFix (`work`) **必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派发给对应的专题会话 (Topic Session) 实施**；各专题会话承接任务后，方可按需拉起子代理 subagents 落地或直接实施，彻底杜绝主会话直接修改业务代码或擅自拉起临时 Worker；
   - **无可用专题与防擅自派发铁律**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
 2. **没有则新建 (主动程序化创建)**: 若为全新领域，调度器调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"`（自动净化父级环境变数，确保 `nestingDepth: 0` 独立顶层根会话）并在 `sessions.json` 持久化登记；若不知如何创建或无环境，先查阅文档或向用户确认；
-3. **定向发信请求**: 通过 `send_message(recipient, message)` 定向发信下发任务，目标会话激活时由 **`PreInvocation` Hook 自动被动注入该专题专属上下文**，严禁首选本能派发空白临时子代理。
+3. **Sidebus 定向发信**: 通过 sidebus 管道使用 `send_message(recipient, message)` 定向发信下发任务，目标会话激活时由 **`PreInvocation` Hook 自动被动注入该专题专属上下文**，严禁主会话擅自拉起临时子代理代劳。
 
 ### 2. 专题相似度计算与业务冲突前置裁决 (Topic Similarity & Anti-Conflict Gate)
 * **Hook 自动感知与无感创建背景**：在底层 Hook 体系联动下，当主会话请求专题会话时，系统 Hook 会自动判断若目标会话不存在或已归档，将自动无感新建并刷新 `sessions.json`。因此，主会话在请求专题（尤其是判定需要创建全新专题）时，**必须在前置编排阶段对现有所有专题进行语义相似度与业务冲突计算**，避免出现重复专题和大量业务冲突：
@@ -97,9 +97,9 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ## 四、质检门禁与交付标准 (Verification Gate)
 
-子会话交付必须满足 5 步标准流：
+专题会话交付必须满足 5 步标准流：
 `1. 承接锁定 -> 2. 边界实施 -> 3. 本地自测 -> 4. 记忆沉淀 -> 5. 标准交付`。
-交付报告必须包含：**Summary (核心摘要)**、**Changes (改动清单)**、**Evidence (单测/构建通过证据)** 以及人机混合验证操作指引。
+交付报告通过 sidebus 结构化回传，必须包含：**Summary (核心摘要)**、**Changes (改动清单)**、**Evidence (单测/构建通过证据)** 以及人机混合验证操作指引。
 
 ---
 

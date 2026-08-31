@@ -18,17 +18,17 @@
 ## 2. 主会话编排与三步派单铁律 (Main Session 3-Step Law)
 
 主会话在接收到用户需求后，专注于需求初加工、任务编排、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
-* **主会话行为硬性红线 (Explore Only)**: 主会话仅限执行只读探索与架构诊断 (EXPLORE)，**严禁在自身会话中直接修改业务代码 (WORK)**；所有具体编码与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 实施，杜绝分散多方写入造成的上下文错乱与代码冲突。
+* **主会话行为硬性红线 (Explore Only & Sidebus Delegation)**: 主会话仅限执行只读探索与架构诊断 (EXPLORE)，**严禁在自身会话中直接修改业务代码 (WORK)**；所有具体编码与 BugFix 必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派单至对应的专题会话 (Topic Session) 实施，各专题会话承接任务后才可在其内部按需拉起子代理 (subagents) 落地，彻底杜绝主会话直接动手或擅自派遣临时 Worker 造成的治理失控。
 * **无可用会话与防擅自派发铁律 (Strict Topic Governance & No Unauthorized Worker)**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
 2. **没有则新建**: 若为全新领域，按规范调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"` 创建真实持久顶层专题会话并注册；若不知如何创建则先查阅文档或向用户询问；
-3. **定向发信请求**: 通过 `send_message(recipient, message)` 下发任务，严禁首选本能派发空白临时子代理。
+3. **Sidebus 定向发信**: 通过 sidebus 管道调用 `send_message(recipient, message)` 下发任务，严禁主会话擅自拉起临时子代理代劳。
 
 ---
 
-## 3. 子会话一致性执行流 (Sub-Session Workflow Parity)
+## 3. 专题会话与执行端一致性执行流 (Topic Session & Worker Workflow Parity)
 
-子会话（Subagent / Topic Session）执行生命周期 100% 保持前后一致：
+专题会话及其内部子代理（Topic Session & Subagents）执行生命周期 100% 保持前后一致：
 ```json
 [
   {

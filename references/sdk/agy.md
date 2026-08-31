@@ -17,10 +17,10 @@ Google Antigravity (AGY) 是 `task-loop` 的主力执行环境，提供了**宿�
     "description": "当前会话自身直接感知：系统在每次启动或响应时自动将当前会话 UUID 注入模型上下文与 Artifact 存储路径中。"
   },
   {
-    "category": "获取活动子会话 ID (方式 B: 工具查询)",
+    "category": "获取活动子代理 ID (方式 B: 工具查询)",
     "tool_or_sdk": "manage_subagents",
     "signature": "Action: 'list'",
-    "description": "查询活动子会话：实时获取当前主会话所拉起的所有活跃子会话列表及其 conversationId、运行状态与物理日志路径。"
+    "description": "查询活动子代理：实时获取当前会话所拉起的所有活跃子代理 (Subagents) 列表及其 conversationId、运行状态与物理日志路径。"
   },
   {
     "category": "获取工程关联会话 (方式 C: 脚本扫描)",
@@ -32,7 +32,7 @@ Google Antigravity (AGY) 是 `task-loop` 的主力执行环境，提供了**宿�
     "category": "拉起新会话 / 子代理",
     "tool_or_sdk": "invoke_subagent",
     "signature": "Subagents: [{ TypeName: 'self'|'research'|string, Role: string, Prompt: string, Workspace: 'inherit'|'branch'|'share', Model: 'inherit'|'flash'|'pro' }]",
-    "description": "创建并启动子会话。TypeName: 'self' 继承父代理全量工具与上下文能力；Workspace: 'inherit' 共享当前项目目录；系统返回 Payload 中包含新建子代理的 conversationId。"
+    "description": "创建并启动子代理 (Subagent)。TypeName: 'self' 继承父代理全量工具与上下文能力；Workspace: 'inherit' 共享当前项目目录；系统返回 Payload 中包含新建子代理的 conversationId。"
   },
   {
     "category": "动态定义代理模板",
@@ -50,13 +50,13 @@ Google Antigravity (AGY) 是 `task-loop` 的主力执行环境，提供了**宿�
     "category": "会话生命周期管理",
     "tool_or_sdk": "manage_subagents",
     "signature": "Action: 'list'|'kill'|'kill_all', ConversationIds?: string[]",
-    "description": "状态监控与强制介入：list 查询活动子会话实时状态 (running, idle, waiting_for_input, errored)；kill 终止走弯路或超时的子会话及其派生树。"
+    "description": "状态监控与强制介入：list 查询活动子代理实时状态 (running, idle, waiting_for_input, errored)；kill 终止走弯路或超时的子代理及其派生树。"
   },
   {
     "category": "挂机等待与唤醒",
     "tool_or_sdk": "Reactive Wakeup",
     "signature": "系统原生事件驱动（零工具调用）",
-    "description": "零 Token 纯响应式挂机：发出任务后主会话直接结束当前轮工具调用，子会话完成或发信时系统自动唤醒主会话，严禁写循环 polling。"
+    "description": "零 Token 纯响应式挂机：通过 sidebus 派发任务后主会话直接结束当前轮工具调用，专题会话/子代理完成或发信时系统自动唤醒主会话，严禁写循环 polling。"
   },
   {
     "category": "系统级会话新建与通信 (CLI 工具)",
@@ -376,7 +376,7 @@ agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发�
 ### 2. 执行与交付流转
 1. **Sidebus 投递**：`agentapi.bat send-message` 命中 Language Server Sidebus 通道，将消息注入会话 `cdd1ca5c-3532-4489-b844-15c6f34055fa`。
 2. **IDE 视图渲染**：会话历史顶部出现 `Message from Root Agent v` 折叠卡片，自动加载上下文记忆并触发执行。
-3. **Reactive Wakeup 回执**：专题子会话执行完毕后，通过 `send_message` 将结构化交付结果汇报给主会话。
+3. **Reactive Wakeup 回执**：专题会话执行完毕后，通过 sidebus (`send_message`) 将结构化交付结果汇报给主会话。
 
 ---
 

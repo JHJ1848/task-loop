@@ -120,9 +120,9 @@ flowchart TD
 
 ---
 
-## 五、子会话前后一致的标准执行流 (Sub-Session Workflow Parity)
+## 五、专题会话与执行端标准执行流 (Topic Session & Worker Workflow Parity)
 
-无论主会话处于**默认自然语言直接交互模式**还是**可选文件状态机模式**，子会话（Subagent / Topic Session）的执行生命周期 100% 保持前后一致：
+无论主会话处于**默认自然语言直接交互模式**还是**可选文件状态机模式**，专题会话及其内部子代理（Topic Session & Subagents）的执行生命周期 100% 保持前后一致：
 
 ```json
 [
