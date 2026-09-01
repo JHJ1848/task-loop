@@ -80,6 +80,20 @@
       "流式双向管道 (stream-json)",
       "官方 Agent SDK (claude-agent-sdk)"
     ]
+  },
+  {
+    "vendor": "ZCode (Z.ai)",
+    "doc_path": "references/sdk/zcode.md",
+    "status": "原生适配 (Single-Trunk 收编)",
+    "capabilities": [
+      "七事件 Hook 管道 (SessionStart/UserPromptSubmit 瞬态注入, PreToolUse 白名单硬门禁)",
+      "Claude Code 兼容双命名 stdin/stdout 协议",
+      "会话反向内省双通道 (db.sqlite 只读读库 + rollout JSONL 行扫描)",
+      "原生 Agent(Task) 子代理同步编排 (进程内 spawn)",
+      "无头 CLI 会话拉起与续接 (zcode --cwd -p / --resume, 封装于 spawn_zcode_session Provider, 支持 login-api-key)",
+      "编程协议入口 (zcode app-server, ZCode Protocol stdio JSON-RPC)",
+      "插件化接入 (.zcode-plugin/plugin.json + hooks/hooks.json + skills/)"
+    ]
   }
 ]
 ```

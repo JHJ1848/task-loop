@@ -1,26 +1,30 @@
-# [references/sdk/zcode.md] ZCode (Z.ai) 宿主环境会话与 Hook 管道技术参考
+# [SDK] ZCode (Z.ai) 深度对接规范
 
-本文档定义了 `task-loop` 在 ZCode 宿主环境下的会话持久化拓扑、Hook 管道协议规范以及与 Google Antigravity (AGY) 主线能力的差异映射。
+本文档为 `task-loop` 在 **ZCode 宿主**环境下的 Tier 3 深度契约，覆盖会话存储拓扑、SessionProvider 六大标准原语映射、Hook 生命周期 I/O 协议、子代理编排与插件接入方式。单主干架构下 (master 唯一维护分支)，ZCode 厂商能力的代码适配器 (Provider/Hook/安装器) 与本指导文档同库分层存放: 代码对其他宿主惰性无害，本档是唯一厂商知识收敛点。
+
+> 适用版本基线: ZCode Desktop / CLI 3.9.x（win32-x64 实测）。文中所有路径均为用户主目录相对路径，严禁硬编码绝对系统路径。
 
 ---
 
-## 一、ZCode 会话持久化与数据源拓扑 (Persistence Topology)
+## 一、会话持久化拓扑 (Persistence Topology)
 
 ```json
 [
   {
     "path": "~/.zcode/cli/db/db.sqlite",
-    "role": "会话元数据主库 (SQLite3, 仅只读模式 open uri=file:...&mode=ro 打开)",
+    "role": "权威会话注册表 (SQLite, 只读内省入口)",
     "key_tables": [
-      "session (id, parent_id, title, directory, path, time_created, time_updated, task_type)",
-      "input_history (id, session_id, text, kind, time_created)",
-      "session_task_link (session_id, task_id)"
+      "session: id(sess_uuid), parent_id(子代理谱系), project_id, title, directory/path(项目根), task_type, time_created/time_updated(epoch 毫秒)",
+      "input_history: session_id, text(kind='prompt' 的真实用户输入), time_created",
+      "message / part: 会话消息与分段内容",
+      "session_target / workflow_*: 目标预算与后台工作流编排记录"
     ],
-    "gotcha": "会话标题存放在 session.title；用户每轮真实提问在 input_history(kind='prompt') 按 time_created 顺序记录"
+    "safety_rule": "task-loop Provider 一律以 uri=file:...?mode=ro 只读模式打开，严禁写入宿主库"
   },
   {
     "path": "~/.zcode/cli/rollout/model-io-sess_<uuid>.jsonl",
-    "role": "每会话完整的模型输入/输出流水账 JSONL",
+    "role": "每会话模型 I/O 逐行转储 (Node.js 零依赖反向内省入口)",
+    "line_shape": "{ requestId, model{modelId,providerId}, request.body{messages[],headers{'x-session-id'}}, completedAt }",
     "gotcha": "单行可包含整轮完整对话回放；宿主内置的标题生成任务会以 {\"title\":\"...\"} 形式混入，Provider 已做剥离"
   },
   {
@@ -53,22 +57,54 @@
   },
   {
     "primitive": "spawn(role, prompt, workspace, model)",
-    "zcode_mapping": "原生 Agent 工具（即 Task 工具别名）拉起瞬态子代理；长期专题根会话由主会话调用 Skill 内置流程登记 sessions.json 后人工/编排创建（无 agentapi CLI 等价物）",
-    "difference_note": "这是与 AGY 最大差异: ZCode 无独立顶层会话拉起 CLI，Level 2 跨周期专题落盘依赖 AGY 分支的 agentapi 流程不可用，需用户在 ZCode 中开新会话后由 init 登记"
+    "zcode_mapping_tier1_in_process": "原生 Agent 工具（Task 别名）同步拉起子代理，返回即结果；谱系落 db.sqlite session.parent_id 与 session_task_link",
+    "zcode_mapping_tier2_headless_cli": "zcode --cwd <project_dir> -p \"<prompt>\" 无头创建全新顶层会话；封装实现 scripts/providers/spawn_zcode_session.js|.py",
+    "prerequisite": "CLI 无头运行需先完成认证，二选一: (a) `spawn_zcode_session login-api-key --key <API_KEY>` 将 API key 安全写入 ~/.zcode/cli/config.json（自动备份、schema 合规合并）; (b) zcode login（OAuth 写 ~/.zcode/v2/credentials.json）。桌面端密钥走进程内路由不落盘，CLI 无法直接复用桌面登录态"
   },
   {
     "primitive": "send(conversation_id, message_payload)",
-    "zcode_mapping": "同进程内: SendMessage 工具投递本地代理；跨会话: 无原生 send_message，以 ReadSessionContext(sess_id) 反向取上下文 + 项目级状态文件交接替代",
-    "handoff_pattern": "派发方将会话包写入 .agents/task-loop/dispatch/*.json，目标会话经 sessions.json 定位后读取"
+    "zcode_mapping_tier1_in_process": "同进程 SendMessage(to: agent_<uuid>)；跨会话读走 ReadSessionContext(sess_id) + dispatch 状态包交接",
+    "zcode_mapping_tier2_headless_cli": "zcode --resume <sess_id> -p \"<prompt>\" 续接既有会话（含无头创建的专题会话）；封装同 spawn 的 Provider 脚本"
   },
   {
     "primitive": "manage('list'|'kill'|'status')",
-    "zcode_mapping": "本会话任务列表 (/tasks) 与 background 任务管理；子代理谱系可由 db.sqlite session.parent_id 与 session_task_link 表反查",
+    "zcode_mapping": "本会话任务列表 (/tasks) 与 background 任务管理；子代理谱系可由 db.sqlite session.parent_id 与 session_task_link 表反查；CLI 会话清单可经 db.sqlite 只读内省获得",
     "difference_note": "AGY manage_subagents(kill_all) 无直接等价物；子代理随会话终止自动回收"
   },
   {
     "primitive": "await_reply()",
-    "zcode_mapping": "回合制同步模型: Agent 工具调用返回即结果（无 Reactive Wakeup）；后台任务以 task-notification 完成事件回调唤醒，禁止轮询"
+    "zcode_mapping": "回合制同步模型: Agent 工具调用返回即结果（无 Reactive Wakeup）；后台任务以 task-notification 完成事件回调唤醒，禁止轮询；CLI spawn/send 为阻塞式执行直至回合完成"
+  }
+]
+```
+
+---
+
+## 二点五、无头 CLI 会话操作 (Headless CLI Session Operations, zcode 0.16.5 实测)
+
+```json
+[
+  {
+    "entry": "ELECTRON_RUN_AS_NODE=1 \"<安装根>/ZCode.exe\" \"<安装根>/resources/glm/zcode.cjs\" <args>",
+    "mode_dispatch": "zcode.cjs 兼任 GUI 运行时与 CLI: argv 含 app-server/agent-server 为 electron 模式, 否则 cli 模式; CLI 不在 PATH",
+    "discovery_helper": "scripts/providers/spawn_zcode_session.js|.py 的 discoverZcodeCli() (env ZCODE_CLI_BIN/ZCODE_CJS_PATH 可覆盖)"
+  },
+  {
+    "commands": "app-server(ZCode Protocol stdio JSON-RPC) | tui | plugins list | skills list | login | logout | doctor | version",
+    "session_flags": "-p/--print <text> 无头单轮(自动建新会话) | --cwd <dir> 指定工作目录 | --resume <sess_id> 续接既有会话 | --surface terminal | --mode yolo|build|edit|plan",
+    "gotchas": ["--max-turns 与 --settings 在 help 中列出但被解析器拒绝(help 与实现不同步)", "-p 无头运行需先认证: login-api-key --key 或 zcode login 一次", "桌面端登录态不落盘, CLI 无法直接复用"]
+  },
+  {
+    "provider_wrapper": {
+      "script": "scripts/providers/spawn_zcode_session.js|.py",
+      "check": "--check 输出 {cli, auth, spawn_send_ready, in_process_alternatives, protocol_alternative} 体检 JSON",
+      "spawn": "spawn --cwd <dir> --prompt <text> [--dry-run] -> {ok, session_id?, output}",
+      "send": "send --session <sess_id> --prompt <text> [--dry-run] -> {ok, output}",
+      "exit_codes": "0 成功 | 1 CLI 未发现/参数非法 | 2 未登录 | 3 执行失败"
+    }
+  },
+  {
+    "known_limitation_desktop_sync": "无头 CLI 创建的会话直接落 db.sqlite 且字段与桌面端自建会话完全同级（同 project_id/task_type/未归档），但桌面端侧边栏会话列表为启动时加载的内存快照，不监听外部写入——新会话需重启 ZCode（或切换项目再切回）后才会显示。功能本身（续接/上下文/db 内省）不受影响。"
   }
 ]
 ```
@@ -136,8 +172,8 @@
   { "capability": "写文件白名单硬门禁", "agy": "PreToolUse(matcher=replace_file_content|write_to_file|...) decision:allow/deny", "zcode": "PreToolUse(matcher=Edit|Write|MultiEdit|NotebookEdit) permissionDecision:deny/空静默放行(exit 0)" },
   { "capability": "历史会话反向内省", "agy": "~/.gemini/antigravity/brain/*/transcript.jsonl", "zcode": "db.sqlite(sqlite3 ro) + rollout/model-io-sess_*.jsonl" },
   { "capability": "当前会话 ID", "agy": "stdin.conversationId / ANTIGRAVITY_CONVERSATION_ID", "zcode": "stdin.session_id / ZCODE_SESSION_ID / CLAUDE_SESSION_ID" },
-  { "capability": "子代理编排", "agy": "invoke_subagent / define_subagent / manage_subagents + Reactive Wakeup", "zcode": "Agent(Task) 工具同步并发调用; 无动态模板定义; 完成即回收" },
-  { "capability": "持久顶层专题会话", "agy": "agentapi new-conversation + send_message", "zcode": "无 CLI 等价; 新开会话由 init 技能登记 sessions.json, 跨会话走 dispatch 包交接" },
+  { "capability": "子代理编排", "agy": "invoke_subagent / define_subagent / manage_subagents + Reactive Wakeup", "zcode": "Tier1: Agent(Task) 工具同步并发; Tier2: zcode -p 无头顶层会话 (scripts/providers/spawn_zcode_session.*); 无动态模板定义" },
+  { "capability": "持久顶层专题会话", "agy": "agentapi new-conversation + send_message", "zcode": "Tier2: zcode --cwd -p 无头新建 + --resume 续接 (需先 login-api-key 或 zcode login); 会话登记 sessions.json 后经 dispatch 包或 CLI 续接交接" },
   { "capability": "常驻规则注入", "agy": "plugin capabilities.rules (rules/task-loop-governance.md 自动加载)", "zcode": "Plugin 无 rules 执行位; 由 SessionStart/UserPromptSubmit Hook 注入压缩版治理提示与文档指针" }
 ]
 ```
@@ -153,8 +189,42 @@
 
 ---
 
-## 六、关联文档
+## 六、ZCode 宿主附加规范 (原 ZCode 分支 Skill 小节折叠归档)
+
+通用技能文档 (skills/*) 保持厂商中立; 本节收敛原 ZCode 分支在 Skill 层的全部附加约束，ZCode 宿主的智能体在执行 init / new-session / 派单流程时必须叠加遵循。
+
+```json
+[
+  {
+    "rule_id": "ZC-1 强制用户提示 (不可省略)",
+    "behavior": "经 spawn_zcode_session Provider 拉起会话成功后, 输出 JSON 携带 user_notice_must_relay 字段; 智能体必须将该字段内容原样转达给用户, 严禁省略。",
+    "notice_content": "新会话已落库但桌面端侧边栏为内存快照, 需完全重启 ZCode (或切换项目后切回) 才会显示; 会话本身可立即经 send 子命令续接派单。",
+    "rationale": "ZCode 0.16.5 桌面端不监听 db.sqlite 外部写入; 该限制可能随版本更新消除, 届时仅需删除本条与 Provider 内对应字段, 通用流程零改动。"
+  },
+  {
+    "rule_id": "ZC-2 首次使用建议 (复用优先)",
+    "behavior": "首次在 ZCode 中加载本插件时, 优先盘点并复用现有项目已有的历史会话 (scripts/find_project_sessions.py --vendor zcode) 与既有 docs/memory/*.md 记忆文档, 经 init 完成 1:1 对齐; 确无既有资产时才走 new-session 新建。"
+  },
+  {
+    "rule_id": "ZC-3 零本机信息约束 (安全红线)",
+    "behavior": "本厂商适配层产出的记忆文档、会话引导词、确认卡与所有用户可见输出中, 严禁出现本机绝对路径 (盘符路径/用户家目录)、API Key、用户名等敏感信息; 一律使用相对路径与环境变量引用。"
+  },
+  {
+    "rule_id": "ZC-4 派单三步铁律 (ZCode 版)",
+    "behavior": "1. 查 .agents/task-loop/sessions.json 寻找专题 -> 2. 无则经 spawn_zcode_session Provider spawn 子命令无头拉起 (spawn --cwd <项目根> --prompt \"<引导词>\", 引导词以 [专题名称] 功能1 & 功能2 开头) 或以原生 Agent 子代理进程内派发 -> 3. 经 send --session <sess_id> --prompt <任务> 续接下发; CLI 未认证时引导 login-api-key, 严禁退化为控制电脑点击 UI。"
+  },
+  {
+    "rule_id": "ZC-5 init 缺失会话兜底",
+    "behavior": "init --create-missing 在 ZCode 宿主对缺失会话的记忆文档经 new_topic_session 双宿主流程无头拉起; 未认证时降级为输出指引并支持用户手动新建后登记 sessions.json。"
+  }
+]
+```
+
+---
+
+## 七、关联文档
 
 * 跨厂商总索引: `references/sdk/README.md`
-* AGY 主力实现: `references/sdk/agy.md`（master 分支主线）
+* AGY 主力实现: `references/sdk/agy.md`
 * Codex / Claude 平行适配: `references/sdk/codex.md` / `references/sdk/claude.md`
+* 单主干治理: `AGENTS.md` (七、单主干统一维护与多厂商状态分区持久化架构)
