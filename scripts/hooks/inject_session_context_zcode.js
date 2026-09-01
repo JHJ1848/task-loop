@@ -74,7 +74,7 @@ function processPayload(payload, env) {
     const templates = core.findPromptTemplates(wsRoot);
     const activeTodo = core.findActiveTodo(wsRoot, sessionId);
 
-    const additionalContext = core.generateInjectionMessage(sessionId, sessionData, activeTodo, templates, 'zcode');
+    const additionalContext = core.generateInjectionMessage(sessionId, sessionData, activeTodo, templates);
 
     return {
       hookSpecificOutput: {

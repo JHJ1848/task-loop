@@ -1,40 +1,37 @@
 #!/usr/bin/env node
 /**
- * [task-loop] Install task-loop Plugin into ZCode Workspace
+ * [Installer] Install task-loop into ZCode official local plugin workspace
  *
- * 自动化打包/复制本项目为符合 ZCode 插件规范的独立目录副本，
- * 放置在 ~/.zcode/plugin-workspace/task-loop (或指定的 --dest 路径)。
+ * 把当前仓库（须为 ZCode 分支适配版）以快照方式复制到 ZCode 官方本地插件目录：
+ *   默认目标: ~/.zcode/plugin-workspace/<plugin-name>/
  *
- * 核心保障:
- * 1. 物理隔离: 导出为独立快照目录，开发态切换 Git 分支不影响已加载的 ZCode 插件。
- * 2. 垃圾清理: 深度递归剔除 __pycache__、.pyc、.idea 等临时文件。
- * 3. 市场生成: 自动在目标根生成 marketplace.json 与 EXPORT-INFO.md，支持本地市场一键 Discover。
- * 4. 自动注册: 可选 --enable 参数，自动在 ~/.zcode/cli/config.json 的 enabledPlugins 中登记。
+ * 设计动机: ZCode 客户端严禁直接引用 Git 工作区（分支切换会改变文件），
+ * 安装后客户端只引用 ~/.zcode 下的独立副本。
+ *
+ * 复制白名单（运行时必需集合，不含 tests/、docs/、AGENTS.md 等开发态内容）:
+ *   dirs : .zcode-plugin  hooks  skills  rules  scripts  templates  references  config  assets
+ *   files: plugin.json  hooks.json  SKILL.md  README.md  LICENSE
+ *
+ * 同时在目标根生成 marketplace.json（市场名 <plugin-name>-local），供 ZCode
+ * 客户端 Discover 页以"本地目录"形式添加市场并选择本插件。
+ *
+ * Usage:
+ *   node scripts/install_zcode_plugin.js                 # 安装到默认位置
+ *   node scripts/install_zcode_plugin.js --dest <path>   # 自定义目标根（仍写入 <name>/ 子目录）
+ *   node scripts/install_zcode_plugin.js --enable        # 额外写 config.json 的 enabledPlugins 开关（自动备份）
+ *   node scripts/install_zcode_plugin.js --check         # 仅校验源仓库与预览计划，不复制
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const MANIFEST_NAME_REGEX = /^[a-z0-9][a-z0-9._-]{0,127}$/;
-
 const COPY_DIRS = [
-  '.zcode-plugin',
-  'hooks',
-  'skills',
-  'scripts',
-  'templates',
-  'references',
-  'config'
+  '.zcode-plugin', 'hooks', 'skills', 'rules', 'scripts',
+  'templates', 'references', 'config', 'assets'
 ];
-
-const COPY_FILES = [
-  'plugin.json',
-  'hooks.json',
-  'SKILL.md',
-  'README.md'
-];
-
+const COPY_FILES = ['plugin.json', 'hooks.json', 'SKILL.md', 'README.md', 'LICENSE'];
+const MANIFEST_NAME_REGEX = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const JUNK_ENTRY_NAMES = new Set(['__pycache__', '.idea', '.DS_Store']);
 
 function readJson(file) {
@@ -46,7 +43,7 @@ function resolveSourceRoot(sourceRoot) {
   const manifestPath = path.join(root, '.zcode-plugin', 'plugin.json');
   if (!fs.existsSync(manifestPath)) {
     throw new Error(
-      `未找到 ${manifestPath} ：请确认当前仓库包含 ZCode 适配层 (.zcode-plugin/)。`
+      `未找到 ${manifestPath} ：请确认当前仓库为包含 ZCode 适配层 (.zcode-plugin/) 的分支后再执行安装。`
     );
   }
   const manifest = readJson(manifestPath);
@@ -77,7 +74,7 @@ function assertNoOverlap(sourceRoot, destRoot) {
 function buildMarketplace(pluginName) {
   return {
     name: `${pluginName}-local`,
-    description: `${pluginName} 本地插件市场（ZCode 宿主引用源）。`,
+    description: `${pluginName} 本地插件市场（ZCode 分支引用源）。`,
     plugins: [
       {
         name: pluginName,
@@ -182,7 +179,7 @@ function installPlugin(options) {
       '',
       '- 用途: ZCode 本地插件市场引用源，避免引用 Git 工作区（分支切换会改变文件）。',
       `- 来源仓库: ${root}`,
-      '- 来源分支: master 单主干统一仓库。',
+      '- 来源分支: 由执行时工作区决定（建议固定在 ZCode 分支导出）。',
       '- 导出方式: node scripts/install_zcode_plugin.js (工作区快照)',
       `- 导出时间: ${stamp}`,
       `- 市场清单: 根目录 marketplace.json (市场名 ${marketplace.name}, 插件 ${pluginName})。`,

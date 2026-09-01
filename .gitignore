@@ -34,3 +34,6 @@ temp/
 scripts/local_*
 
 
+
+# ZCode workspace runtime config (desktop client auto-generated)
+.zcode/

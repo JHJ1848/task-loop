@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ZCode Project Session Provider (Python)
+ZCode Project Session Provider (Python 3.8+)
 Reverse-introspects ZCode sessions for a project root.
 
-ZCode persistence topology:
-  - ~/.zcode/cli/db/db.sqlite: authoritative SQLite3 metadata store (mode=ro)
-  - ~/.zcode/cli/rollout/model-io-sess_<uuid>.jsonl: model I/O transcripts (fallback)
+ZCode persistence topology (see references/sdk/zcode.md):
+  - ~/.zcode/cli/db/db.sqlite               (authoritative registry)
+      session:       id, parent_id, title, directory, path, task_type,
+                     time_created/time_updated (epoch ms)
+      input_history: session_id, text, kind='prompt', time_created
+  - ~/.zcode/cli/rollout/model-io-sess_*.jsonl (per-session model I/O transcripts)
 
-Output contract aligns 1:1 with get_agy_project_sessions.py / get_codex_project_sessions.py:
+This provider reads db.sqlite directly via the standard library `sqlite3`
+module in **read-only** mode (uri=True with mode=ro; it never writes to the
+host database). If the database is missing/unreadable it degrades to scanning
+the rollout JSONL files, mirroring get_zcode_project_sessions.js.
+
+Output schema is identical to the AGY/Codex/Claude providers:
   { vendor, session_id, title, project_root, is_active, created_at,
     last_active_at, log_path, rule_files[, recent_prompts, recent_touched_files] }
 """
@@ -19,6 +27,12 @@ import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 ROLLOUT_FILENAME_RE = re.compile(r"sess[_-]?([0-9a-fA-F-]{36})\.jsonl$", re.IGNORECASE)
 

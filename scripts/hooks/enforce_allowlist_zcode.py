@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 [Hook Script] Enforce Allowlist Guard for ZCode (PreToolUse)

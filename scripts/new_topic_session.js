@@ -10,7 +10,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { spawnSync } = require('child_process');
+const zcodeSpawn = require('./providers/spawn_zcode_session');
 
 function normalizePath(p) {
   return p ? p.replace(/\\/g, '/') : '';
@@ -70,8 +72,10 @@ function parseMemoryDoc(docPath, wsRoot) {
 }
 
 /**
- * 创建独立顶层根会话 (nestingDepth = 0)
- * 彻底净化父级上下文环境变量
+ * 创建独立顶层根会话 (nestingDepth = 0) — 厂商感知双宿主实现
+ *   AGY 宿主  : agentapi new-conversation (原行为保留)
+ *   ZCode 宿主: zcode --cwd <wsRoot> -p "<prompt>" 无头拉起 (scripts/providers/spawn_zcode_session)
+ * 彻底净化父级上下文环境变量；返回 { id, vendor } 或 null。
  */
 function spawnRootConversation(title, prompt, wsRoot) {
   const env = { ...process.env };
@@ -79,20 +83,69 @@ function spawnRootConversation(title, prompt, wsRoot) {
   delete env.ANTIGRAVITY_SOURCE_METADATA;
   delete env.ANTIGRAVITY_TRAJECTORY_ID;
 
-  try {
-    const res = spawnSync('agentapi.bat', ['new-conversation', `--title=${title}`, prompt], {
-      env,
-      cwd: wsRoot,
-      shell: true,
-      encoding: 'utf8'
-    });
-
-    if (res.stdout) {
-      const data = JSON.parse(res.stdout);
-      return data?.response?.newConversation?.conversationId || null;
+  // 1. AGY 宿主: agentapi 可用则优先（原行为）
+  const agentapi = findAgentApiBinary(env);
+  if (agentapi) {
+    const exe = process.platform === 'win32' ? agentapi : agentapi;
+    try {
+      const res = spawnSync(exe, ['new-conversation', `--title=${title}`, prompt], {
+        env,
+        cwd: wsRoot,
+        shell: true,
+        encoding: 'utf8'
+      });
+      if (res.stdout) {
+        const data = JSON.parse(res.stdout);
+        const id = data?.response?.newConversation?.conversationId || null;
+        if (id) return { id: id, vendor: 'antigravity' };
+      }
+    } catch (e) {
+      // fall through to ZCode CLI
     }
-  } catch (e) {
-    // ignore
+  }
+
+  // 2. ZCode 宿主: 无头 CLI 拉起
+  const zcodeCli = zcodeSpawn.discoverZcodeCli(env);
+  if (zcodeCli) {
+    const auth = zcodeSpawn.authState(env);
+    if (!auth.logged_in) {
+      console.error(
+        '[new-topic-session] ZCode CLI 未登录，跳过无头拉起。前置: login-api-key 配置 key 或 zcode login 一次；' +
+        '或手动新建会话后将 ID 登记至 .agents/task-loop/sessions.json。'
+      );
+      return null;
+    }
+    try {
+      const out = zcodeSpawn.runCli(zcodeCli, ['--cwd', wsRoot, '-p', prompt], 600, env);
+      const id = zcodeSpawn.extractSessionId(out);
+      if (id) return { id: id, vendor: 'zcode' };
+      console.error('[new-topic-session] ZCode CLI 已执行但未解析出 sess_id，输出头部: ' + String(out).slice(0, 200));
+      return null;
+    } catch (e) {
+      console.error('[new-topic-session] ZCode CLI 拉起失败: ' + String(e.message).split('\n')[0]);
+      return null;
+    }
+  }
+
+  console.error(
+    '[new-topic-session] 未发现 agentapi (AGY) 或 ZCode CLI。' +
+    'ZCode 环境可设 ZCODE_CLI_BIN 指向 ZCode.exe，或手动新建会话后登记 sessions.json。'
+  );
+  return null;
+}
+
+function findAgentApiBinary(env) {
+  env = env || process.env;
+  if (env.AGENTAPI_PATH && fs.existsSync(env.AGENTAPI_PATH)) return env.AGENTAPI_PATH;
+  const home = os.homedir();
+  const candidates = [
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi.exe'),
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi'),
+    path.join(home, '.antigravity', 'bin', 'agentapi.exe'),
+    path.join(home, '.antigravity', 'bin', 'agentapi')
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
   }
   return null;
 }
@@ -216,14 +269,14 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
   }
 
   const newId = spawnRootConversation(meta.title, meta.initialPrompt, wsRoot);
-  if (!newId) {
-    throw new Error(`创建顶层会话失败: agentapi new-conversation 调用未返回有效会话 ID`);
+  if (!newId || !newId.id) {
+    throw new Error(`创建顶层会话失败: 未返回有效会话 ID（详见 stderr 提示: agentapi / zcode CLI / 手动登记三选一）`);
   }
 
   // 更新 state
   if (!state.modules) state.modules = {};
   state.modules[meta.module_key] = {
-    session_id: newId,
+    session_id: newId.id,
     title: meta.title,
     tags: [meta.module_key, 'topic'],
     memory_doc: meta.memory_doc,
@@ -233,8 +286,8 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
   if (!state.sessions) state.sessions = [];
   const existingIdx = state.sessions.findIndex(s => s.module_key === meta.module_key);
   const sessionItem = {
-    session_id: newId,
-    vendor: 'antigravity',
+    session_id: newId.id,
+    vendor: newId.vendor,
     title: meta.title,
     is_main: false,
     module_key: meta.module_key,
@@ -253,10 +306,10 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
   return {
     status: 'CREATED',
     module_key: meta.module_key,
-    session_id: newId,
+    session_id: newId.id,
     title: meta.title,
     memory_doc: meta.memory_doc,
-    message: `✔ 成功创建顶层专题根会话 (ID: ${newId}) 并与 ${meta.memory_doc} 完成 1:1 绑定！`
+    message: `✔ 成功创建顶层专题根会话 (vendor: ${newId.vendor}, ID: ${newId.id}) 并与 ${meta.memory_doc} 完成 1:1 绑定！`
   };
 }
 

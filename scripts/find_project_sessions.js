@@ -10,6 +10,7 @@ const path = require('path');
 const { scanAgySessions } = require('./providers/get_agy_project_sessions');
 const { scanCodexSessions, getCurrentSessionMetadata } = require('./providers/get_codex_project_sessions');
 const { scanClaudeSessions } = require('./providers/get_claude_project_sessions');
+const { scanZcodeSessions } = require('./providers/get_zcode_project_sessions');
 
 function findSessions(projectRoot = '.', vendor = 'Auto', inspect = false) {
   let allSessions = [];
@@ -21,10 +22,13 @@ function findSessions(projectRoot = '.', vendor = 'Auto', inspect = false) {
     allSessions = allSessions.concat(scanCodexSessions(projectRoot));
   } else if (v === 'claude') {
     allSessions = allSessions.concat(scanClaudeSessions(projectRoot, null, inspect));
+  } else if (v === 'zcode') {
+    allSessions = allSessions.concat(scanZcodeSessions(projectRoot, null, inspect));
   } else if (v === 'all') {
     allSessions = allSessions.concat(scanAgySessions(projectRoot, null, inspect));
     allSessions = allSessions.concat(scanCodexSessions(projectRoot));
     allSessions = allSessions.concat(scanClaudeSessions(projectRoot, null, inspect));
+    allSessions = allSessions.concat(scanZcodeSessions(projectRoot, null, inspect));
   } else { // 'auto'
     const rootPath = path.resolve(projectRoot);
     let policyFile = path.join(rootPath, '.agents', 'task-loop', 'policy.json');
@@ -41,12 +45,19 @@ function findSessions(projectRoot = '.', vendor = 'Auto', inspect = false) {
         }
       } catch (e) {}
     }
+    if (!fs.existsSync(policyFile)) {
+      // No project policy: prefer the host this session is actually running in.
+      if (process.env.ZCODE_SESSION_ID || process.env.CLAUDE_SESSION_ID) {
+        activeVendor = 'zcode';
+      }
+    }
 
     if (activeVendor === 'antigravity') {
       const agy = scanAgySessions(projectRoot, null, inspect);
       allSessions = allSessions.concat(agy);
       if (agy.length === 0) {
         allSessions = allSessions.concat(scanCodexSessions(projectRoot));
+        allSessions = allSessions.concat(scanZcodeSessions(projectRoot, null, inspect));
       }
     } else if (activeVendor === 'codex') {
       const codex = scanCodexSessions(projectRoot);
@@ -58,6 +69,12 @@ function findSessions(projectRoot = '.', vendor = 'Auto', inspect = false) {
       const claude = scanClaudeSessions(projectRoot, null, inspect);
       allSessions = allSessions.concat(claude);
       if (claude.length === 0) {
+        allSessions = allSessions.concat(scanAgySessions(projectRoot, null, inspect));
+      }
+    } else if (activeVendor === 'zcode') {
+      const zcode = scanZcodeSessions(projectRoot, null, inspect);
+      allSessions = allSessions.concat(zcode);
+      if (zcode.length === 0) {
         allSessions = allSessions.concat(scanAgySessions(projectRoot, null, inspect));
       }
     } else {

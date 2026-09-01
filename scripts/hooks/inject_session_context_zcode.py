@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
 [Hook Script] Inject Session Context for ZCode (SessionStart / UserPromptSubmit)
@@ -75,7 +75,7 @@ def process_payload(payload, env=None):
         active_todo = core.find_active_todo(ws_root, session_id)
 
         additional_context = core.generate_injection_message(
-            session_id, session_data, active_todo, templates, vendor='zcode'
+            session_id, session_data, active_todo, templates
         )
 
         return {

@@ -16,6 +16,9 @@ import re
 import subprocess
 from datetime import datetime
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers"))
+import spawn_zcode_session as zcode_spawn
+
 
 def normalize_path(p):
     return p.replace("\\", "/") if p else ""
@@ -70,18 +73,73 @@ def parse_memory_doc(doc_path, ws_root):
 
 
 def spawn_root_conversation(title, prompt, ws_root):
+    """创建独立顶层根会话 (nestingDepth = 0) — 厂商感知双宿主实现。
+    AGY: agentapi new-conversation; ZCode: zcode --cwd -p 无头拉起。
+    返回 {"id": ..., "vendor": ...} 或 None。"""
     env = dict(os.environ)
     for k in ["ANTIGRAVITY_CONVERSATION_ID", "ANTIGRAVITY_SOURCE_METADATA", "ANTIGRAVITY_TRAJECTORY_ID"]:
         env.pop(k, None)
 
-    cmd = ["agentapi.bat", "new-conversation", f"--title={title}", prompt]
-    try:
-        res = subprocess.run(cmd, env=env, cwd=ws_root, shell=True, capture_output=True, text=True, encoding="utf-8")
-        if res.stdout:
-            data = json.loads(res.stdout)
-            return data.get("response", {}).get("newConversation", {}).get("conversationId")
-    except Exception:
-        pass
+    # 1. AGY 宿主: agentapi 可用则优先（原行为）
+    agentapi = _find_agentapi(env)
+    if agentapi:
+        cmd = [agentapi, "new-conversation", f"--title={title}", prompt]
+        try:
+            res = subprocess.run(cmd, env=env, cwd=ws_root, shell=True, capture_output=True, text=True, encoding="utf-8")
+            if res.stdout:
+                data = json.loads(res.stdout)
+                cid = data.get("response", {}).get("newConversation", {}).get("conversationId")
+                if cid:
+                    return {"id": cid, "vendor": "antigravity"}
+        except Exception:
+            pass  # fall through to ZCode CLI
+
+    # 2. ZCode 宿主: 无头 CLI 拉起
+    cli = zcode_spawn.discover_zcode_cli(env)
+    if cli:
+        auth = zcode_spawn.auth_state(env)
+        if not auth["logged_in"]:
+            print(
+                "[new-topic-session] ZCode CLI 未登录，跳过无头拉起。前置: login-api-key 配置 key 或 zcode login 一次；"
+                "或手动新建会话后将 ID 登记至 .agents/task-loop/sessions.json。",
+                file=sys.stderr,
+            )
+            return None
+        try:
+            out = zcode_spawn.run_cli(cli, ["--cwd", ws_root, "-p", prompt], 600, env)
+            sid = zcode_spawn.extract_session_id(out)
+            if sid:
+                return {"id": sid, "vendor": "zcode"}
+            print(
+                "[new-topic-session] ZCode CLI 已执行但未解析出 sess_id，输出头部: " + (out or "")[:200],
+                file=sys.stderr,
+            )
+            return None
+        except Exception as err:
+            print("[new-topic-session] ZCode CLI 拉起失败: " + str(err).split("\n")[0], file=sys.stderr)
+            return None
+
+    print(
+        "[new-topic-session] 未发现 agentapi (AGY) 或 ZCode CLI。"
+        "ZCode 环境可设 ZCODE_CLI_BIN 指向 ZCode.exe，或手动新建会话后登记 sessions.json。",
+        file=sys.stderr,
+    )
+    return None
+
+
+def _find_agentapi(env):
+    override = env.get("AGENTAPI_PATH")
+    if override and os.path.exists(override):
+        return override
+    home = os.path.expanduser("~")
+    for c in (
+        os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.exe"),
+        os.path.join(home, ".gemini", "antigravity", "bin", "agentapi"),
+        os.path.join(home, ".antigravity", "bin", "agentapi.exe"),
+        os.path.join(home, ".antigravity", "bin", "agentapi"),
+    ):
+        if os.path.exists(c):
+            return c
     return None
 
 
@@ -200,7 +258,7 @@ def provision_single_doc(doc_path, ws_root, options=None):
     if "modules" not in state or state["modules"] is None:
         state["modules"] = {}
     state["modules"][meta["module_key"]] = {
-        "session_id": new_id,
+        "session_id": new_id["id"],
         "title": meta["title"],
         "tags": [meta["module_key"], "topic"],
         "memory_doc": meta["memory_doc"],
@@ -211,8 +269,8 @@ def provision_single_doc(doc_path, ws_root, options=None):
         state["sessions"] = []
 
     session_item = {
-        "session_id": new_id,
-        "vendor": "antigravity",
+        "session_id": new_id["id"],
+        "vendor": new_id["vendor"],
         "title": meta["title"],
         "is_main": False,
         "module_key": meta["module_key"],
@@ -231,10 +289,10 @@ def provision_single_doc(doc_path, ws_root, options=None):
     return {
         "status": "CREATED",
         "module_key": meta["module_key"],
-        "session_id": new_id,
+        "session_id": new_id["id"],
         "title": meta["title"],
         "memory_doc": meta["memory_doc"],
-        "message": f"✔ 成功创建顶层专题根会话 (ID: {new_id}) 并与 {meta['memory_doc']} 完成 1:1 绑定！"
+        "message": f"✔ 成功创建顶层专题根会话 (vendor: {new_id['vendor']}, ID: {new_id['id']}) 并与 {meta['memory_doc']} 完成 1:1 绑定！"
     }
 
 
