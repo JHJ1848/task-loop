@@ -72,11 +72,6 @@ def detect_current_vendor(env=None):
     return None
 
 
-def infer_topic_mapping(session):
-    raw_title = sanitize_title(session.get("title"))
-    title_lower = raw_title.lower()
-    summary_lower = (session.get("summary") or "").lower()
-    prompts_lower = " ".join(session.get("recent_prompts") or []).lower()
 def infer_topic_mapping(session, known_memory_keys=None):
     raw_title = sanitize_title(session.get("title"))
     title_lower = raw_title.lower()
