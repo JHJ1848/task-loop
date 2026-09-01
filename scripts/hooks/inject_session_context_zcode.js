@@ -65,16 +65,27 @@ function processPayload(payload, env) {
       return {};
     }
 
+    // 若会话 ID 明显不是 ZCode 格式 (如标准 UUID)，fail-open 不执行 ZCode 注入，避免跨宿主误触发
+    if (!sessionId.startsWith('sess_') && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+      return {};
+    }
+
+    // 去重检查
+    const shouldDedupe = !payload.isTest && !payload.skipDedupe;
+    if (shouldDedupe && core.checkAndAcquireDedupeLock && !core.checkAndAcquireDedupeLock(sessionId)) {
+      return {};
+    }
+
     // Event-specific requested event (CLI --event overrides, e.g. SessionStart dispatch)
     let eventName = extractEventName(payload);
     if (payload.requested_event === 'SessionStart') eventName = 'SessionStart';
 
     const wsRoot = resolveWorkspace(payload, env);
-    const sessionData = core.findSessionsRegistry(wsRoot);
+    const sessionData = core.findSessionsRegistry(wsRoot, 'zcode');
     const templates = core.findPromptTemplates(wsRoot);
     const activeTodo = core.findActiveTodo(wsRoot, sessionId);
 
-    const additionalContext = core.generateInjectionMessage(sessionId, sessionData, activeTodo, templates);
+    const additionalContext = core.generateInjectionMessage(sessionId, sessionData, activeTodo, templates, 'zcode');
 
     return {
       hookSpecificOutput: {

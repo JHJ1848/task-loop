@@ -95,6 +95,46 @@ class TestHooksPipeline(unittest.TestCase):
         res2 = json.loads(stdout2)
         self.assertEqual(len(res2.get("injectSteps", [])), 0)
 
+    def test_vendor_autodetection_and_zcode_ignore(self):
+        # 1. Test main session autodetected as AGY
+        if CURRENT_MAIN_ID:
+            mock_main = json.dumps({
+                "conversationId": CURRENT_MAIN_ID,
+                "workspacePaths": [self.root_dir],
+                "isTest": True
+            })
+            proc = subprocess.Popen(
+                [sys.executable, self.inject_script],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8"
+            )
+            stdout, _ = proc.communicate(input=mock_main)
+            res = json.loads(stdout)
+            self.assertTrue(len(res.get("injectSteps", [])) > 0)
+            self.assertIn("主会话", res["injectSteps"][0]["ephemeralMessage"])
+
+        # 2. Test ZCode hook ignores AGY UUID sessions
+        zcode_script = os.path.join(self.root_dir, "scripts", "hooks", "inject_session_context_zcode.py")
+        mock_zcode = json.dumps({
+            "sessionId": "83bae782-1e95-4923-a76f-2141fe8c5c61",
+            "workspacePaths": [self.root_dir],
+            "isTest": True
+        })
+        proc2 = subprocess.Popen(
+            [sys.executable, zcode_script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8"
+        )
+        stdout2, _ = proc2.communicate(input=mock_zcode)
+        res2 = json.loads(stdout2 or "{}")
+        self.assertEqual(len(res2), 0)
+
     def test_enforce_allowlist_allowed(self):
         mock_input = json.dumps({
             "toolCall": {

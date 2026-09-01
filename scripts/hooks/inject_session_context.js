@@ -161,9 +161,59 @@ function matchInVendorData(conversationId, data) {
   };
 }
 
+function detectVendorFromSessionId(sessionId, fallbackVendor) {
+  if (!sessionId || typeof sessionId !== 'string') return fallbackVendor || 'antigravity';
+  if (sessionId.startsWith('sess_')) return 'zcode';
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+    return 'antigravity';
+  }
+  return fallbackVendor || 'antigravity';
+}
+
+function checkAndAcquireDedupeLock(conversationId) {
+  const dedupeLock = path.join(os.tmpdir(), `.task-loop-hook-${conversationId || 'default'}.lock`);
+  const now = Date.now();
+
+  try {
+    const fd = fs.openSync(dedupeLock, 'wx');
+    fs.writeSync(fd, String(now));
+    fs.closeSync(fd);
+    return true;
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      try {
+        let content = '';
+        try { content = fs.readFileSync(dedupeLock, 'utf8').trim(); } catch (_) {}
+        const timestamp = parseInt(content, 10);
+        if (!isNaN(timestamp)) {
+          const age = now - timestamp;
+          if (age >= 0 && age < 2000) {
+            return false;
+          }
+        }
+        const stats = fs.statSync(dedupeLock);
+        if (stats && stats.mtimeMs > 0) {
+          const mtimeAge = now - stats.mtimeMs;
+          if (mtimeAge >= 0 && mtimeAge < 2000) {
+            return false;
+          }
+        }
+        try { fs.unlinkSync(dedupeLock); } catch (_) {}
+        const fd2 = fs.openSync(dedupeLock, 'wx');
+        fs.writeSync(fd2, String(now));
+        fs.closeSync(fd2);
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+    return false;
+  }
+}
+
 /**
  * 匹配 sessions.json (或 sessions.<vendor>.json) 解析会话详细属性
- * 支持 Schema v3 vendors 命名空间分区检索与跨分区自适应回退
+ * 支持 Schema v4/v3 vendors 命名空间分区检索与自适应厂商判定
  */
 function getSessionDetails(conversationId, sessionData, targetVendor) {
   if (!sessionData) {
@@ -180,17 +230,19 @@ function getSessionDetails(conversationId, sessionData, targetVendor) {
     };
   }
 
-  // 1. 如果包含 vendors 分区 (Schema v3)
+  const effectiveVendor = targetVendor || detectVendorFromSessionId(conversationId, 'antigravity');
+
+  // 1. 如果包含 vendors 分区 (Schema v4 / v3)
   if (sessionData.vendors && typeof sessionData.vendors === 'object') {
-    if (targetVendor && sessionData.vendors[targetVendor]) {
-      const vDetails = matchInVendorData(conversationId, sessionData.vendors[targetVendor]);
+    if (sessionData.vendors[effectiveVendor]) {
+      const vDetails = matchInVendorData(conversationId, sessionData.vendors[effectiveVendor]);
       if (!vDetails.is_unregistered) {
         return vDetails;
       }
     }
-    // 跨所有 vendor 分区匹配
+    // 跨其他 vendor 分区匹配
     for (const [vKey, vData] of Object.entries(sessionData.vendors)) {
-      if (vKey === targetVendor) continue;
+      if (vKey === effectiveVendor) continue;
       const vDetails = matchInVendorData(conversationId, vData);
       if (!vDetails.is_unregistered) {
         return vDetails;
@@ -340,7 +392,7 @@ function generateInjectionMessage(conversationId, sessionData, activeTodo, templ
 
 function processPayload(payload) {
   try {
-    let conversationId = payload.conversationId;
+    let conversationId = payload.conversationId || payload.conversation_id || payload.sessionId || payload.session_id;
 
     if (!conversationId && process.env.ANTIGRAVITY_CONVERSATION_ID) {
       conversationId = process.env.ANTIGRAVITY_CONVERSATION_ID;
@@ -353,49 +405,12 @@ function processPayload(payload) {
     // 避免工作区插件与全局用户插件同时触发 PreInvocation 产生重复注入 (只要非测试模式即执行 2000ms 独占排他去重)
     const shouldDedupe = !payload.isTest && !payload.skipDedupe;
 
-    if (shouldDedupe) {
-      const dedupeLock = path.join(os.tmpdir(), `.task-loop-hook-${conversationId || 'default'}.lock`);
-      try {
-        let acquired = false;
-        try {
-          const fd = fs.openSync(dedupeLock, 'wx');
-          fs.writeSync(fd, String(Date.now()));
-          fs.closeSync(fd);
-          acquired = true;
-        } catch (err) {
-          if (err.code === 'EEXIST') {
-            let stats;
-            try { stats = fs.statSync(dedupeLock); } catch (_) {}
-            const mtime = stats ? stats.mtimeMs : 0;
-            if (Date.now() - mtime < 2000) {
-              return { injectSteps: [] };
-            }
-            // 锁已过期 (> 2000ms)，尝试原子争抢：先删除旧文件，再以 'wx' 重新创建
-            try { fs.unlinkSync(dedupeLock); } catch (_) {}
-            try {
-              const fd2 = fs.openSync(dedupeLock, 'wx');
-              fs.writeSync(fd2, String(Date.now()));
-              fs.closeSync(fd2);
-              acquired = true;
-            } catch (err2) {
-              return { injectSteps: [] };
-            }
-          }
-        }
-        if (!acquired) {
-          return { injectSteps: [] };
-        }
-      } catch (e) {
-        try {
-          if (fs.existsSync(dedupeLock) && (Date.now() - fs.statSync(dedupeLock).mtimeMs < 2000)) {
-            return { injectSteps: [] };
-          }
-        } catch (_) {}
-      }
+    if (shouldDedupe && !checkAndAcquireDedupeLock(conversationId)) {
+      return { injectSteps: [] };
     }
 
     const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
-    const targetVendor = payload.vendor || (process.env.ZCODE_SESSION_ID ? 'zcode' : (process.env.CODEX_THREAD_ID ? 'codex' : 'antigravity'));
+    const targetVendor = payload.vendor || (process.env.ZCODE_SESSION_ID ? 'zcode' : (process.env.CODEX_THREAD_ID ? 'codex' : detectVendorFromSessionId(conversationId, 'antigravity')));
     const sessionData = findSessionsRegistry(wsRoot, targetVendor);
     const templates = findPromptTemplates(wsRoot);
     const activeTodo = findActiveTodo(wsRoot, conversationId);
@@ -457,8 +472,11 @@ module.exports = {
   findPromptTemplates,
   findActiveTodo,
   matchInVendorData,
+  detectVendorFromSessionId,
+  checkAndAcquireDedupeLock,
   getSessionDetails,
   getPluginTopicRules,
   generateInjectionMessage,
   processPayload
 };
+

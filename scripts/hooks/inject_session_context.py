@@ -168,6 +168,62 @@ def match_in_vendor_data(conversation_id, data):
     }
 
 
+def detect_vendor_from_session_id(session_id: str, fallback_vendor: str = "antigravity") -> str:
+    if not session_id or not isinstance(session_id, str):
+        return fallback_vendor or "antigravity"
+    if session_id.startswith("sess_"):
+        return "zcode"
+    import re
+    if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", session_id, re.IGNORECASE):
+        return "antigravity"
+    return fallback_vendor or "antigravity"
+
+
+def check_and_acquire_dedupe_lock(conversation_id: str) -> bool:
+    import tempfile
+    import time
+    dedupe_lock = os.path.join(tempfile.gettempdir(), f".task-loop-hook-{conversation_id or 'default'}.lock")
+    now = time.time()
+
+    try:
+        fd = os.open(dedupe_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(str(int(now * 1000)))
+        return True
+    except FileExistsError:
+        try:
+            content = ""
+            try:
+                with open(dedupe_lock, "r", encoding="utf-8") as f:
+                    content = f.read().strip()
+            except Exception:
+                pass
+
+            if content.isdigit():
+                ts_ms = int(content)
+                age_sec = (now * 1000 - ts_ms) / 1000.0
+                if 0 <= age_sec < 2.0:
+                    return False
+
+            mtime = os.path.getmtime(dedupe_lock)
+            if 0 <= (now - mtime) < 2.0:
+                return False
+
+            try:
+                os.remove(dedupe_lock)
+            except Exception:
+                pass
+
+            fd2 = os.open(dedupe_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd2, "w", encoding="utf-8") as f:
+                f.write(str(int(now * 1000)))
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
 def get_session_details(conversation_id, session_data, target_vendor=None):
     if not session_data:
         return {
@@ -182,16 +238,18 @@ def get_session_details(conversation_id, session_data, target_vendor=None):
             "memory_docs": []
         }
 
-    # 1. 如果包含 vendors 分区 (Schema v3)
+    effective_vendor = target_vendor or detect_vendor_from_session_id(conversation_id, "antigravity")
+
+    # 1. 如果包含 vendors 分区 (Schema v4 / v3)
     if isinstance(session_data.get("vendors"), dict):
-        if target_vendor and target_vendor in session_data["vendors"]:
-            v_details = match_in_vendor_data(conversation_id, session_data["vendors"][target_vendor])
+        if effective_vendor in session_data["vendors"]:
+            v_details = match_in_vendor_data(conversation_id, session_data["vendors"][effective_vendor])
             if not v_details["is_unregistered"]:
                 return v_details
 
         # 跨所有 vendor 分区匹配
         for v_key, v_data in session_data["vendors"].items():
-            if v_key == target_vendor:
+            if v_key == effective_vendor:
                 continue
             v_details = match_in_vendor_data(conversation_id, v_data)
             if not v_details["is_unregistered"]:
@@ -320,7 +378,7 @@ def generate_injection_message(conversation_id, session_data, active_todo, templ
 
 def process_payload(payload):
     try:
-        conversation_id = payload.get("conversationId")
+        conversation_id = payload.get("conversationId") or payload.get("conversation_id") or payload.get("sessionId") or payload.get("session_id")
         if not conversation_id and "ANTIGRAVITY_CONVERSATION_ID" in os.environ:
             conversation_id = os.environ["ANTIGRAVITY_CONVERSATION_ID"]
 
@@ -330,47 +388,11 @@ def process_payload(payload):
         # 避免工作区插件与全局用户插件同时触发 PreInvocation 产生重复注入 (只要非测试模式即执行 2000ms 独占排他去重)
         should_dedupe = not payload.get("isTest") and not payload.get("skipDedupe")
 
-        if should_dedupe:
-            import tempfile
-            import time
-            dedupe_lock = os.path.join(tempfile.gettempdir(), f".task-loop-hook-{conversation_id or 'default'}.lock")
-            try:
-                acquired = False
-                try:
-                    fd = os.open(dedupe_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(str(time.time()))
-                    acquired = True
-                except FileExistsError:
-                    try:
-                        mtime = os.path.getmtime(dedupe_lock)
-                    except Exception:
-                        mtime = 0
-                    if (time.time() - mtime) < 2.0:
-                        return {"injectSteps": []}
-                    # 锁已过期，尝试原子争抢：删除后重新以 O_CREAT | O_EXCL 创建
-                    try:
-                        os.remove(dedupe_lock)
-                    except Exception:
-                        pass
-                    try:
-                        fd2 = os.open(dedupe_lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                        with os.fdopen(fd2, "w", encoding="utf-8") as f:
-                            f.write(str(time.time()))
-                        acquired = True
-                    except Exception:
-                        return {"injectSteps": []}
-                if not acquired:
-                    return {"injectSteps": []}
-            except Exception:
-                try:
-                    if os.path.exists(dedupe_lock) and (time.time() - os.path.getmtime(dedupe_lock)) < 2.0:
-                        return {"injectSteps": []}
-                except Exception:
-                    pass
+        if should_dedupe and not check_and_acquire_dedupe_lock(conversation_id):
+            return {"injectSteps": []}
 
         ws_root = resolve_workspace_root(payload.get("workspacePaths"))
-        target_vendor = payload.get("vendor") or ("zcode" if os.environ.get("ZCODE_SESSION_ID") else ("codex" if os.environ.get("CODEX_THREAD_ID") else "antigravity"))
+        target_vendor = payload.get("vendor") or ("zcode" if os.environ.get("ZCODE_SESSION_ID") else ("codex" if os.environ.get("CODEX_THREAD_ID") else detect_vendor_from_session_id(conversation_id, "antigravity")))
         session_data = find_sessions_registry(ws_root, target_vendor)
         templates = find_prompt_templates(ws_root)
         active_todo = find_active_todo(ws_root, conversation_id)

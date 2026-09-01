@@ -68,14 +68,24 @@ def process_payload(payload, env=None):
         if not session_id:
             return {}
 
+        import re
+        # 若会话 ID 明显不是 ZCode 格式 (如标准 UUID)，fail-open 不执行 ZCode 注入，避免跨宿主误触发
+        if not session_id.startswith('sess_') and re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", session_id, re.IGNORECASE):
+            return {}
+
+        # 去重检查
+        should_dedupe = not payload.get('isTest') and not payload.get('skipDedupe')
+        if should_dedupe and hasattr(core, 'check_and_acquire_dedupe_lock') and not core.check_and_acquire_dedupe_lock(session_id):
+            return {}
+
         event_name = extract_event_name(payload)
         ws_root = resolve_workspace(payload, env)
-        session_data = core.find_sessions_registry(ws_root)
+        session_data = core.find_sessions_registry(ws_root, 'zcode')
         templates = core.find_prompt_templates(ws_root)
         active_todo = core.find_active_todo(ws_root, session_id)
 
         additional_context = core.generate_injection_message(
-            session_id, session_data, active_todo, templates
+            session_id, session_data, active_todo, templates, 'zcode'
         )
 
         return {

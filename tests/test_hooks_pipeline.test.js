@@ -67,6 +67,37 @@ function runHooksPipelineTests() {
   const dedupeResult2 = JSON.parse(dedupeOutput2);
   assert.strictEqual(dedupeResult2.injectSteps.length, 0, 'Second call within 2000ms should be dropped');
 
+  // 1.3 Test vendor auto-detection by session ID shape
+  const mainId = currentMainId();
+  if (mainId) {
+    const mainPayload = JSON.stringify({
+      conversationId: mainId,
+      workspacePaths: [rootDir],
+      isTest: true
+    });
+    const mainOutput = execSync(`node "${injectScript}"`, {
+      input: mainPayload,
+      encoding: 'utf8'
+    });
+    const mainResult = JSON.parse(mainOutput);
+    assert.ok(mainResult.injectSteps && mainResult.injectSteps.length > 0, 'Main session should inject');
+    assert.ok(mainResult.injectSteps[0].ephemeralMessage.includes('主会话'), 'Main session should be recognized as main');
+  }
+
+  // 1.4 Test ZCode adapter ignores AGY UUID sessions
+  const zcodeScript = path.join(rootDir, 'scripts', 'hooks', 'inject_session_context_zcode.js');
+  const zcodePayload = JSON.stringify({
+    sessionId: "83bae782-1e95-4923-a76f-2141fe8c5c61",
+    workspacePaths: [rootDir],
+    isTest: true
+  });
+  const zcodeOutput = execSync(`node "${zcodeScript}"`, {
+    input: zcodePayload,
+    encoding: 'utf8'
+  });
+  const zcodeResult = JSON.parse(zcodeOutput || '{}');
+  assert.strictEqual(Object.keys(zcodeResult).length, 0, 'ZCode adapter should ignore AGY UUID sessions');
+
   // 2. Test enforce_allowlist.js with allowed file
   const mockAllowedToolUse = JSON.stringify({
     toolCall: {
@@ -115,3 +146,4 @@ function runHooksPipelineTests() {
 }
 
 runHooksPipelineTests();
+
