@@ -53,18 +53,18 @@ class TestInitSkill(unittest.TestCase):
 
             with open(res_agy["storage_files"]["sessions_json"], "r", encoding="utf-8") as f:
                 data_agy = json.load(f)
-                self.assertEqual(data_agy.get("schema_version"), 3)
-                self.assertEqual(data_agy.get("current_vendor"), "antigravity")
-                self.assertEqual(data_agy.get("main_thread_id"), "sess_agy_main")
+                self.assertEqual(data_agy.get("schema_version"), 4)
+                self.assertEqual(data_agy["vendors"]["antigravity"]["vendor"], "antigravity")
+                self.assertEqual(data_agy["vendors"]["antigravity"]["main_thread_id"], "sess_agy_main")
                 self.assertIn("antigravity", data_agy.get("vendors", {}))
 
             # Initialize with zcode vendor on top of the same workspace -> must preserve antigravity partition!
             res_zcode = init_task_loop({"ws_root": tmp_ws, "dry_run": False, "vendor": "zcode", "main_session_id": "sess_zcode_main"})
             with open(res_zcode["storage_files"]["sessions_json"], "r", encoding="utf-8") as f:
                 data_zcode = json.load(f)
-                self.assertEqual(data_zcode.get("schema_version"), 3)
-                self.assertEqual(data_zcode.get("current_vendor"), "zcode")
-                self.assertEqual(data_zcode.get("main_thread_id"), "sess_zcode_main")
+                self.assertEqual(data_zcode.get("schema_version"), 4)
+                self.assertEqual(data_zcode["vendors"]["zcode"]["vendor"], "zcode")
+                self.assertEqual(data_zcode["vendors"]["zcode"]["main_thread_id"], "sess_zcode_main")
                 self.assertEqual(data_zcode["vendors"]["antigravity"]["main_thread_id"], "sess_agy_main")
                 self.assertIn("zcode", data_zcode["vendors"])
             self.assertTrue(os.path.exists(os.path.join(tmp_ws, ".agents", "task-loop", "sessions.antigravity.json")))

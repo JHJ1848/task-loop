@@ -39,47 +39,54 @@
 
 ---
 
-## `sessions.json` 结构规范（支持全量会话持久化与功能映射）
+## `sessions.json` 结构规范（Schema v4: 顶层厂商分区, 动态扩展, 跨 Agent 隔离）
+
+Schema v4 起 sessions.json 与 topics.json 顶层即为**厂商分区**（zcode / antigravity / codex / claude / 任意新厂商动态扩展），各宿主工具只读写自身分区，结构上杜绝旧版多 Agent 全量覆写同一份顶层数据导致的互相冲绑问题。查询请用 `scripts/query_task_loop_state.js|.py`（`--vendor <v> --key <dot.path>`），旧格式（v1/v2/v3）在首次写入时自动整体迁移为 v4，其余厂商分区不受影响。
 
 ```json
 {
-  "schema_version": 1,
-  "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
-  "sessions": [
-    {
-      "session_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
-      "vendor": "antigravity",
-      "title": "[主会话] 任务编排 & 治理中枢",
-      "is_main": true,
-      "created_at": "2026-08-21T08:54:04Z",
-      "last_active_at": "2026-08-25T01:43:46Z",
-      "log_path": "path/to/transcript.jsonl",
-      "recent_prompts": ["..."]
+  "schema_version": 4,
+  "updated_at": "2026-08-31T12:00:00.000Z",
+  "vendors": {
+    "zcode": {
+      "vendor": "zcode",
+      "main_thread_id": "sess_<uuid>",
+      "updated_at": "2026-08-31T12:00:00.000Z",
+      "modules": {
+        "hook": {
+          "session_id": "sess_<uuid>",
+          "title": "[钩子专题] 生命周期 & 安全门禁",
+          "tags": ["hook", "topic"],
+          "memory_doc": "docs/memory/hook.md",
+          "vendor": "zcode",
+          "resumable": true,
+          "dispatch_hint": "可续接: 经当前宿主会话 SDK send/resume 原语定向派单",
+          "summary": "专题模块: [钩子专题] 生命周期 & 安全门禁"
+        }
+      },
+      "sessions": [
+        {
+          "session_id": "sess_<uuid>",
+          "vendor": "zcode",
+          "title": "[钩子专题] 生命周期 & 安全门禁",
+          "is_main": false,
+          "module_key": "hook",
+          "resumable": true,
+          "summary": "专题模块: [钩子专题] 生命周期 & 安全门禁",
+          "memory_docs": ["docs/memory/hook.md"]
+        }
+      ]
     },
-    {
-      "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
-      "vendor": "antigravity",
-      "title": "[会话专题] SDK接口封装 & 会话管理",
-      "is_main": false,
-      "created_at": "2026-08-25T01:41:05Z",
-      "last_active_at": "2026-08-25T01:43:39Z",
-      "log_path": "path/to/transcript.jsonl",
-      "recent_prompts": ["..."]
-    }
-  ],
-  "modules": {
-    "session_control": {
-      "thread_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
-      "title": "[会话专题] SDK接口封装 & 会话管理",
-      "title_prefix": "session-",
-      "tags": ["session", "sdk", "controller"],
-      "summary": "负责会话 SDK 接口封装、便利性脚本维护及专题记忆归档",
-      "memory_docs": ["docs/memory/session_control.md"],
-      "log_path": "path/to/transcript.jsonl"
-    }
+    "antigravity": { "vendor": "antigravity", "main_thread_id": null, "updated_at": null, "modules": {}, "sessions": [] },
+    "codex": { "vendor": "codex", "main_thread_id": null, "updated_at": null, "modules": {}, "sessions": [] },
+    "claude": { "vendor": "claude", "main_thread_id": null, "updated_at": null, "modules": {}, "sessions": [] }
   }
 }
 ```
+
+`topics.json` 同构：顶层 `vendors.<vendor>.topics[]`（条目含 `topic_key/name/session_id/vendor/resumable/tags/memory_doc`）。另有兼容镜像物理文件 `sessions.<vendor>.json` / `topics.<vendor>.json` 由写入方自动同步，供旧版宿主工具按 `targetVendor` 直读。
+
+**厂商自选择规则 (Vendor Self-Selection)**：智能体派单或选择工具/文档前，先经查询脚本读取目标专题条目的 `vendor` 与 `resumable` 字段——`resumable: true` 时按该 `vendor` 经对应宿主 SessionProvider send/resume 原语派单；`false` 为只读遗留，仅可历史内省或经 new-session 重建。厂商与工具/文档映射总表见 `references/sdk/README.md`。
 
 ---
 

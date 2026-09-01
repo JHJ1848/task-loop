@@ -599,22 +599,32 @@ function initTaskLoop(options = {}) {
     }
   }
 
-  // 写入全量主 sessions.json (Schema v3)
+  // 写入全量主 sessions.json (Schema v4: 顶层仅元数据 + vendors 厂商分区, 顶层冗余副本已废除以杜绝跨厂商覆写)
   const masterSessionsData = {
-    schema_version: 3,
-    main_thread_id: mainThreadId,
-    current_vendor: targetVendor,
+    schema_version: 4,
     updated_at: new Date().toISOString(),
-    modules: targetModules,
-    sessions: targetSessionsList,
     vendors: vendors
   };
 
   fs.writeFileSync(sessionsPath, JSON.stringify(masterSessionsData, null, 2), 'utf8');
 
-  // 4. topics.json
-  const topicsData = {
-    schema_version: 3,
+  // 4. topics.json (Schema v4: 同样厂商顶层分区, 各厂商 topics 隔离, 动态扩展, 严禁互踩)
+  const existingTopicsData = fs.existsSync(topicsPath) ? (() => {
+    try { return JSON.parse(fs.readFileSync(topicsPath, 'utf8')); } catch { return null; }
+  })() : null;
+  const topicsVendors = {};
+  if (existingTopicsData && existingTopicsData.vendors && typeof existingTopicsData.vendors === 'object') {
+    for (const [vKey, vData] of Object.entries(existingTopicsData.vendors)) {
+      topicsVendors[vKey] = vData;
+    }
+  } else if (existingTopicsData && Array.isArray(existingTopicsData.topics)) {
+    const legacyVendor = existingTopicsData.current_vendor || targetVendor;
+    topicsVendors[legacyVendor] = { vendor: legacyVendor, updated_at: existingTopicsData.updated_at || null, topics: existingTopicsData.topics };
+  }
+
+  const targetTopics = {
+    vendor: targetVendor,
+    updated_at: new Date().toISOString(),
     topics: Object.entries(targetModules).map(([k, v]) => ({
       topic_key: k,
       name: v.title,
@@ -625,7 +635,17 @@ function initTaskLoop(options = {}) {
       memory_doc: v.memory_doc
     }))
   };
-  fs.writeFileSync(topicsPath, JSON.stringify(topicsData, null, 2), 'utf8');
+  topicsVendors[targetVendor] = targetTopics;
+
+  // 目标厂商物理镜像 topics.<vendor>.json
+  fs.writeFileSync(path.join(taskLoopDir, `topics.${targetVendor}.json`), JSON.stringify(Object.assign({ schema_version: 4 }, targetTopics), null, 2), 'utf8');
+
+  const topicsFileData = {
+    schema_version: 4,
+    updated_at: new Date().toISOString(),
+    vendors: topicsVendors
+  };
+  fs.writeFileSync(topicsPath, JSON.stringify(topicsFileData, null, 2), 'utf8');
 
   // 5. todo.json
   if (!fs.existsSync(todoPath)) {

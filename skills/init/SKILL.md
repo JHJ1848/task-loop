@@ -116,26 +116,73 @@ node scripts/init_task_loop.js --create-missing --current-session <CurrentSessio
 
 ## 五、底层存储与用户兜底修改机制 (Fallback Editing)
 
-初始化完成后，所有专题与会话映射保存在：
+初始化完成后，所有专题与会话映射保存在（**Schema v4: 顶层即为厂商分区**）：
 * **核心会话映射表**: `<WorkspaceRoot>/.agents/task-loop/sessions.json`
 * **专题声明清单**: `<WorkspaceRoot>/.agents/task-loop/topics.json`
 * **任务队列**: `<WorkspaceRoot>/.agents/task-loop/todo.json`
 * **调度策略**: `<WorkspaceRoot>/.agents/task-loop/policy.json`
 
-### 用户直接修改指引：
-如果用户发现专题划分不合理或希望修改某个会话的绑定关系，**可直接打开 `.agents/task-loop/sessions.json` 手动编辑**：
+### Schema v4 厂商分区结构 (跨 Agent 隔离铁律)
+
+sessions.json 与 topics.json 顶层即为厂商分区，**动态扩展**（新厂商即新键），各宿主工具只读写自身分区，结构上杜绝旧版多 Agent 相互覆写的问题：
+
 ```json
 {
-  "schema_version": 2,
-  "main_thread_id": "<主会话ID>",
-  "modules": {
-    "<module_key>": {
-      "session_id": "<目标会话ID>",
-      "title": "<自定义专题名称>",
-      "tags": ["tag1", "tag2"],
-      "memory_doc": "docs/memory/<module_key>.md"
+  "schema_version": 4,
+  "updated_at": "<ISO>",
+  "vendors": {
+    "zcode":       { "vendor": "zcode", "main_thread_id": "<id>", "updated_at": "<ISO>", "modules": {}, "sessions": [] },
+    "antigravity": { "vendor": "antigravity", "main_thread_id": "<id>", "updated_at": "<ISO>", "modules": {}, "sessions": [] },
+    "codex":       { "vendor": "codex", "main_thread_id": null, "updated_at": null, "modules": {}, "sessions": [] },
+    "claude":      { "vendor": "claude", "main_thread_id": null, "updated_at": null, "modules": {}, "sessions": [] }
+  }
+}
+```
+
+**隔离铁律 (Cross-Vendor Write Isolation)**：
+1. 每个宿主的工具（init / new-session / Hook / 派单）**只允许读写自身厂商分区**（由宿主环境变量自动判定，如 ZCode 注入 `ZCODE_SESSION_ID`），其余厂商分区零接触；
+2. 旧版各 Agent 全量覆写同一份顶层 modules/sessions 导致互相冲掉绑定的问题已在 Schema v4 结构上根除——任何工具都不再写厂商共享的顶层数据；
+3. `topics.json` 同构分区（分区内为 `{ vendor, updated_at, topics: [...] }`）；
+4. 兼容镜像: 每厂商另有物理文件 `sessions.<vendor>.json` / `topics.<vendor>.json` 供旧版工具直读，由写入方自动同步。
+
+### 快速查询脚本 (Query CLI)
+
+AI 与用户无需通读全文件，直接按键取值（智能体据此**自主选择工具/文档**：先读专题的 `vendor` 与 `resumable` 字段，再按 `references/sdk/README.md` 映射选择对应厂商的会话工具）：
+
+```bash
+# 取指定厂商主会话 ID
+node scripts/query_task_loop_state.js --vendor zcode --key main_thread_id
+
+# 取指定专题绑定的会话 ID (点路径)
+python scripts/query_task_loop_state.py --vendor zcode --key modules.hook.session_id
+
+# 输出整个厂商分区 / 列出全部厂商 / 旧格式一键迁移 v4
+node scripts/query_task_loop_state.js --vendor zcode --all
+node scripts/query_task_loop_state.js vendors
+node scripts/query_task_loop_state.js migrate --vendor zcode
+```
+
+### 用户直接修改指引：
+如果用户发现专题划分不合理或希望修改某个会话的绑定关系，**可直接打开 `.agents/task-loop/sessions.json` 手动编辑自身厂商分区**：
+
+```json
+{
+  "schema_version": 4,
+  "vendors": {
+    "<你的厂商，例如 zcode>": {
+      "vendor": "<你的厂商>",
+      "main_thread_id": "<主会话ID>",
+      "modules": {
+        "<module_key>": {
+          "session_id": "<目标会话ID>",
+          "title": "<自定义专题名称>",
+          "tags": ["tag1", "tag2"],
+          "memory_doc": "docs/memory/<module_key>.md"
+        }
+      },
+      "sessions": []
     }
   }
 }
 ```
-底层 Hook 与调度器会实时读取该文件，改动即刻生效，无需重启任何服务。
+底层 Hook 与调度器会实时读取该文件，改动即刻生效，无需重启任何服务。**严禁修改其他厂商分区**（那会破坏跨 Agent 隔离；误改可用 git 或备份恢复，其余厂商分区不受影响）。

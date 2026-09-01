@@ -51,17 +51,16 @@ function runInitSkillTests() {
   assert.ok(fs.existsSync(liveResAgy.storage_files.policy_json));
 
   const savedSessionsAgy = JSON.parse(fs.readFileSync(liveResAgy.storage_files.sessions_json, 'utf8'));
-  assert.strictEqual(savedSessionsAgy.schema_version, 3);
-  assert.strictEqual(savedSessionsAgy.current_vendor, 'antigravity');
-  assert.strictEqual(savedSessionsAgy.main_thread_id, 'sess_agy_main');
+  assert.strictEqual(savedSessionsAgy.schema_version, 4);
+  assert.ok(!savedSessionsAgy.current_vendor && !savedSessionsAgy.main_thread_id, 'v4 top-level must be metadata-only');
+  assert.strictEqual(savedSessionsAgy.vendors.antigravity.main_thread_id, 'sess_agy_main');
   assert.ok(savedSessionsAgy.vendors.antigravity);
 
   // Initialize with zcode vendor on top of the same workspace -> must preserve antigravity partition!
   const liveResZCode = initTaskLoop({ wsRoot: tmpWs, dryRun: false, vendor: 'zcode', mainSessionId: 'sess_zcode_main' });
   const savedSessionsZCode = JSON.parse(fs.readFileSync(liveResZCode.storage_files.sessions_json, 'utf8'));
-  assert.strictEqual(savedSessionsZCode.schema_version, 3);
-  assert.strictEqual(savedSessionsZCode.current_vendor, 'zcode');
-  assert.strictEqual(savedSessionsZCode.main_thread_id, 'sess_zcode_main');
+  assert.strictEqual(savedSessionsZCode.schema_version, 4);
+  assert.strictEqual(savedSessionsZCode.vendors.zcode.main_thread_id, 'sess_zcode_main');
   assert.strictEqual(savedSessionsZCode.vendors.antigravity.main_thread_id, 'sess_agy_main', 'antigravity main thread must be 100% preserved');
   assert.ok(savedSessionsZCode.vendors.zcode, 'zcode partition must exist');
   assert.ok(fs.existsSync(path.join(tmpWs, '.agents', 'task-loop', 'sessions.antigravity.json')));

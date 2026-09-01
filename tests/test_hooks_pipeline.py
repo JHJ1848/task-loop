@@ -4,6 +4,24 @@ import json
 import subprocess
 import unittest
 
+
+def _current_main_id():
+    """动态读取当前主会话 (任意厂商分区), 避免硬编码随状态机演进失效。"""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".agents", "task-loop", "sessions.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        for part in (data.get("vendors") or {}).values():
+            if isinstance(part, dict) and part.get("main_thread_id"):
+                return part["main_thread_id"]
+        return data.get("main_thread_id")
+    except Exception:
+        return None
+
+
+CURRENT_MAIN_ID = _current_main_id()
+
+
 class TestHooksPipeline(unittest.TestCase):
     def setUp(self):
         self.root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -101,7 +119,7 @@ class TestHooksPipeline(unittest.TestCase):
 
     def test_enforce_allowlist_denied(self):
         mock_input = json.dumps({
-            "conversationId": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+            "conversationId": CURRENT_MAIN_ID,
             "toolCall": {
                 "name": "replace_file_content",
                 "args": {

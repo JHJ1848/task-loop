@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
   "main_session_policy": {
-    "default_vendor": "antigravity",
-    "_default_vendor_description": "默认活动的 AI 厂商平台。可选值：antigravity（Google Antigravity）、codex（OpenAI Codex）、claude（Anthropic Claude Code）",
+    "default_vendor": "zcode",
+    "_default_vendor_description": "默认活动的 AI 厂商平台。可选值：zcode（ZCode/Z.ai）、antigravity（Google Antigravity）、codex（OpenAI Codex）、claude（Anthropic Claude Code）。运行时按宿主环境变量自动覆写。",
     "enable_file_state_machine": false,
     "_enable_file_state_machine_description": "是否开启基于本地 JSON 文件的严格状态机机制（todo.json, lease.json, dispatch/*.json）。默认关闭（false）：主会话以极速、低延迟的自然语言直接交互，动态编排任务、评估专题匹配度并直接下发任务到对应专题会话，避免大文件读写与状态锁争用",
     "explainable_reasoning": true,

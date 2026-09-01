@@ -253,6 +253,11 @@ agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发�
     "rule": "send_message 在 AGY IDE 中以折叠卡形式渲染于目标会话顶部，不伪造人类用户聊天气泡。"
   },
   {
+    "gotcha_id": "Gotcha 9",
+    "title": "厂商自选择 (Vendor Self-Selection)",
+    "rule": "派单或选择会话工具/文档前, 先经 scripts/query_task_loop_state.* 读取目标专题条目的 vendor 与 resumable 字段: resumable=true 按该 vendor 的 SessionProvider send/resume 原语派单; false 为只读遗留, 仅历史内省或经 new-session 重建。厂商与工具映射总表见 references/sdk/README.md。"
+  },
+  {
     "gotcha_id": "Gotcha 10",
     "title": "主会话派单三步铁律",
     "rule": "1. 寻找专题 -> 2. 没有则 agentapi 新建真实顶层会话 -> 3. send_message 定向发信。"

@@ -539,37 +539,66 @@ def init_task_loop(options=None):
             except Exception:
                 pass
 
-    # 写入全量主 sessions.json (Schema v3)
+    # 写入全量主 sessions.json (Schema v4: 顶层仅元数据 + vendors 厂商分区, 顶层冗余副本已废除以杜绝跨厂商覆写)
     master_sessions_data = {
-        "schema_version": 3,
-        "main_thread_id": main_thread_id,
-        "current_vendor": target_vendor,
+        "schema_version": 4,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-        "modules": target_modules,
-        "sessions": target_sessions_list,
         "vendors": vendors
     }
 
     with open(sessions_path, "w", encoding="utf-8") as f:
         json.dump(master_sessions_data, f, indent=2, ensure_ascii=False)
 
-    topics_data = {
-        "schema_version": 3,
-        "topics": [
-            {
-                "topic_key": k,
-                "name": v["title"],
-                "session_id": v["session_id"],
-                "vendor": v["vendor"],
-                "resumable": v["resumable"],
-                "tags": v["tags"],
-                "memory_doc": v["memory_doc"]
-            }
-            for k, v in target_modules.items()
-        ]
+    # topics.json (Schema v4: 同样厂商顶层分区, 各厂商 topics 隔离, 动态扩展, 严禁互踩)
+    existing_topics_data = None
+    if os.path.exists(topics_path):
+        try:
+            with open(topics_path, "r", encoding="utf-8") as f:
+                existing_topics_data = json.load(f)
+        except Exception:
+            existing_topics_data = None
+
+    topics_vendors = {}
+    if isinstance(existing_topics_data, dict) and isinstance(existing_topics_data.get("vendors"), dict):
+        topics_vendors.update(existing_topics_data["vendors"])
+    elif isinstance(existing_topics_data, dict) and isinstance(existing_topics_data.get("topics"), list):
+        legacy_vendor = existing_topics_data.get("current_vendor") or target_vendor
+        topics_vendors[legacy_vendor] = {
+            "vendor": legacy_vendor,
+            "updated_at": existing_topics_data.get("updated_at"),
+            "topics": existing_topics_data["topics"],
+        }
+
+    target_topics_list = [
+        {
+            "topic_key": k,
+            "name": v["title"],
+            "session_id": v["session_id"],
+            "vendor": v["vendor"],
+            "resumable": v["resumable"],
+            "tags": v["tags"],
+            "memory_doc": v["memory_doc"]
+        }
+        for k, v in target_modules.items()
+    ]
+    target_topics = {
+        "vendor": target_vendor,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "topics": target_topics_list,
+    }
+    topics_vendors[target_vendor] = target_topics
+
+    # 目标厂商物理镜像 topics.<vendor>.json
+    with open(os.path.join(task_loop_dir, f"topics.{target_vendor}.json"), "w", encoding="utf-8") as f:
+        json.dump(dict({"schema_version": 4}, **target_topics), f, indent=2, ensure_ascii=False)
+
+    topics_file_data = {
+        "schema_version": 4,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "vendors": topics_vendors,
     }
     with open(topics_path, "w", encoding="utf-8") as f:
-        json.dump(topics_data, f, indent=2, ensure_ascii=False)
+        json.dump(topics_file_data, f, indent=2, ensure_ascii=False)
 
     if not os.path.exists(todo_path):
         with open(todo_path, "w", encoding="utf-8") as f:

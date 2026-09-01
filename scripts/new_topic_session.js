@@ -13,6 +13,7 @@ const path = require('path');
 const os = require('os');
 const { spawnSync } = require('child_process');
 const zcodeSpawn = require('./providers/spawn_zcode_session');
+const stateStore = require('./task_loop_state');
 
 function normalizePath(p) {
   return p ? p.replace(/\\/g, '/') : '';
@@ -154,44 +155,51 @@ function findAgentApiBinary(env) {
  * 读取 sessions.json 状态
  */
 function loadSessionsState(wsRoot) {
+  // Schema v4: 仅读取当前宿主厂商分区 (跨版本兼容读, 其余厂商分区零接触)
+  const vendor = stateStore.normalizeVendor(stateStore.detectVendor()) || 'antigravity';
   const sessionsPath = path.join(wsRoot, '.agents', 'task-loop', 'sessions.json');
-  if (fs.existsSync(sessionsPath)) {
-    try {
-      return JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
-    } catch (e) {
-      // ignore
-    }
+  const part = stateStore.getPartition(sessionsPath, vendor);
+  if (part) {
+    return Object.assign({ schema_version: stateStore.SCHEMA_VERSION, main_thread_id: null, modules: {}, sessions: [] }, part);
   }
-  return { schema_version: 2, main_thread_id: null, modules: {}, sessions: [] };
+  return { schema_version: stateStore.SCHEMA_VERSION, main_thread_id: null, modules: {}, sessions: [] };
 }
 
 /**
  * 保存 sessions.json 与 topics.json
  */
 function saveSessionsState(state, wsRoot) {
+  // Schema v4: 只写当前宿主厂商分区 (读-改-写), 其余厂商分区零接触, 结构上杜绝跨厂商覆写
   const taskLoopDir = path.join(wsRoot, '.agents', 'task-loop');
   if (!fs.existsSync(taskLoopDir)) {
     fs.mkdirSync(taskLoopDir, { recursive: true });
   }
 
+  const vendor = stateStore.normalizeVendor(stateStore.detectVendor()) || 'antigravity';
   const sessionsPath = path.join(taskLoopDir, 'sessions.json');
   const topicsPath = path.join(taskLoopDir, 'topics.json');
 
-  state.updated_at = new Date().toISOString();
-  fs.writeFileSync(sessionsPath, JSON.stringify(state, null, 2), 'utf8');
-
-  // 同步 topics.json
-  const topicsData = {
-    schema_version: 2,
-    topics: Object.entries(state.modules || {}).map(([k, v]) => ({
-      topic_key: k,
-      name: v.title,
-      session_id: v.session_id,
-      tags: v.tags || [k, 'topic'],
-      memory_doc: v.memory_doc
-    }))
+  const partitionData = {
+    main_thread_id: state.main_thread_id || null,
+    modules: state.modules || {},
+    sessions: state.sessions || []
   };
-  fs.writeFileSync(topicsPath, JSON.stringify(topicsData, null, 2), 'utf8');
+  stateStore.writePartition(sessionsPath, vendor, partitionData, { kind: 'sessions' });
+
+  const topics = Object.entries(state.modules || {}).map(([k, v]) => ({
+    topic_key: k,
+    name: v.title,
+    session_id: v.session_id,
+    vendor: v.vendor || vendor,
+    resumable: v.resumable !== false,
+    tags: v.tags || [k, 'topic'],
+    memory_doc: v.memory_doc
+  }));
+  stateStore.writePartition(topicsPath, vendor, { topics: topics }, { kind: 'topics' });
+
+  // 兼容镜像: 物理分区文件供旧版宿主工具直读
+  const mirror = Object.assign({ schema_version: 3, vendor: vendor, updated_at: new Date().toISOString() }, JSON.parse(JSON.stringify(partitionData)));
+  fs.writeFileSync(path.join(taskLoopDir, `sessions.${vendor}.json`), JSON.stringify(mirror, null, 2), 'utf8');
 }
 
 /**

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Reconcile Task Loop Topics (Node.js)
+ * Reconcile Task Loop Topics -- [LEGACY v1 工具] 期望 topics[].module_key / registry.modules[key].thread_id 旧结构, 与 Schema v4 不兼容; 对现代状态文件天然 NOOP。保留仅作历史参考, 请勿在新流程使用 (改用 init/new-session)。 (Node.js)
  * Auto-provisions topic thread sessions for enabled topics declared in topics.json.
  */
 

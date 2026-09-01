@@ -2,6 +2,19 @@ const { execSync } = require('child_process');
 const path = require('path');
 const assert = require('assert');
 
+const fs = require('fs');
+
+function currentMainId() {
+  const file = path.join(__dirname, '..', '.agents', 'task-loop', 'sessions.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const part of Object.values(data.vendors || {})) {
+      if (part && part.main_thread_id) return part.main_thread_id;
+    }
+    return data.main_thread_id || null;
+  } catch (e) { return null; }
+}
+
 function runHooksPipelineTests() {
   const rootDir = path.resolve(__dirname, '..');
   const injectScript = path.join(rootDir, 'scripts', 'hooks', 'inject_session_context.js');
@@ -74,7 +87,7 @@ function runHooksPipelineTests() {
 
   // 3. Test enforce_allowlist.js with disallowed file (Main Thread Explore-Only Gate)
   const mockDisallowedToolUse = JSON.stringify({
-    conversationId: "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+    conversationId: currentMainId(),
     toolCall: {
       name: "replace_file_content",
       args: {

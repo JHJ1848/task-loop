@@ -16,8 +16,10 @@ import re
 import subprocess
 from datetime import datetime
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers"))
 import spawn_zcode_session as zcode_spawn
+import task_loop_state as state_store
 
 
 def normalize_path(p):
@@ -144,42 +146,51 @@ def _find_agentapi(env):
 
 
 def load_sessions_state(ws_root):
+    # Schema v4: 仅读取当前宿主厂商分区 (跨版本兼容读, 其余厂商分区零接触)
+    vendor = state_store.normalize_vendor(state_store.detect_vendor()) or "antigravity"
     sessions_path = os.path.join(ws_root, ".agents", "task-loop", "sessions.json")
-    if os.path.exists(sessions_path):
-        try:
-            with open(sessions_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"schema_version": 2, "main_thread_id": None, "modules": {}, "sessions": []}
+    part = state_store.get_partition(sessions_path, vendor)
+    base = {"schema_version": state_store.SCHEMA_VERSION, "main_thread_id": None, "modules": {}, "sessions": []}
+    if part:
+        base.update(part)
+    return base
 
 
 def save_sessions_state(state, ws_root):
+    # Schema v4: 只写当前宿主厂商分区 (读-改-写), 其余厂商分区零接触, 结构上杜绝跨厂商覆写
     task_loop_dir = os.path.join(ws_root, ".agents", "task-loop")
     os.makedirs(task_loop_dir, exist_ok=True)
 
+    vendor = state_store.normalize_vendor(state_store.detect_vendor()) or "antigravity"
     sessions_path = os.path.join(task_loop_dir, "sessions.json")
     topics_path = os.path.join(task_loop_dir, "topics.json")
 
-    state["updated_at"] = datetime.utcnow().isoformat() + "Z"
-    with open(sessions_path, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-
-    topics_data = {
-        "schema_version": 2,
-        "topics": [
-            {
-                "topic_key": k,
-                "name": v.get("title"),
-                "session_id": v.get("session_id"),
-                "tags": v.get("tags", [k, "topic"]),
-                "memory_doc": v.get("memory_doc")
-            }
-            for k, v in (state.get("modules") or {}).items()
-        ]
+    partition_data = {
+        "main_thread_id": state.get("main_thread_id"),
+        "modules": state.get("modules") or {},
+        "sessions": state.get("sessions") or [],
     }
-    with open(topics_path, "w", encoding="utf-8") as f:
-        json.dump(topics_data, f, ensure_ascii=False, indent=2)
+    state_store.write_partition(sessions_path, vendor, partition_data, {"kind": "sessions"})
+
+    topics = [
+        {
+            "topic_key": k,
+            "name": v.get("title"),
+            "session_id": v.get("session_id"),
+            "vendor": v.get("vendor") or vendor,
+            "resumable": v.get("resumable") is not False,
+            "tags": v.get("tags", [k, "topic"]),
+            "memory_doc": v.get("memory_doc"),
+        }
+        for k, v in (state.get("modules") or {}).items()
+    ]
+    state_store.write_partition(topics_path, vendor, {"topics": topics}, {"kind": "topics"})
+
+    # 兼容镜像: 物理分区文件供旧版宿主工具直读
+    mirror = {"schema_version": 3, "vendor": vendor, "updated_at": datetime.utcnow().isoformat() + "Z"}
+    mirror.update(json.loads(json.dumps(partition_data)))
+    with open(os.path.join(task_loop_dir, f"sessions.{vendor}.json"), "w", encoding="utf-8") as f:
+        json.dump(mirror, f, ensure_ascii=False, indent=2)
 
 
 def create_topic_memory_doc(module_key, topic_title=None, options=None):
