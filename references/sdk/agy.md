@@ -376,11 +376,48 @@ agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发�
 ### 2. 执行与交付流转
 1. **Sidebus 投递**：`agentapi.bat send-message` 命中 Language Server Sidebus 通道，将消息注入会话 `cdd1ca5c-3532-4489-b844-15c6f34055fa`。
 2. **IDE 视图渲染**：会话历史顶部出现 `Message from Root Agent v` 折叠卡片，自动加载上下文记忆并触发执行。
-3. **Reactive Wakeup 回执**：专题会话执行完毕后，通过 sidebus (`send_message`) 将结构化交付结果汇报给主会话。
+3. **休眠唤醒一键切换卡 (Sleep-Wakeup Deep Link)**：若目标会话处于后台休眠状态，主控端在回复中向用户出具 `[-> 点击切换至专题会话](conversation://<target_session_id>)`，用户点击即可在 IDE 中即时切换焦点并激活推理。
+4. **Reactive Wakeup 回执**：专题会话执行完毕后，通过 sidebus (`send_message`) 将结构化交付结果汇报给主会话。
 
 ---
 
-## 七、官方与本地完整文档路径索引 (Reference Registry JSON)
+## 七、AGY 会话状态巡检与探针工具 (`inspect_agy_sessions`)
+
+通过专用巡检脚本，主控端与开发者可实时内省当前项目关联的所有实体会话状态：
+
+### 1. 命令行调用
+```bash
+# Node.js 运行时
+node scripts/inspect_agy_sessions.js --root . [--active-window 30] [--json]
+
+# Python 运行时
+python scripts/inspect_agy_sessions.py --root . [--active-window 30] [--json]
+```
+
+### 2. 状态判定模型 (Status Matrix)
+```json
+[
+  {
+    "status": "ACTIVE",
+    "condition": "已在 sessions.json 注册，且在 active-window（默认 30 分钟）内有最新活动记录。",
+    "dispatch_guidance": "直接通过 sidebus (send_message / agentapi) 发信即可。"
+  },
+  {
+    "status": "IDLE_SLEEPING",
+    "condition": "已在 sessions.json 注册，但超过 active-window 无活动（处于后台休眠）。",
+    "dispatch_guidance": "派单后必须向用户附带 [-> 点击切换至该会话](conversation://<session_id>) 唤醒卡。"
+  },
+  {
+    "status": "UNREGISTERED",
+    "condition": "本地 transcript 匹配当前工作区但尚未登记于 sessions.json 中。",
+    "dispatch_guidance": "运行 /init 初始化重整或作为历史内省排查记录。"
+  }
+]
+```
+
+---
+
+## 八、官方与本地完整文档路径索引 (Reference Registry JSON)
 
 ```json
 [
