@@ -61,14 +61,17 @@ def is_valid_module_key(key):
     return isinstance(key, str) and re.fullmatch(r"[a-z0-9_]+", key) is not None
 
 
-def detect_current_vendor(env=None):
+def detect_current_vendor(env=None, current_session_id=None):
     env = env if env is not None else os.environ
-    if env.get("ANTIGRAVITY_CONVERSATION_ID"):
-        return "antigravity"
     if env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID"):
+        return "zcode"
+    # 会话 ID 形状硬特征: sess_ 前缀为 ZCode 会话规范, 优先级高于其他宿主残留环境变量
+    if current_session_id and str(current_session_id).lower().startswith("sess_"):
         return "zcode"
     if env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"):
         return "codex"
+    if env.get("ANTIGRAVITY_CONVERSATION_ID"):
+        return "antigravity"
     return None
 
 
@@ -226,7 +229,7 @@ def scaffold_memory_doc(ws_root, relative_path, topic_name):
 def survey_existing_sessions(ws_root, options=None):
     if options is None:
         options = {}
-    target_vendor = options.get("vendor") or detect_current_vendor(options.get("env")) or "antigravity"
+    target_vendor = options.get("vendor") or detect_current_vendor(options.get("env"), options.get("current_session") or options.get("currentSession")) or "antigravity"
     caller_session_id = (
         options.get("current_session") or options.get("current_session_id") or options.get("currentSessionId")
         or os.environ.get("ANTIGRAVITY_CONVERSATION_ID") or os.environ.get("ZCODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")
@@ -372,7 +375,7 @@ def init_task_loop(options=None):
     ws_root = options.get("ws_root") or options.get("wsRoot") or os.getcwd()
     dry_run = options.get("dry_run") or options.get("dryRun") or False
     create_missing = options.get("create_missing") or options.get("createMissing") or False
-    target_vendor = options.get("vendor") or detect_current_vendor(options.get("env")) or "antigravity"
+    target_vendor = options.get("vendor") or detect_current_vendor(options.get("env"), options.get("current_session") or options.get("currentSession")) or "antigravity"
     options["vendor"] = target_vendor
 
     task_loop_dir = os.path.join(ws_root, ".agents", "task-loop")
@@ -452,6 +455,18 @@ def init_task_loop(options=None):
             approved_keys.add(align["module_key"])
 
     target_modules = {}
+
+    # 粘性绑定保护: 当前厂商分区中已有的可续接绑定优先保留, 扫描重匹配不得覆盖 (防 re-init 污染)
+    try:
+        with open(sessions_path, "r", encoding="utf-8") as f:
+            _existing_doc = json.load(f)
+        _existing_part = (_existing_doc.get("vendors") or {}).get(target_vendor)
+        if _existing_part and isinstance(_existing_part.get("modules"), dict):
+            for _k, _mod in _existing_part["modules"].items():
+                if isinstance(_mod, dict) and _mod.get("session_id") and _mod.get("resumable") is not False and _k not in target_modules:
+                    target_modules[_k] = _mod
+    except Exception:
+        pass
     for key, item in assignments.items():
         if key in approved_keys and item.get("vendor") == target_vendor:
             target_modules[key] = {

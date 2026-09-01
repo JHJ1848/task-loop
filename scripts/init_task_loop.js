@@ -40,11 +40,13 @@ function loadProviderRegistry() {
 }
 
 /** 检测当前宿主厂商, 用于可续接性 (resumable) 判定 */
-function detectCurrentVendor(env) {
+function detectCurrentVendor(env, currentSessionId) {
   env = env || process.env;
-  if (env.ANTIGRAVITY_CONVERSATION_ID) return 'antigravity';
   if (env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID) return 'zcode';
+  // 会话 ID 形状硬特征: sess_ 前缀为 ZCode 会话规范, 优先级高于其他宿主残留环境变量
+  if (currentSessionId && /^sess_/i.test(currentSessionId)) return 'zcode';
   if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
+  if (env.ANTIGRAVITY_CONVERSATION_ID) return 'antigravity';
   return null;
 }
 
@@ -209,8 +211,8 @@ function resolveModuleAssignments(suggestions, memoryDocs) {
 }
 
 function surveyExistingSessions(wsRoot, options = {}) {
-  const currentVendor = options.vendor || detectCurrentVendor(options.env || process.env) || 'antigravity';
-  const callerSessionId = options.currentSession || options.currentSessionId || process.env.ANTIGRAVITY_CONVERSATION_ID || process.env.ZCODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || null;
+  const callerSessionId = options.currentSession || options.currentSessionId || process.env.ZCODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || process.env.ANTIGRAVITY_CONVERSATION_ID || null;
+  const currentVendor = options.vendor || detectCurrentVendor(options.env || process.env, callerSessionId) || null;
   const explicitMainSessionId = options.mainSession || options.mainSessionId || null;
 
   const memoryDocs = scanExistingMemoryDocs(wsRoot);
@@ -422,7 +424,7 @@ function initTaskLoop(options = {}) {
   const wsRoot = options.wsRoot || process.cwd();
   const dryRun = options.dryRun || false;
   const createMissing = options.createMissing || false;
-  const targetVendor = options.vendor || detectCurrentVendor(options.env) || 'antigravity';
+  const targetVendor = options.vendor || detectCurrentVendor(options.env, options.currentSession || options.currentSessionId) || 'antigravity';
   options.vendor = targetVendor;
 
   const taskLoopDir = path.join(wsRoot, '.agents', 'task-loop');
@@ -511,8 +513,20 @@ function initTaskLoop(options = {}) {
   }
 
   const targetModules = {};
+  // 粘性绑定保护: 当前厂商分区中已有的可续接绑定优先保留, 扫描重匹配不得覆盖 (防 re-init 污染)
+  try {
+    const existingDoc = JSON.parse(fs.readFileSync(sessionsPath, 'utf8'));
+    const existingPart = existingDoc && existingDoc.vendors && existingDoc.vendors[targetVendor];
+    if (existingPart && typeof existingPart.modules === 'object') {
+      for (const [key, mod] of Object.entries(existingPart.modules)) {
+        if (mod && mod.session_id && mod.resumable !== false && !targetModules[key]) {
+          targetModules[key] = mod;
+        }
+      }
+    }
+  } catch {}
   for (const [key, item] of assignments.entries()) {
-    if (approvedKeys.has(key) && item.vendor === targetVendor) {
+    if (approvedKeys.has(key) && item.vendor === targetVendor && !targetModules[key]) {
       targetModules[key] = {
         session_id: item.session_id,
         title: item.suggested_topic_name,
