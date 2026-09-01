@@ -227,6 +227,72 @@ def create_topic_memory_doc(module_key, topic_title=None, options=None):
     return {"doc_path": doc_path, "rel_path": rel_path}
 
 
+def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=None, options=None):
+    """将当前物理会话就地注册并绑定为专题会话 (无需新建顶层会话)"""
+    if options is None:
+        options = {}
+    if not session_id:
+        raise ValueError("就地绑定专题失败: 必须提供有效的 session_id")
+    if ws_root is None:
+        ws_root = os.getcwd()
+
+    doc_info = create_topic_memory_doc(module_key, topic_title, {"ws_root": ws_root, "force": options.get("force")})
+    meta = parse_memory_doc(doc_info["doc_path"], ws_root)
+    state = load_sessions_state(ws_root)
+
+    if options.get("dry_run"):
+        return {
+            "status": "DRY_RUN",
+            "module_key": meta["module_key"],
+            "session_id": session_id,
+            "title": meta["title"],
+            "memory_doc": meta["memory_doc"],
+            "message": f"[预览模式] 将把当前会话 (ID: {session_id}) 就地注册为专题 \"{meta['title']}\" 并绑定至 {meta['memory_doc']}"
+        }
+
+    vendor = state_store.normalize_vendor(state_store.detect_vendor()) or "antigravity"
+
+    if "modules" not in state or state["modules"] is None:
+        state["modules"] = {}
+    state["modules"][meta["module_key"]] = {
+        "session_id": session_id,
+        "title": meta["title"],
+        "tags": [meta["module_key"], "topic"],
+        "memory_doc": meta["memory_doc"],
+        "summary": f"专题模块: {meta['title']}"
+    }
+
+    if "sessions" not in state or state["sessions"] is None:
+        state["sessions"] = []
+
+    session_item = {
+        "session_id": session_id,
+        "vendor": vendor,
+        "title": meta["title"],
+        "is_main": False,
+        "module_key": meta["module_key"],
+        "summary": f"专题模块: {meta['title']}",
+        "memory_docs": [meta["memory_doc"]]
+    }
+
+    existing_idx = next((i for i, s in enumerate(state["sessions"]) if s.get("module_key") == meta["module_key"] or s.get("session_id") == session_id), -1)
+    if existing_idx != -1:
+        state["sessions"][existing_idx] = session_item
+    else:
+        state["sessions"].append(session_item)
+
+    save_sessions_state(state, ws_root)
+
+    return {
+        "status": "BOUND",
+        "module_key": meta["module_key"],
+        "session_id": session_id,
+        "title": meta["title"],
+        "memory_doc": meta["memory_doc"],
+        "message": f"✔ 成功将当前物理会话 (vendor: {vendor}, ID: {session_id}) 就地注册为专题 \"{meta['title']}\" 并与 {meta['memory_doc']} 完成 1:1 绑定！"
+    }
+
+
 def create_topic_and_session(module_key, topic_title=None, ws_root=None, options=None):
     if options is None:
         options = {}
@@ -373,6 +439,28 @@ def main():
         if idx + 1 < len(args):
             ws_root = args[idx + 1]
 
+    bind_current = "--bind-current" in args
+    bind_current_session_id = None
+    if bind_current:
+        idx = args.index("--bind-current")
+        if idx + 1 < len(args) and not args[idx + 1].startswith("-"):
+            bind_current_session_id = args[idx + 1]
+
+    if not bind_current_session_id and "--session" in args:
+        idx = args.index("--session")
+        if idx + 1 < len(args):
+            bind_current_session_id = args[idx + 1]
+
+    if not bind_current_session_id and "--session-id" in args:
+        idx = args.index("--session-id")
+        if idx + 1 < len(args):
+            bind_current_session_id = args[idx + 1]
+
+    if not bind_current_session_id and bind_current:
+        bind_current_session_id = os.environ.get("ANTIGRAVITY_CONVERSATION_ID")
+
+    is_bind_current = bind_current or bool(bind_current_session_id)
+
     create_new_topic_key = None
     custom_title = None
     if "--create-topic" in args:
@@ -401,7 +489,31 @@ def main():
     if dry_run:
         print("运行模式: [预览模式 (Dry-Run)]")
 
-    if create_new_topic_key:
+    if is_bind_current:
+        print("模式: [就地注册模式] 将当前/指定物理会话就地注册并绑定为专题会话")
+        if not bind_current_session_id:
+            print("❌ 执行失败: 必须指定 --bind-current <session_id> 或 --session-id <session_id>", file=sys.stderr)
+            sys.exit(1)
+        print(f"目标物理会话 ID: {bind_current_session_id}")
+        target_key = create_new_topic_key or (os.path.splitext(os.path.basename(target_doc))[0] if target_doc else None)
+        if not target_key:
+            print("❌ 执行失败: 就地注册模式下必须指定 --create-topic <模块Key> 或 --doc <记忆文档路径>", file=sys.stderr)
+            sys.exit(1)
+        print(f"模块 Key: {target_key}")
+        if custom_title:
+            print(f"自定义标题: {custom_title}")
+        print("-" * 80)
+        try:
+            res = bind_current_session(target_key, custom_title, bind_current_session_id, ws_root, {"dry_run": dry_run, "force": force})
+            print(f"状态: [{res['status']}]")
+            print(f"专题标题: {res['title']}")
+            print(f"记忆文档: {res['memory_doc']}")
+            print(f"会话 ID: {res['session_id']}")
+            print(f"提示: {res['message']}")
+        except Exception as e:
+            print(f"❌ 执行失败: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif create_new_topic_key:
         print("模式: [新建专题模式] 同步创建受控记忆文档与独立顶层根会话")
         print(f"模块 Key: {create_new_topic_key}")
         if custom_title:
@@ -469,6 +581,8 @@ def main():
             print("【用户交互操作指引】:")
             print("若需为上述某个记忆文档创建专属专题会话，请执行:")
             print("  >> python scripts/new_topic_session.py --doc <记忆文档路径>")
+            print("若需将当前非主会话直接就地注册绑定为该专题会话，请执行:")
+            print("  >> python scripts/new_topic_session.py --doc <记忆文档路径> --bind-current <当前会话ID>")
             print("若需批量为所有缺失文档建立会话，请执行:")
             print("  >> python scripts/new_topic_session.py --all")
         else:
@@ -477,6 +591,8 @@ def main():
             print("【新建全新专题提示】:")
             print("若您需要开辟全新业务领域专题（联动创建 docs/memory/<key>.md 与物理会话），请执行:")
             print("  >> python scripts/new_topic_session.py --create-topic <模块Key> --topic-title \"<专题名称>\"")
+            print("若在当前会话中就地注册新专题，请执行:")
+            print("  >> python scripts/new_topic_session.py --create-topic <模块Key> --topic-title \"<专题名称>\" --bind-current <当前会话ID>")
     print("=" * 80 + "\n")
 
 

@@ -186,3 +186,12 @@ node scripts/query_task_loop_state.js migrate --vendor zcode
 }
 ```
 底层 Hook 与调度器会实时读取该文件，改动即刻生效，无需重启任何服务。**严禁修改其他厂商分区**（那会破坏跨 Agent 隔离；误改可用 git 或备份恢复，其余厂商分区不受影响）。
+
+---
+
+## 六、受控记忆与关联参考
+* **会话控制专题技能**: `skills/session-control/SKILL.md`
+* **新专题会话开辟技能**: `skills/new-session/SKILL.md`
+* **钩子专题技能**: `skills/hook/SKILL.md`
+* **任务总控技能**: `skills/task-loop/SKILL.md`
+* **受控记忆主索引**: `docs/MEMORY.md`

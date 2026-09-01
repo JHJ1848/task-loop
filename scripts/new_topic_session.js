@@ -240,6 +240,71 @@ function createTopicMemoryDoc(moduleKey, topicTitle, options = {}) {
 }
 
 /**
+ * 将当前物理会话就地注册并绑定为专题会话 (无需新建顶层会话)
+ */
+function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = {}) {
+  if (!sessionId) {
+    throw new Error('就地绑定专题失败: 必须提供有效的 session_id');
+  }
+  const { docPath, relPath } = createTopicMemoryDoc(moduleKey, topicTitle, { wsRoot, force: options.force });
+  const meta = parseMemoryDoc(docPath, wsRoot);
+  const state = loadSessionsState(wsRoot);
+
+  if (options.dryRun) {
+    return {
+      status: 'DRY_RUN',
+      module_key: meta.module_key,
+      session_id: sessionId,
+      title: meta.title,
+      memory_doc: meta.memory_doc,
+      message: `[预览模式] 将把当前会话 (ID: ${sessionId}) 就地注册为专题 "${meta.title}" 并绑定至 ${meta.memory_doc}`
+    };
+  }
+
+  // 判定当前厂商
+  const vendor = stateStore.normalizeVendor(stateStore.detectVendor()) || 'antigravity';
+
+  // 更新 state
+  if (!state.modules) state.modules = {};
+  state.modules[meta.module_key] = {
+    session_id: sessionId,
+    title: meta.title,
+    tags: [meta.module_key, 'topic'],
+    memory_doc: meta.memory_doc,
+    summary: `专题模块: ${meta.title}`
+  };
+
+  if (!state.sessions) state.sessions = [];
+  const existingIdx = state.sessions.findIndex(s => s.module_key === meta.module_key || s.session_id === sessionId);
+  const sessionItem = {
+    session_id: sessionId,
+    vendor: vendor,
+    title: meta.title,
+    is_main: false,
+    module_key: meta.module_key,
+    summary: `专题模块: ${meta.title}`,
+    memory_docs: [meta.memory_doc]
+  };
+
+  if (existingIdx !== -1) {
+    state.sessions[existingIdx] = sessionItem;
+  } else {
+    state.sessions.push(sessionItem);
+  }
+
+  saveSessionsState(state, wsRoot);
+
+  return {
+    status: 'BOUND',
+    module_key: meta.module_key,
+    session_id: sessionId,
+    title: meta.title,
+    memory_doc: meta.memory_doc,
+    message: `✔ 成功将当前物理会话 (vendor: ${vendor}, ID: ${sessionId}) 就地注册为专题 "${meta.title}" 并与 ${meta.memory_doc} 完成 1:1 绑定！`
+  };
+}
+
+/**
  * 同时创建专题记忆文档与顶层专题会话
  */
 function createTopicAndSession(moduleKey, topicTitle, wsRoot, options = {}) {
@@ -396,6 +461,28 @@ function main() {
   const createTopicIndex = args.indexOf('--create-topic');
   const titleIndex = args.indexOf('--topic-title');
 
+  const bindCurrentIndex = args.indexOf('--bind-current');
+  const sessionIndex = args.indexOf('--session');
+  const sessionIdIndex = args.indexOf('--session-id');
+
+  let bindCurrentSessionId = null;
+  if (bindCurrentIndex !== -1) {
+    const nextArg = args[bindCurrentIndex + 1];
+    if (nextArg && !nextArg.startsWith('-')) {
+      bindCurrentSessionId = nextArg;
+    }
+  }
+  if (!bindCurrentSessionId && sessionIndex !== -1 && args[sessionIndex + 1]) {
+    bindCurrentSessionId = args[sessionIndex + 1];
+  }
+  if (!bindCurrentSessionId && sessionIdIndex !== -1 && args[sessionIdIndex + 1]) {
+    bindCurrentSessionId = args[sessionIdIndex + 1];
+  }
+  if (!bindCurrentSessionId && bindCurrentIndex !== -1) {
+    bindCurrentSessionId = process.env.ANTIGRAVITY_CONVERSATION_ID || null;
+  }
+
+  const isBindCurrent = bindCurrentIndex !== -1 || Boolean(bindCurrentSessionId);
   const customTitle = (titleIndex !== -1 && args[titleIndex + 1]) ? args[titleIndex + 1] : null;
 
   let createNewTopicKey = null;
@@ -415,7 +502,33 @@ function main() {
   console.log(`工作区根路径: ${normalizePath(wsRoot)}`);
   if (dryRun) console.log('运行模式: [预览模式 (Dry-Run)]');
 
-  if (createNewTopicKey) {
+  if (isBindCurrent) {
+    console.log(`模式: [就地注册模式] 将当前/指定物理会话就地注册并绑定为专题会话`);
+    if (!bindCurrentSessionId) {
+      console.error('❌ 执行失败: 必须指定 --bind-current <session_id> 或 --session-id <session_id>');
+      process.exit(1);
+    }
+    console.log(`目标物理会话 ID: ${bindCurrentSessionId}`);
+    const targetKey = createNewTopicKey || (targetDoc ? path.basename(targetDoc, '.md') : null);
+    if (!targetKey) {
+      console.error('❌ 执行失败: 就地注册模式下必须指定 --create-topic <模块Key> 或 --doc <记忆文档路径>');
+      process.exit(1);
+    }
+    console.log(`模块 Key: ${targetKey}`);
+    if (customTitle) console.log(`自定义标题: ${customTitle}`);
+    console.log('--------------------------------------------------------------------------------');
+    try {
+      const res = bindCurrentSession(targetKey, customTitle, bindCurrentSessionId, wsRoot, { dryRun, force });
+      console.log(`状态: [${res.status}]`);
+      console.log(`专题标题: ${res.title}`);
+      console.log(`记忆文档: ${res.memory_doc}`);
+      console.log(`会话 ID: ${res.session_id}`);
+      console.log(`提示: ${res.message}`);
+    } catch (e) {
+      console.error(`❌ 执行失败: ${e.message}`);
+      process.exit(1);
+    }
+  } else if (createNewTopicKey) {
     console.log(`模式: [新建专题模式] 同步创建受控记忆文档与独立顶层根会话`);
     console.log(`模块 Key: ${createNewTopicKey}`);
     if (customTitle) console.log(`自定义标题: ${customTitle}`);
@@ -488,6 +601,8 @@ function main() {
       console.log('【用户交互操作指引】:');
       console.log('若需为上述某个记忆文档创建专属专题会话，请执行:');
       console.log('  >> node scripts/new_topic_session.js --doc <记忆文档路径>');
+      console.log('若需将当前非主会话直接就地注册绑定为该专题会话，请执行:');
+      console.log('  >> node scripts/new_topic_session.js --doc <记忆文档路径> --bind-current <当前会话ID>');
       console.log('若需批量为所有缺失文档建立会话，请执行:');
       console.log('  >> node scripts/new_topic_session.js --all');
     } else {
@@ -496,6 +611,8 @@ function main() {
       console.log('【新建全新专题提示】:');
       console.log('若您需要开辟全新业务领域专题（联动创建 docs/memory/<key>.md 与物理会话），请执行:');
       console.log('  >> node scripts/new_topic_session.js --create-topic <模块Key> --topic-title "<专题名称>"');
+      console.log('若在当前会话中就地注册新专题，请执行:');
+      console.log('  >> node scripts/new_topic_session.js --create-topic <模块Key> --topic-title "<专题名称>" --bind-current <当前会话ID>');
     }
   }
   console.log('================================================================================\n');
@@ -510,6 +627,7 @@ module.exports = {
   spawnRootConversation,
   createTopicMemoryDoc,
   createTopicAndSession,
+  bindCurrentSession,
   provisionSingleDoc,
   provisionAllMissing,
   surveyMemoryDocsStatus

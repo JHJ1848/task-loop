@@ -17,6 +17,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 主会话（Main Session）专注于需求初加工、任务编排、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
 * **主会话行为硬性红线 (Explore Only & Mandatory Sidebus Delegation)**:
   - **仅限只读探索**: 主会话仅承担需求分析、只读探测与架构诊断 (`explore`)，**严禁主会话自身直接执行修改落地 (`work`) 或修改业务代码**；
+  - **主会话子代理派遣权限限制**: 主会话严禁派遣 Worker (写代码/落地子代理)，主会话只能派遣 `reviewer` (代码走查/审查) 和 `explorer` / `research` (架构只读探索) 子代理；
   - **强制 sidebus 派单执行**: 所有具体编码与 BugFix (`work`) **必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派发给对应的专题会话 (Topic Session) 实施**；各专题会话承接任务后，方可按需拉起子代理 subagents 落地或直接实施，彻底杜绝主会话直接修改业务代码或擅自拉起临时 Worker；
   - **无可用专题与防擅自派发铁律**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
@@ -88,7 +89,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
     "complexity": 3,
     "tier_name": "Level 3 (Complex)",
     "scenario": "跨模块架构演进、底层重构、预计耗时 > 3 分钟的大型任务",
-    "dispatch_action": "强制拉起并行 Subagent（Research / Worker / Reviewer）协同推进与交叉走查。"
+    "dispatch_action": "派发至专题会话，由专题会话在其内部按需拉起并行 Subagent（Research / Worker / Reviewer）协同推进与交叉走查。"
   }
 ]
 ```

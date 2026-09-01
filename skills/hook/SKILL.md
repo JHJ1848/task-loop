@@ -102,3 +102,4 @@ description: "[task-loop] Google Antigravity lifecycle hooks system and safety i
 * **专题受控记忆**: `docs/memory/hook.md`
 * **生命周期钩子规范**: `references/hooks-system-deep-spec.md`
 * **跨厂商 SDK 契约**: `references/sdk/agy.md`
+* **受控记忆主索引**: `docs/MEMORY.md`

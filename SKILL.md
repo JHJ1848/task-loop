@@ -89,7 +89,7 @@ description: "[task-loop] Universal cross-agent task loop plugin for Antigravity
 
 ## 三、主会话与专题会话标准工作流契约 (Standard Workflow)
 
-1. **主会话 (Main Session)**：负责需求初加工、明确任务类型（只读探索 `explore` vs 修改落地 `work`）、划定物理白名单 `allowlist`，通过 sidebus (`send_message` / `agentapi`) 定向派发至专题会话；
+1. **主会话 (Main Session)**：负责需求初加工、明确任务类型（只读探索 `explore` vs 修改落地 `work`）、划定物理白名单 `allowlist`。**主会话严禁直接编写业务代码，且严禁派遣 Worker 子代理，仅限派遣 `reviewer` (代码审查) 与 `explorer` / `research` (架构探索) 子代理**；所有业务修改 (WORK) 强制通过 sidebus (`send_message` / `agentapi`) 定向派发至专题会话；
 2. **专题会话 (Topic Session)**：承接任务后方可直接实施或按需在专题内拉起子代理 (subagents) 协同，严格执行五步闭环（`1. 边界锁定 -> 2. 白名单内手术式实施 -> 3. 本地自测与门禁核验 -> 4. 专题记忆沉淀 docs/memory/*.md -> 5. 标准化结构交付`）。
 
 ---

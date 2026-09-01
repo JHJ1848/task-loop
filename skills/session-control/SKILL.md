@@ -259,8 +259,8 @@ agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发�
   },
   {
     "gotcha_id": "Gotcha 10",
-    "title": "主会话派单三步铁律",
-    "rule": "1. 寻找专题 -> 2. 没有则 agentapi 新建真实顶层会话 -> 3. send_message 定向发信。"
+    "title": "主会话派单三步铁律与子代理限制",
+    "rule": "1. 寻找专题 -> 2. 没有则 agentapi 新建真实顶层会话 -> 3. sidebus 定向发信。主会话严禁直接修改代码或派遣 Worker 子代理，仅可派遣 reviewer/explorer，所有具体修改必须通过 sidebus 派发至专题会话实施。"
   },
   {
     "gotcha_id": "Gotcha 12",

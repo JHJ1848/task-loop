@@ -18,8 +18,9 @@ description: "[task-loop] Google Antigravity native subagent orchestration and d
    - `define_subagent`: 运行时动态定义专属 Worker / Reviewer 模板。
    - `manage_subagents`: 查询活动子代理状态清单（`list`）或定向/全量销毁（`kill` / `kill_all`）。
 2. **瞬态临时代理 vs 持久顶层专题会话边界**:
-   - **瞬态临时代理 (`invoke_subagent`)**: 依附于当前会话，适合只读探测、沙箱实验与 Level 3 多代理并发；不可跨轮次持久存在。
-   - **持久独立根会话 (`agentapi new-conversation`)**: 真实顶层会话，登记于 `.agents/task-loop/sessions.json`，用于长期领域专题维护与跨轮次双向发信。
+   - **瞬态临时代理 (`invoke_subagent`)**: 依附于当前会话，适合只读探测、沙箱实验与 Level 3 多代理并发；不可跨轮次持久存在。由专题会话在承接任务后在其内部按需拉起，用完即毁。
+   - **主会话派遣限制**: 主会话严禁派遣 Worker (落地/写代码子代理)，主会话只能派遣 `reviewer` (代码走查/审查) 和 `explorer` / `research` (架构只读探索) 子代理；所有业务修改 (WORK) 必须通过 sidebus 派发至专题会话实施。
+   - **持久独立根会话 (`agentapi new-conversation`)**: 真实顶层会话，常驻 IDE 侧边栏，登记于 `.agents/task-loop/sessions.json`，用于长期领域专题维护与大模型 KV Cache 复用。
 3. **资源回收与防泄漏**:
    - 任务完成后必须主动调用 `manage_subagents(kill)` 及时回收资源。
 
@@ -82,3 +83,4 @@ description: "[task-loop] Google Antigravity native subagent orchestration and d
 * **专题受控记忆**: [`docs/memory/subagent.md`](../../docs/memory/subagent.md)
 * **AGY SDK 原生规范**: [`references/sdk/agy.md`](../../references/sdk/agy.md)
 * **官方规范归档**: [`references/sdk/antigravity-official-docs.md`](../../references/sdk/antigravity-official-docs.md)
+* **受控记忆主索引**: [`docs/MEMORY.md`](../../docs/MEMORY.md)
