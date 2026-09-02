@@ -219,6 +219,17 @@ function checkIsMainSession(sessionData, conversationId) {
   return false;
 }
 
+function extractMainThreadId(sessionData) {
+  if (!sessionData) return null;
+  if (sessionData.main_thread_id) return sessionData.main_thread_id;
+  if (sessionData.vendors && typeof sessionData.vendors === 'object') {
+    for (const v of Object.values(sessionData.vendors)) {
+      if (v && v.main_thread_id) return v.main_thread_id;
+    }
+  }
+  return null;
+}
+
 function processPayload(payload) {
   try {
     const toolCall = payload.toolCall;
@@ -262,12 +273,12 @@ function processPayload(payload) {
       return { decision: 'allow' };
     }
 
-    // 检查是否在白名单内
     const allowed = isPathAllowed(targetFile, allowlist, wsRoot);
     if (!allowed) {
+      const mainThreadId = extractMainThreadId(sessionData) || '<main_thread_id>';
       return {
         decision: 'deny',
-        reason: `[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '${targetFile}' 不在当前任务白名单 (Allowlist: [${allowlist.join(', ')}]) 范围内，严禁越界修改！`
+        reason: `[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '${targetFile}' 不在当前任务白名单 (Allowlist: [${allowlist.join(', ')}]) 范围内，严禁越界修改！若确需修改此文件，必须向主治理中枢发起标准化白名单扩展申请 (ALLOWLIST_EXPANSION_REQUEST)：\nsend_message('${mainThreadId}', JSON.stringify({\n  "type": "ALLOWLIST_EXPANSION_REQUEST",\n  "target_files": ["${targetFile}"],\n  "reason": "<请在此详细阐述需要修改该文件的理由与影响分析>"\n}, null, 2))`
       };
     }
 

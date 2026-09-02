@@ -49,8 +49,16 @@
     "workflow": "若产生证实的新事实/架构决策，回写所属专题文档 docs/memory/*.md。"
   },
   {
-    "stage": "5. 标准交付",
-    "workflow": "向主会话汇报交付结果：Summary、Changes、Evidence 与人机混合操作指引。"
+    "stage": "5. 强制反向交付",
+    "workflow": "自测通过后严禁仅在当前视窗输出文本停下，必须且强制在最后一轮调用 send_message(recipient=\"<main_thread_id>\", message=\"[专题交付: WORK]...\") 向主治理中枢汇报交付结果 (Summary, Changes, Evidence)，触发主会话门禁验收。"
   }
 ]
 ```
+
+---
+
+## 4. 白名单双向闭环与反向审批机制 (Allowlist Bi-Directional Governance)
+
+* **PreToolUse 安全拦截与反向审批**: 当专题会话或执行端尝试修改未在任务白名单 (`allowlist`) 内的文件时，PreToolUse 钩子将硬性拦截该写操作，并在拦截提示中直接提供反向审批指令：
+  `send_message('<main_thread_id>', '【请求主中枢扩展白名单/审批任务】目标文件: <path>, 变更原因: <理由>')`
+* **主中枢裁决流程**: 主会话收到反向审批请求后，评估修改合理性。若批准，主会话更新派单白名单并向专题发信放行；若驳回，专题会话必须调整实施路径以遵守原物理边界。

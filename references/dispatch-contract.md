@@ -143,15 +143,80 @@ flowchart TD
     "action": "若产生经过证实的新事实/架构决策，回写所属专题文档 docs/memory/*.md。"
   },
   {
-    "stage": "5. 标准交付 (Deliverable)",
-    "action": "向上级汇报：Summary (核心摘要)、Changes (修改清单)、Evidence (测试证据) 与人机混合验证操作卡。"
+    "stage": "5. 强制反向交付 (Mandatory Deliverable via Sidebus)",
+    "action": "自测通过后严禁仅在当前视窗输出文本停下，必须且强制在最后一轮调用 send_message(recipient=\"<main_thread_id>\", message=\"[专题交付: WORK]...\") 向上级汇报：Summary (核心摘要)、Changes (修改清单)、Evidence (测试证据) 与人机混合验证操作卡，触发主中枢验收。"
   }
 ]
 ```
 
 ---
 
-## 六、透明思考与决策推演卡模板（Decision Matrix）
+## 六、动态白名单申请审批与跨专题冲突控制协议 (Allowlist Expansion & Conflict Control)
+
+当专题会话在实施过程中发现需要修改未包含在初始派单白名单中的文件时，必须严格遵守以下动态审批与跨专题冲突控制闭环：
+
+### 1. 交互时序与报文定义 (Message Schemas JSON)
+
+```json
+[
+  {
+    "stage": "1. 专题发起申请 (ALLOWLIST_EXPANSION_REQUEST)",
+    "sender": "Topic Session",
+    "recipient": "Main Session (main_thread_id)",
+    "payload_example": {
+      "type": "ALLOWLIST_EXPANSION_REQUEST",
+      "topic_session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+      "target_files": [
+        "scripts/hooks/enforce_allowlist.js",
+        "scripts/hooks/enforce_allowlist.py"
+      ],
+      "reason": "排查发现需要对拦截器输出的驳回提示增加标准化 JSON Payload 指引，需扩展白名单进行协同修改。"
+    }
+  },
+  {
+    "stage": "2. 主中枢冲突校验与批准 (ALLOWLIST_EXPANSION_APPROVED)",
+    "sender": "Main Session",
+    "recipient": "Topic Session",
+    "condition": "主会话比对当前所有 active 任务 (todo.json / lease.json)，确认无其他专题并发占用该文件",
+    "payload_example": {
+      "type": "ALLOWLIST_EXPANSION_APPROVED",
+      "approved_files": [
+        "scripts/hooks/enforce_allowlist.js",
+        "scripts/hooks/enforce_allowlist.py"
+      ],
+      "updated_allowlist": [
+        "scripts/hooks/enforce_allowlist.js",
+        "scripts/hooks/enforce_allowlist.py",
+        "tests/test_hooks_pipeline.test.js"
+      ],
+      "instruction": "白名单已在 todo.json 中同步更新，请在扩展范围内精准实施并自测。"
+    }
+  },
+  {
+    "stage": "3. 主中枢冲突阻断与串行化 (ALLOWLIST_EXPANSION_REJECTED)",
+    "sender": "Main Session",
+    "recipient": "Topic Session",
+    "condition": "主会话检测到其他并发专题正在修改目标文件或存在高危逻辑冲突",
+    "payload_example": {
+      "type": "ALLOWLIST_EXPANSION_REJECTED",
+      "conflicted_files": [
+        "scripts/hooks/enforce_allowlist.js"
+      ],
+      "conflicted_with_session": "1057c10a-523d-47a4-858e-eabeaa784932",
+      "resolution": "目标文件正在由 hook 专题会话并行重构，当前申请已被阻断。请先完成现有白名单内工作，待该会话交付后再行串行调度。"
+    }
+  }
+]
+```
+
+### 2. 主会话跨专题冲突控制三铁律 (Main Session Conflict Control Laws)
+1. **排他修改权原则**: 任何物理代码文件在同一时间段内仅允许被一个处于 `in_progress` 的专题会话写入；
+2. **状态机同步原子性**: 主会话批准扩展申请后，必须在下发 `ALLOWLIST_EXPANSION_APPROVED` 之前完成 `.agents/task-loop/todo.json` 中该任务 `allowlist` 字段的持久化追加；
+3. **高危冲突降级串行**: 发现两个专题修改范围交叠时，主中枢必须强行将后一个任务转为 `pending` 挂起，严禁并发合并。
+
+---
+
+## 七、透明思考与决策推演卡模板（Decision Matrix）
 
 主会话在每次执行需求分析、派发裁决或质检时，**必须在 Thinking 及最终回复中输出决策推演卡**：
 
@@ -161,13 +226,15 @@ flowchart TD
 - **复杂度定级与理由**：Level [1/2/3]（原因：涉及模块数 X，代码改动预估 Y 行）
 - **修改物理边界 (Allowlist)**：[`path/to/file1`, `path/to/file2`]
 - **路由目标会话**：[Target Session ID / Module Key]
+- **跨专题冲突校验**：[无冲突 / 已隔离锁定目标文件]
 - **验证与质检策略**：[自动化测试命令 + 人机混合验证步骤]
 ```
 
 ---
 
-## 六、未来演进预留（TODO）
+## 八、未来演进预留（TODO）
 
 * **TODO：调用链路追溯与项目级轻量持久化（Traceability Journal）**：
   - *规划方向*：未来可在 `.agents/task-loop/trace-journal.jsonl` 中记录 Main 到各 Topic 会话的调用链、派发快照与干预历史，便于排查复杂长周期任务的链路决策。
+  - *当前策略*：出于轻量化与运行性能考量，当前版本仅维护核心 `run-journal.jsonl`，待后续按需平滑拓展。
   - *当前策略*：出于轻量化与运行性能考量，当前版本仅维护核心 `run-journal.jsonl`，待后续按需平滑拓展。

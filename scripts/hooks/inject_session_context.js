@@ -257,7 +257,25 @@ function getSessionDetails(conversationId, sessionData, targetVendor) {
 /**
  * 获取插件专题专属规则 (全部统一带 [Plugin: task-loop | 前缀)
  */
-function getPluginTopicRules(details, templates) {
+function extractMainThreadId(sessionData, targetVendor) {
+  if (!sessionData) return null;
+  const effectiveVendor = targetVendor || 'antigravity';
+  if (sessionData.vendors && sessionData.vendors[effectiveVendor] && sessionData.vendors[effectiveVendor].main_thread_id) {
+    return sessionData.vendors[effectiveVendor].main_thread_id;
+  }
+  if (sessionData.main_thread_id) return sessionData.main_thread_id;
+  if (sessionData.vendors && typeof sessionData.vendors === 'object') {
+    for (const v of Object.values(sessionData.vendors)) {
+      if (v && v.main_thread_id) return v.main_thread_id;
+    }
+  }
+  return null;
+}
+
+/**
+ * 获取插件专题专属规则 (全部统一带 [Plugin: task-loop | 前缀)
+ */
+function getPluginTopicRules(details, templates, mainThreadId) {
   const pluginRules = (templates && templates.plugin_rules) || (templates && templates.rules) || {};
   const lines = [];
 
@@ -317,8 +335,16 @@ function getPluginTopicRules(details, templates) {
       lines.push(`  1. 物理实体与领域深耕: 作为长期常驻 IDE 侧边栏的物理会话实体，持续沉淀领域上下文并最大化大模型 KV Cache 命中率;`);
       lines.push(`  2. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;`);
       lines.push(`  3. 专题内子代理协同: 专题会话承接任务后，可按需在专题内拉起子代理 (subagents) 进行多任务拆解协同或直接落地实施;`);
-      lines.push(`  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 通过 sidebus 完成标准结构化交付。`);
+      lines.push(`  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。`);
     }
+  }
+
+  // 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效)
+  if (!details.is_main) {
+    const targetMainId = mainThreadId || '<main_thread_id>';
+    lines.push(`- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:`);
+    lines.push(`  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后，严禁仅在当前窗口输出文本结束！`);
+    lines.push(`  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient="${targetMainId}", message="[专题交付: WORK]...") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！`);
   }
 
   // 检查是否手动开启 Hook 提示词 dump 调试开关 (默认 false)
@@ -385,7 +411,8 @@ function generateInjectionMessage(conversationId, sessionData, activeTodo, templ
   }
 
   // 专属专题规则与约束 (全部带有 [Plugin: task-loop | 前缀)
-  parts.push(...getPluginTopicRules(details, templates));
+  const mainThreadId = extractMainThreadId(sessionData, vendor);
+  parts.push(...getPluginTopicRules(details, templates, mainThreadId));
 
   return parts.join('\n');
 }
@@ -474,6 +501,7 @@ module.exports = {
   matchInVendorData,
   detectVendorFromSessionId,
   checkAndAcquireDedupeLock,
+  extractMainThreadId,
   getSessionDetails,
   getPluginTopicRules,
   generateInjectionMessage,

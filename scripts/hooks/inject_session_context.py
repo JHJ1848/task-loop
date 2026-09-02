@@ -259,7 +259,24 @@ def get_session_details(conversation_id, session_data, target_vendor=None):
     return match_in_vendor_data(conversation_id, session_data)
 
 
-def get_plugin_topic_rules(details, templates):
+def extract_main_thread_id(session_data, target_vendor=None):
+    if not session_data or not isinstance(session_data, dict):
+        return None
+    effective_vendor = target_vendor or "antigravity"
+    if isinstance(session_data.get("vendors"), dict) and effective_vendor in session_data["vendors"]:
+        v = session_data["vendors"][effective_vendor]
+        if isinstance(v, dict) and v.get("main_thread_id"):
+            return v["main_thread_id"]
+    if session_data.get("main_thread_id"):
+        return session_data["main_thread_id"]
+    if isinstance(session_data.get("vendors"), dict):
+        for v in session_data["vendors"].values():
+            if isinstance(v, dict) and v.get("main_thread_id"):
+                return v["main_thread_id"]
+    return None
+
+
+def get_plugin_topic_rules(details, templates, main_thread_id=None):
     plugin_rules = (templates.get("plugin_rules") if templates else None) or (templates.get("rules") if templates else None) or {}
     lines = []
 
@@ -319,7 +336,14 @@ def get_plugin_topic_rules(details, templates):
             lines.append("  1. 物理实体与领域深耕: 作为长期常驻 IDE 侧边栏的物理会话实体，持续沉淀领域上下文并最大化大模型 KV Cache 命中率;")
             lines.append("  2. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;")
             lines.append("  3. 专题内子代理协同: 专题会话承接任务后，可按需在专题内拉起子代理 (subagents) 进行多任务拆解协同或直接落地实施;")
-            lines.append("  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 通过 sidebus 完成标准结构化交付。")
+            lines.append("  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。")
+
+    # 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效)
+    if not details.get("is_main"):
+        target_main_id = main_thread_id or "<main_thread_id>"
+        lines.append("- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:")
+        lines.append("  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后，严禁仅在当前窗口输出文本结束！")
+        lines.append(f"  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient=\"{target_main_id}\", message=\"[专题交付: WORK]...\") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！")
 
     # 检查是否手动开启 Hook 提示词 dump 调试开关 (默认 false)
     is_hook_dump_enabled = (os.environ.get("ENABLE_HOOK_PROMPT_DUMP") == "true") or \
@@ -371,7 +395,8 @@ def generate_injection_message(conversation_id, session_data, active_todo, templ
             parts.append(f"- 任务复杂度: Level {active_todo.get('complexity')}")
 
     # 专属专题规则与约束 (全部带有 [Plugin: task-loop | 前缀)
-    parts.extend(get_plugin_topic_rules(details, templates))
+    main_thread_id = extract_main_thread_id(session_data, vendor)
+    parts.extend(get_plugin_topic_rules(details, templates, main_thread_id))
 
     return "\n".join(parts)
 

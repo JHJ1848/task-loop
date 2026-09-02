@@ -98,6 +98,21 @@ function runHooksPipelineTests() {
   const zcodeResult = JSON.parse(zcodeOutput || '{}');
   assert.strictEqual(Object.keys(zcodeResult).length, 0, 'ZCode adapter should ignore AGY UUID sessions');
 
+  // 1.5 Test Topic Session receives mandatory wrapup reverse reporting rule
+  const topicPayload = JSON.stringify({
+    conversationId: "83bae782-1e95-4923-a76f-2141fe8c5c61",
+    workspacePaths: [rootDir],
+    isTest: true
+  });
+  const topicOutput = execSync(`node "${injectScript}"`, {
+    input: topicPayload,
+    encoding: 'utf8'
+  });
+  const topicResult = JSON.parse(topicOutput);
+  assert.ok(topicResult.injectSteps && topicResult.injectSteps.length > 0, 'Topic session should inject');
+  assert.ok(topicResult.injectSteps[0].ephemeralMessage.includes('专题强制收尾与反向汇报契约'), 'Topic session should receive wrapup contract');
+  assert.ok(topicResult.injectSteps[0].ephemeralMessage.includes('send_message(recipient='), 'Topic session wrapup contract should include send_message instruction');
+
   // 2. Test enforce_allowlist.js with allowed file
   const mockAllowedToolUse = JSON.stringify({
     toolCall: {
@@ -141,6 +156,28 @@ function runHooksPipelineTests() {
     allowResult2.reason.includes('Explore Only'),
     'Deny reason should explain violation'
   );
+
+  // 4. Test enforce_allowlist.js with topic session disallowed file returns ALLOWLIST_EXPANSION_REQUEST
+  const mockTopicDisallowed = JSON.stringify({
+    conversationId: "83bae782-1e95-4923-a76f-2141fe8c5c61",
+    toolCall: {
+      name: "replace_file_content",
+      args: {
+        TargetFile: "src/forbidden_module.js"
+      }
+    },
+    workspacePaths: [rootDir]
+  });
+  process.env.TASK_LOOP_ALLOWLIST = "skills/subagent/SKILL.md";
+  const topicDenyOutput = execSync(`node "${allowlistScript}"`, {
+    input: mockTopicDisallowed,
+    encoding: 'utf8'
+  });
+  delete process.env.TASK_LOOP_ALLOWLIST;
+  const topicDenyResult = JSON.parse(topicDenyOutput);
+  assert.strictEqual(topicDenyResult.decision, 'deny');
+  assert.ok(topicDenyResult.reason.includes('ALLOWLIST_EXPANSION_REQUEST'), 'Deny reason should contain ALLOWLIST_EXPANSION_REQUEST template');
+  assert.ok(topicDenyResult.reason.includes('send_message'), 'Deny reason should guide send_message to main session');
 
   console.log('Node.js Hooks Pipeline Tests PASSED!');
 }

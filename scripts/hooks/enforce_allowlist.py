@@ -210,6 +210,18 @@ def check_is_main_session(session_data, conversation_id):
     return False
 
 
+def extract_main_thread_id(session_data):
+    if not session_data or not isinstance(session_data, dict):
+        return None
+    if session_data.get("main_thread_id"):
+        return session_data["main_thread_id"]
+    if isinstance(session_data.get("vendors"), dict):
+        for v in session_data["vendors"].values():
+            if isinstance(v, dict) and v.get("main_thread_id"):
+                return v["main_thread_id"]
+    return None
+
+
 def process_payload(payload):
     try:
         tool_call = payload.get("toolCall")
@@ -245,9 +257,15 @@ def process_payload(payload):
             return {"decision": "allow"}
 
         if not is_path_allowed(target_file, allowlist, ws_root):
+            main_thread_id = extract_main_thread_id(session_data) or "<main_thread_id>"
+            req_json = json.dumps({
+                "type": "ALLOWLIST_EXPANSION_REQUEST",
+                "target_files": [target_file],
+                "reason": "<请在此详细阐述需要修改该文件的理由与影响分析>"
+            }, indent=2, ensure_ascii=False)
             return {
                 "decision": "deny",
-                "reason": f"[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '{target_file}' 不在当前任务白名单 (Allowlist: [{', '.join(allowlist)}]) 范围内，严禁越界修改！"
+                "reason": f"[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '{target_file}' 不在当前任务白名单 (Allowlist: [{', '.join(allowlist)}]) 范围内，严禁越界修改！若确需修改此文件，必须向主治理中枢发起标准化白名单扩展申请 (ALLOWLIST_EXPANSION_REQUEST)：\nsend_message('{main_thread_id}', '{req_json}')"
             }
 
         return {"decision": "allow"}

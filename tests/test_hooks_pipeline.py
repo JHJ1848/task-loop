@@ -133,7 +133,25 @@ class TestHooksPipeline(unittest.TestCase):
         )
         stdout2, _ = proc2.communicate(input=mock_zcode)
         res2 = json.loads(stdout2 or "{}")
-        self.assertEqual(len(res2), 0)
+        # 3. Test Topic Session receives mandatory wrapup reverse reporting rule
+        mock_topic = json.dumps({
+            "conversationId": "83bae782-1e95-4923-a76f-2141fe8c5c61",
+            "workspacePaths": [self.root_dir],
+            "isTest": True
+        })
+        proc3 = subprocess.Popen(
+            [sys.executable, self.inject_script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8"
+        )
+        stdout3, _ = proc3.communicate(input=mock_topic)
+        res3 = json.loads(stdout3)
+        self.assertTrue(len(res3.get("injectSteps", [])) > 0)
+        self.assertIn("专题强制收尾与反向汇报契约", res3["injectSteps"][0]["ephemeralMessage"])
+        self.assertIn("send_message(recipient=", res3["injectSteps"][0]["ephemeralMessage"])
 
     def test_enforce_allowlist_allowed(self):
         mock_input = json.dumps({
@@ -186,5 +204,34 @@ class TestHooksPipeline(unittest.TestCase):
             "Explore Only" in res.get("reason", "")
         )
 
+    def test_enforce_allowlist_topic_expansion_request(self):
+        os.environ["TASK_LOOP_ALLOWLIST"] = "skills/subagent/SKILL.md"
+        mock_input = json.dumps({
+            "conversationId": "83bae782-1e95-4923-a76f-2141fe8c5c61",
+            "toolCall": {
+                "name": "replace_file_content",
+                "args": {
+                    "TargetFile": "src/forbidden_module.js"
+                }
+            },
+            "workspacePaths": [self.root_dir]
+        })
+        proc = subprocess.Popen(
+            [sys.executable, self.allowlist_script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8"
+        )
+        stdout, _ = proc.communicate(input=mock_input)
+        os.environ.pop("TASK_LOOP_ALLOWLIST", None)
+        res = json.loads(stdout)
+        self.assertEqual(res.get("decision"), "deny")
+        self.assertIn("ALLOWLIST_EXPANSION_REQUEST", res.get("reason", ""))
+        self.assertIn("send_message", res.get("reason", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
+
