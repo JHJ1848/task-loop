@@ -82,6 +82,11 @@ function runHooksPipelineTests() {
     const mainResult = JSON.parse(mainOutput);
     assert.ok(mainResult.injectSteps && mainResult.injectSteps.length > 0, 'Main session should inject');
     assert.ok(mainResult.injectSteps[0].ephemeralMessage.includes('主会话'), 'Main session should be recognized as main');
+    assert.strictEqual(
+      mainResult.injectSteps[0].ephemeralMessage.includes('专题强制收尾与反向汇报契约'),
+      false,
+      'Main session must NEVER inject wrapup contract (prevent self-send infinite loop)'
+    );
   }
 
   // 1.4 Test ZCode adapter ignores AGY UUID sessions

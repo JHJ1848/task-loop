@@ -338,12 +338,13 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
             lines.append("  3. 专题内子代理协同: 专题会话承接任务后，可按需在专题内拉起子代理 (subagents) 进行多任务拆解协同或直接落地实施;")
             lines.append("  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。")
 
-    # 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效)
+    # 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效，且目标主会话不能为自身，杜绝自发自收死循环)
     if not details.get("is_main"):
         target_main_id = main_thread_id or "<main_thread_id>"
-        lines.append("- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:")
-        lines.append("  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后，严禁仅在当前窗口输出文本结束！")
-        lines.append(f"  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient=\"{target_main_id}\", message=\"[专题交付: WORK]...\") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！")
+        if target_main_id != details.get("session_id"):
+            lines.append("- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:")
+            lines.append("  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后，严禁仅在当前窗口输出文本结束！")
+            lines.append(f"  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient=\"{target_main_id}\", message=\"[专题交付: WORK]...\") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！")
 
     # 检查是否手动开启 Hook 提示词 dump 调试开关 (默认 false)
     is_hook_dump_enabled = (os.environ.get("ENABLE_HOOK_PROMPT_DUMP") == "true") or \

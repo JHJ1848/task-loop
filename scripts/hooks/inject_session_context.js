@@ -339,12 +339,14 @@ function getPluginTopicRules(details, templates, mainThreadId) {
     }
   }
 
-  // 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效)
+  // 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效，且目标主会话不能为自身，杜绝自发自收死循环)
   if (!details.is_main) {
     const targetMainId = mainThreadId || '<main_thread_id>';
-    lines.push(`- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:`);
-    lines.push(`  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后，严禁仅在当前窗口输出文本结束！`);
-    lines.push(`  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient="${targetMainId}", message="[专题交付: WORK]...") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！`);
+    if (targetMainId !== details.session_id) {
+      lines.push(`- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:`);
+      lines.push(`  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后，严禁仅在当前窗口输出文本结束！`);
+      lines.push(`  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient="${targetMainId}", message="[专题交付: WORK]...") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！`);
+    }
   }
 
   // 检查是否手动开启 Hook 提示词 dump 调试开关 (默认 false)
