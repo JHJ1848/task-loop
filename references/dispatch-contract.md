@@ -216,7 +216,59 @@ flowchart TD
 
 ---
 
-## 七、透明思考与决策推演卡模板（Decision Matrix）
+## 七、主会话批判性门禁验收标准四步法与驳回协议 (Critical Verification Gate & Rejection Protocol)
+
+主会话收到专题会话发起的交付汇报（`send_message`）后，**严禁充当传声筒盲目轻信、透传或直接更新 todo.json 状态**。主会话必须严格执行以下四步独立质检闭环：
+
+### 1. 门禁验收标准四步法 (4-Step Gate Checklist)
+
+```json
+[
+  {
+    "step": "Step 1. 独立执行验证命令 (Independent Execution)",
+    "description": "主会话必须在自身终端亲自/独立运行全量自动化单测或编译构建命令，亲眼确认 Exit Code 0 与真实输出日志，严禁仅听信专题文字总结。"
+  },
+  {
+    "step": "Step 2. 真实 Diff 审查 (Diff & Allowlist Inspection)",
+    "description": "严格走查本地 Git Diff 与工作区修改文件，确认 100% 严格落在派单 Allowlist 范围内，无多余文件、无编码/格式污染、无意外死代码。"
+  },
+  {
+    "step": "Step 3. 必要时派遣 Reviewer 审查 (Proactive Reviewer Subagent)",
+    "description": "针对 Level 2/3、核心底层改动或高风险逻辑，主会话可按需拉起 reviewer 子代理进行代码走查与架构交叉核验。"
+  },
+  {
+    "step": "Step 4. 门禁裁决与闭环处理 (Gate Verdict & Closeout)",
+    "description": "四步核验全绿方可更新 todo.json 为 completed 并向用户交付；发现任何单测失败、越界修改或逻辑缺陷，强制下发 DELIVERABLE_REJECTED 驳回重修。"
+  }
+]
+```
+
+### 2. 交付驳回与重修报文协议 (DELIVERABLE_REJECTED Schema JSON)
+
+```json
+[
+  {
+    "stage": "主中枢门禁驳回 (DELIVERABLE_REJECTED)",
+    "sender": "Main Session",
+    "recipient": "Topic Session",
+    "condition": "主会话独立质检时发现单测失败、越界修改、编译报错或审查未通过",
+    "payload_example": {
+      "type": "DELIVERABLE_REJECTED",
+      "task_id": "task_20260902_001",
+      "failed_gates": [
+        "Gate 1 (独立测试失败): node tests/test_hooks_pipeline.test.js 抛出 ReferenceError",
+        "Gate 2 (Diff 越界): 检测到修改了未授权文件 src/extra_util.js"
+      ],
+      "rejection_reason": "主会话独立执行单测未通过，且检测到非白名单文件修改。",
+      "action_required": "请立即回滚未授权文件修改，修复单测异常并重新自测后再次交付。"
+    }
+  }
+]
+```
+
+---
+
+## 八、透明思考与决策推演卡模板（Decision Matrix）
 
 主会话在每次执行需求分析、派发裁决或质检时，**必须在 Thinking 及最终回复中输出决策推演卡**：
 
@@ -227,14 +279,14 @@ flowchart TD
 - **修改物理边界 (Allowlist)**：[`path/to/file1`, `path/to/file2`]
 - **路由目标会话**：[Target Session ID / Module Key]
 - **跨专题冲突校验**：[无冲突 / 已隔离锁定目标文件]
+- **批判性门禁独立质检证据**：[单测 Exit Code 0 / Diff 白名单审查结果 / Reviewer 审查结果]
 - **验证与质检策略**：[自动化测试命令 + 人机混合验证步骤]
 ```
 
 ---
 
-## 八、未来演进预留（TODO）
+## 九、未来演进预留（TODO）
 
 * **TODO：调用链路追溯与项目级轻量持久化（Traceability Journal）**：
   - *规划方向*：未来可在 `.agents/task-loop/trace-journal.jsonl` 中记录 Main 到各 Topic 会话的调用链、派发快照与干预历史，便于排查复杂长周期任务的链路决策。
-  - *当前策略*：出于轻量化与运行性能考量，当前版本仅维护核心 `run-journal.jsonl`，待后续按需平滑拓展。
   - *当前策略*：出于轻量化与运行性能考量，当前版本仅维护核心 `run-journal.jsonl`，待后续按需平滑拓展。

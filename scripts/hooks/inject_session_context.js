@@ -298,7 +298,7 @@ function getPluginTopicRules(details, templates, mainThreadId) {
       lines.push(`  7. 缺失专题与不明确流转铁律: 若无可用专题会话或不清楚如何新建/请求会话，必须先查阅文档指导 (references/sdk/README.md, skills/new-session/SKILL.md, skills/session-control/SKILL.md)，若仍需确认必须主动向用户请求指引并询问，绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理;`);
       lines.push(`  8. 任务派单流转: 寻找专题 -> 没有则按规范创建顶层专题会话 -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;`);
       lines.push(`  9. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 专题会话内 Subagent 并行协作;`);
-      lines.push(`  10. 质检与门禁核验: 依据专题会话 (Topic Session) 测试结果与 Evidence 严格验收，输出用户验证指引卡 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md)。`);
+      lines.push(`  10. 批判性门禁核验与杜绝盲目透传 (Critical Verification Gate & Anti-Rubber-Stamp): 严禁充当传声筒盲目轻信专题汇报！主会话必须执行四步独立质检：① 独立执行自动化单测/构建命令获取真实 Exit Code 0 证据；② 真实 Diff 审查，走查改动是否 100% 严格在 Allowlist 内且无冗余代码与格式污染；③ 必要时派遣 reviewer 子代理交叉走查；④ 验收通过方可更新状态，未通过强制下发 DELIVERABLE_REJECTED 驳回重修 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md)。`);
     }
   } else if (details.module_key === 'session_control') {
     if (Array.isArray(pluginRules.session_control) && pluginRules.session_control.length > 0) {
