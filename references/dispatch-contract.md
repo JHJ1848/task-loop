@@ -268,7 +268,39 @@ flowchart TD
 
 ---
 
-## 八、透明思考与决策推演卡模板（Decision Matrix）
+## 八、派单双阶梯看门狗监督机制 (Dual-Stage Watchdog Supervision)
+
+为消除专题会话由于后台休眠未触发、陷入死循环或理解偏离目标导致的派单失控，主会话派单后必须挂载并执行【30s + 120s 双阶梯看门狗监督闭环】：
+
+### 1. 双阶梯监督时序与动作定义 (Watchdog Lifecycle JSON)
+
+```json
+[
+  {
+    "stage": "Stage 1: 30s 激活探针 (Activation Probe)",
+    "timing": "派单后挂载 schedule(DurationSeconds=30, Prompt=\"检查专题会话激活状态\", TimerCondition=\"any\")",
+    "trigger_condition": "派单发信 30 秒后触发",
+    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js 或读取 sessions.json / 日志，检查目标专题步数是否增长、是否进入 ACTIVE 状态。",
+    "abnormal_resolution": "若状态仍为 IDLE_SLEEPING 或步数未增加，主会话主动干预，并在界面向用户呈现 [-> 点击切换并激活专题会话](conversation://<session_id>) Deep Link，消除休眠断点。"
+  },
+  {
+    "stage": "Stage 2: 120s 偏差巡检与干预 (Alignment Audit)",
+    "timing": "派单后挂载 schedule(DurationSeconds=120, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\")",
+    "trigger_condition": "派单发信 120 秒后触发",
+    "inspection_actions": "读取目标专题 transcript.jsonl 最新 steps，走查：1. 是否偏离单一职责目标；2. 是否发生无限死循环/重复调用；3. 推演逻辑是否存在严重技术漏洞；4. 是否尝试越界修改。",
+    "abnormal_resolution": "若发现执行偏差，主会话立即调用 send_message(recipient=\"<topic_session_id>\", message=\"【主中枢偏差修正指令】检测到执行路径偏离目标...请按以下修正方案调整...\") 进行强力干预。"
+  }
+]
+```
+
+### 2. 监督定时器调用与清理规范 (Schedule Rules)
+1. **统一标准工具**: 必须使用系统原生 `schedule` 工具设定倒计时（严禁使用后台 `sleep` 命令）；
+2. **提前交付短路**: 若专题会话在 30s 或 120s 内提前完成交付并发送 `send_message`，主中枢收到回执后自动唤醒并可直接回收/忽略该监督定时器；
+3. **巡检无干预放行**: 若 120s 巡检确认专题思路清晰且正在执行正常长耗时单测/构建，主会话不发送扰动指令，允许其平稳运行直至交付。
+
+---
+
+## 九、透明思考与决策推演卡模板（Decision Matrix）
 
 主会话在每次执行需求分析、派发裁决或质检时，**必须在 Thinking 及最终回复中输出决策推演卡**：
 
@@ -279,13 +311,14 @@ flowchart TD
 - **修改物理边界 (Allowlist)**：[`path/to/file1`, `path/to/file2`]
 - **路由目标会话**：[Target Session ID / Module Key]
 - **跨专题冲突校验**：[无冲突 / 已隔离锁定目标文件]
+- **看门狗监督机制**：[已挂载 30s 激活探针 + 120s 偏差巡检定时器]
 - **批判性门禁独立质检证据**：[单测 Exit Code 0 / Diff 白名单审查结果 / Reviewer 审查结果]
 - **验证与质检策略**：[自动化测试命令 + 人机混合验证步骤]
 ```
 
 ---
 
-## 九、未来演进预留（TODO）
+## 十、未来演进预留（TODO）
 
 * **TODO：调用链路追溯与项目级轻量持久化（Traceability Journal）**：
   - *规划方向*：未来可在 `.agents/task-loop/trace-journal.jsonl` 中记录 Main 到各 Topic 会话的调用链、派发快照与干预历史，便于排查复杂长周期任务的链路决策。
