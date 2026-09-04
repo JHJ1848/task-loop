@@ -129,8 +129,14 @@ function spawnRootConversation(title, prompt, wsRoot) {
   }
 
   console.error(
-    '[new-topic-session] 未发现 agentapi (AGY) 或 ZCode CLI。' +
-    'ZCode 环境可设 ZCODE_CLI_BIN 指向 ZCode.exe，或手动新建会话后登记 sessions.json。'
+    '\n============================================================\n' +
+    '[new-topic-session 优雅降级引导卡]\n' +
+    '无法自动拉起专题会话（未检测到 agentapi 或 ZCode CLI 无头拉起未就绪）。\n' +
+    '请按以下指引手动建立与绑定：\n' +
+    '1. 在 IDE 侧边栏手动点击 [+] 新建一个独立专题会话；\n' +
+    '2. 在该新会话中运行: node scripts/init_task_loop.js --bind-current ' + (title.match(/\[(.+?)\]/)?.[1] || '专题') + '\n' +
+    '3. 或在 sessions.json 中将新会话 ID 手动登记至 vendors.<vendor>.modules 映射表中。\n' +
+    '============================================================\n'
   );
   return null;
 }
@@ -140,13 +146,36 @@ function findAgentApiBinary(env) {
   if (env.AGENTAPI_PATH && fs.existsSync(env.AGENTAPI_PATH)) return env.AGENTAPI_PATH;
   const home = os.homedir();
   const candidates = [
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi.bat'),
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi.cmd'),
     path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi.exe'),
     path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi'),
+    path.join(home, '.antigravity', 'bin', 'agentapi.bat'),
+    path.join(home, '.antigravity', 'bin', 'agentapi.cmd'),
     path.join(home, '.antigravity', 'bin', 'agentapi.exe'),
     path.join(home, '.antigravity', 'bin', 'agentapi')
   ];
   for (const c of candidates) {
     if (fs.existsSync(c)) return c;
+  }
+
+  // Windows where.exe / Unix which
+  if (process.platform === 'win32') {
+    try {
+      const res = spawnSync('where', ['agentapi'], { encoding: 'utf8', shell: true });
+      if (res.stdout) {
+        const found = res.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
+        if (found && fs.existsSync(found)) return found;
+      }
+    } catch {}
+  } else {
+    try {
+      const res = spawnSync('which', ['agentapi'], { encoding: 'utf8', shell: true });
+      if (res.stdout) {
+        const found = res.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
+        if (found && fs.existsSync(found)) return found;
+      }
+    } catch {}
   }
   return null;
 }

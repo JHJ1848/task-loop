@@ -162,24 +162,55 @@ def spawn_root_conversation(title, prompt, ws_root):
     return None
 
 
-def resolve_module_assignments(suggestions, memory_docs=None):
-    """单一事实源: 严格以 docs/memory/*.md 中的法定模块为准进行 1:1 对齐匹配。"""
-    assignments = {}
+def resolve_module_assignments(suggestions, memory_docs, existing_modules=None):
+    """单一事实源: 严格以 docs/memory/*.md 中的法定模块为准进行 1:1 对齐匹配。
+    粘性绑定锁保护 (Sticky Binding Lock):
+    优先以 sessions.json 中既有确立绑定的 modules 字典为最高置信度来源，
+    已绑定的物理会话强制锁定继承，禁止模糊分词重置为未绑定。
+    """
+    assignments = {}  # module_key -> suggestion
+    existing_modules = existing_modules or {}
 
-    # 1. 先匹配 main
-    main_cand = next((s for s in suggestions if s.get("is_main_candidate")), None) or next(
-        (s for s in suggestions if s.get("suggested_module_key") == "main"), None
-    )
-    if main_cand:
-        assignments["main"] = main_cand
+    # 0. 粘性绑定锁: 优先锁定 sessions.json 中既有确立的 modules
+    for mod_key, mod_val in existing_modules.items():
+        if isinstance(mod_val, dict) and mod_val.get("session_id"):
+            sess_id = mod_val["session_id"]
+            existing_match = next((s for s in suggestions if s.get("session_id") == sess_id), None)
+            if existing_match:
+                existing_match["suggested_module_key"] = mod_key
+                if mod_val.get("title"):
+                    existing_match["suggested_topic_name"] = mod_val["title"]
+                assignments[mod_key] = existing_match
+            else:
+                assignments[mod_key] = {
+                    "session_id": sess_id,
+                    "vendor": mod_val.get("vendor") or "antigravity",
+                    "original_title": mod_val.get("title") or f"{mod_key}专题",
+                    "suggested_module_key": mod_key,
+                    "suggested_topic_name": mod_val.get("title") or f"[{mod_key}专题] 核心功能维护 & 记忆沉淀",
+                    "suggested_tags": mod_val.get("tags") or [mod_key, "topic"],
+                    "suggested_memory_doc": mod_val.get("memory_doc") or f"docs/memory/{mod_key}.md",
+                    "resumable": mod_val.get("resumable") is not False,
+                    "is_main_candidate": mod_key == "main"
+                }
 
-    # 2. 为每个受控记忆文档匹配首个最合适的建议项
+    # 1. 先匹配 main (若未被粘性锁定)
+    if "main" not in assignments:
+        main_cand = next((s for s in suggestions if s.get("is_main_candidate")), None) or next(
+            (s for s in suggestions if s.get("suggested_module_key") == "main"), None
+        )
+        if main_cand:
+            assignments["main"] = main_cand
+
+    # 2. 为每个受控记忆文档匹配首个最合适的建议项 (排除已绑定的会话)
+    assigned_session_ids = {a["session_id"] for a in assignments.values() if isinstance(a, dict) and a.get("session_id")}
     for doc in (memory_docs or []):
-        if doc["module_key"] == "main":
+        if doc["module_key"] == "main" or doc["module_key"] in assignments:
             continue
-        matched = next((s for s in suggestions if s.get("suggested_module_key") == doc["module_key"]), None)
+        matched = next((s for s in suggestions if s.get("suggested_module_key") == doc["module_key"] and s.get("session_id") not in assigned_session_ids), None)
         if matched:
             assignments[doc["module_key"]] = matched
+            assigned_session_ids.add(matched["session_id"])
 
     return assignments
 
@@ -350,8 +381,17 @@ def survey_existing_sessions(ws_root, options=None):
     # 让 is_main_candidate 的项排在最前
     suggestions.sort(key=lambda x: 0 if x.get("is_main_candidate") else 1)
 
+    sessions_path = os.path.join(ws_root, ".agents", "task-loop", "sessions.json")
+    existing_modules = {}
+    try:
+        part = state_store.get_partition(sessions_path, current_vendor or "antigravity")
+        if part and isinstance(part.get("modules"), dict):
+            existing_modules = part["modules"]
+    except Exception:
+        pass
+
     # 单一事实源: 一次性计算模块分配, 对齐报告与持久化共用
-    assignments = resolve_module_assignments(suggestions, memory_docs)
+    assignments = resolve_module_assignments(suggestions, memory_docs, existing_modules)
 
     memory_alignment = []
     for doc in memory_docs:

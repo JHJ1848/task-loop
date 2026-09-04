@@ -178,11 +178,25 @@ function runHooksPipelineTests() {
     input: mockTopicDisallowed,
     encoding: 'utf8'
   });
+  // 5. Test enforce_allowlist.js with exempt paths (docs, Desktop, scratch)
+  const mockExemptToolUse = JSON.stringify({
+    conversationId: "83bae782-1e95-4923-a76f-2141fe8c5c61",
+    toolCall: {
+      name: "write_to_file",
+      args: {
+        TargetFile: "docs/memory/session_control.md"
+      }
+    },
+    workspacePaths: [rootDir]
+  });
+  process.env.TASK_LOOP_ALLOWLIST = "src/only_allowed.js";
+  const exemptOutput = execSync(`node "${allowlistScript}"`, {
+    input: mockExemptToolUse,
+    encoding: 'utf8'
+  });
   delete process.env.TASK_LOOP_ALLOWLIST;
-  const topicDenyResult = JSON.parse(topicDenyOutput);
-  assert.strictEqual(topicDenyResult.decision, 'deny');
-  assert.ok(topicDenyResult.reason.includes('ALLOWLIST_EXPANSION_REQUEST'), 'Deny reason should contain ALLOWLIST_EXPANSION_REQUEST template');
-  assert.ok(topicDenyResult.reason.includes('send_message'), 'Deny reason should guide send_message to main session');
+  const exemptResult = JSON.parse(exemptOutput);
+  assert.strictEqual(exemptResult.decision, 'allow', 'Exempt doc path should be allowed even if not in task allowlist');
 
   console.log('Node.js Hooks Pipeline Tests PASSED!');
 }

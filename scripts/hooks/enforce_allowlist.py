@@ -116,17 +116,27 @@ def find_allowlist_for_session(ws_root, conversation_id):
     return None
 
 
+def is_exempt_path(norm_target, norm_ws_root):
+    exempt_prefixes = [
+        normalize_path(tempfile.gettempdir()),
+        normalize_path(os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")),
+        normalize_path(os.path.join(os.path.expanduser("~"), "Desktop")),
+        normalize_path(os.path.join(norm_ws_root, "docs")),
+        normalize_path(os.path.join(norm_ws_root, "scratch")),
+        normalize_path(os.path.join(norm_ws_root, ".agents", "task-loop")),
+    ]
+    for p in exempt_prefixes:
+        if norm_target.startswith(p):
+            return True
+    return False
+
+
 def is_path_allowed(target_file, allowlist, ws_root):
     norm_target = normalize_path(target_file if os.path.isabs(target_file) else os.path.join(ws_root, target_file))
     norm_ws_root = normalize_path(ws_root)
 
-    # 仅当目标文件在工作区外部且位于系统临时目录/脑区时豁免
-    temp_dir = normalize_path(tempfile.gettempdir())
-    if not norm_target.startswith(norm_ws_root) and norm_target.startswith(temp_dir):
-        return True
-
-    brain_dir = normalize_path(os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain"))
-    if norm_target.startswith(brain_dir):
+    # 1. 豁免路径直接放行 (Desktop, docs, scratch, temp, brain, task-loop state)
+    if is_exempt_path(norm_target, norm_ws_root):
         return True
 
     for entry in allowlist:

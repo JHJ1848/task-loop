@@ -187,23 +187,53 @@ function spawnRootConversation(title, prompt, wsRoot) {
 
 /**
  * 单一事实源: 严格以 docs/memory/*.md 中的法定模块为准进行 1:1 对齐匹配。
- * 预览报告与真实落盘必须共用本函数的计算结果。
+ * 粘性绑定锁保护 (Sticky Binding Lock):
+ * 优先以 sessions.json 中既有确立绑定的 modules 字典为最高置信度来源，
+ * 已绑定的物理会话强制锁定继承，禁止模糊分词重置为未绑定。
  */
-function resolveModuleAssignments(suggestions, memoryDocs) {
+function resolveModuleAssignments(suggestions, memoryDocs, existingModules = {}) {
   const assignments = new Map(); // module_key -> suggestion (1:1 绑定)
 
-  // 1. 先匹配 main
-  const mainCand = suggestions.find(s => s.is_main_candidate) || suggestions.find(s => s.suggested_module_key === 'main');
-  if (mainCand) {
-    assignments.set('main', mainCand);
+  // 0. 粘性绑定锁: 优先锁定 sessions.json 中既有确立的 modules
+  for (const [modKey, modVal] of Object.entries(existingModules || {})) {
+    if (modVal && modVal.session_id) {
+      const existingMatch = suggestions.find(s => s.session_id === modVal.session_id);
+      if (existingMatch) {
+        existingMatch.suggested_module_key = modKey;
+        if (modVal.title) existingMatch.suggested_topic_name = modVal.title;
+        assignments.set(modKey, existingMatch);
+      } else {
+        assignments.set(modKey, {
+          session_id: modVal.session_id,
+          vendor: modVal.vendor || 'antigravity',
+          original_title: modVal.title || `${modKey}专题`,
+          suggested_module_key: modKey,
+          suggested_topic_name: modVal.title || `[${modKey}专题] 核心功能维护 & 记忆沉淀`,
+          suggested_tags: modVal.tags || [modKey, 'topic'],
+          suggested_memory_doc: modVal.memory_doc || `docs/memory/${modKey}.md`,
+          resumable: modVal.resumable !== false,
+          is_main_candidate: modKey === 'main'
+        });
+      }
+    }
   }
 
-  // 2. 为每个受控记忆文档匹配首个最合适的建议项
+  // 1. 先匹配 main (若未被粘性锁定)
+  if (!assignments.has('main')) {
+    const mainCand = suggestions.find(s => s.is_main_candidate) || suggestions.find(s => s.suggested_module_key === 'main');
+    if (mainCand) {
+      assignments.set('main', mainCand);
+    }
+  }
+
+  // 2. 为每个受控记忆文档匹配首个最合适的建议项 (排除已绑定的会话)
+  const assignedSessionIds = new Set([...assignments.values()].map(a => a.session_id));
   for (const doc of (memoryDocs || [])) {
-    if (doc.module_key === 'main') continue;
-    const matched = suggestions.find(s => s.suggested_module_key === doc.module_key);
+    if (doc.module_key === 'main' || assignments.has(doc.module_key)) continue;
+    const matched = suggestions.find(s => s.suggested_module_key === doc.module_key && !assignedSessionIds.has(s.session_id));
     if (matched) {
       assignments.set(doc.module_key, matched);
+      assignedSessionIds.add(matched.session_id);
     }
   }
 
@@ -353,8 +383,17 @@ function surveyExistingSessions(wsRoot, options = {}) {
     return 0;
   });
 
+  const sessionsPath = path.join(wsRoot, '.agents', 'task-loop', 'sessions.json');
+  let existingModules = {};
+  try {
+    const part = stateStore.getPartition(sessionsPath, currentVendor || 'antigravity');
+    if (part && part.modules) {
+      existingModules = part.modules;
+    }
+  } catch {}
+
   // 单一事实源: 一次性计算模块分配, 对齐报告与持久化共用
-  const assignments = resolveModuleAssignments(suggestions, memoryDocs);
+  const assignments = resolveModuleAssignments(suggestions, memoryDocs, existingModules);
 
   // 扫描受控记忆文档并进行 1:1 对齐 (对齐结果同样取自 assignments, 与落盘同源)
   const memoryAlignment = memoryDocs.map(doc => {

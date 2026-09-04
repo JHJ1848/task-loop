@@ -484,6 +484,7 @@ module.exports = {
   buildArgs,
   capabilityReport,
   processCommand,
+  runCli,
   extractSessionId,
   findLatestSessionIdSince,
   credentialsPath,

@@ -232,6 +232,31 @@ class TestHooksPipeline(unittest.TestCase):
         self.assertIn("ALLOWLIST_EXPANSION_REQUEST", res.get("reason", ""))
         self.assertIn("send_message", res.get("reason", ""))
 
+    def test_enforce_allowlist_exempt_paths(self):
+        os.environ["TASK_LOOP_ALLOWLIST"] = "src/only_allowed.js"
+        mock_input = json.dumps({
+            "conversationId": "83bae782-1e95-4923-a76f-2141fe8c5c61",
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {
+                    "TargetFile": "docs/memory/session_control.md"
+                }
+            },
+            "workspacePaths": [self.root_dir]
+        })
+        proc = subprocess.Popen(
+            [sys.executable, self.allowlist_script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8"
+        )
+        stdout, _ = proc.communicate(input=mock_input)
+        os.environ.pop("TASK_LOOP_ALLOWLIST", None)
+        res = json.loads(stdout)
+        self.assertEqual(res.get("decision"), "allow")
+
 
 if __name__ == "__main__":
     unittest.main()

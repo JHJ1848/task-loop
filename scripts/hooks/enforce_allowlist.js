@@ -122,18 +122,27 @@ function findAllowlistForSession(wsRoot, conversationId) {
   return null;
 }
 
+function isExemptPath(normTarget, normWsRoot) {
+  const exemptPrefixes = [
+    normalizePath(os.tmpdir()),
+    normalizePath(path.join(os.homedir(), '.gemini', 'antigravity', 'brain')),
+    normalizePath(path.join(os.homedir(), 'Desktop')),
+    normalizePath(path.join(normWsRoot, 'docs')),
+    normalizePath(path.join(normWsRoot, 'scratch')),
+    normalizePath(path.join(normWsRoot, '.agents', 'task-loop'))
+  ];
+  for (const p of exemptPrefixes) {
+    if (normTarget.startsWith(p)) return true;
+  }
+  return false;
+}
+
 function isPathAllowed(targetFile, allowlist, wsRoot) {
   const normTarget = normalizePath(path.isAbsolute(targetFile) ? targetFile : path.resolve(wsRoot, targetFile));
   const normWsRoot = normalizePath(wsRoot);
 
-  // 仅当目标文件在工作区外部且位于系统临时目录/脑区时豁免
-  const tempDir = normalizePath(os.tmpdir());
-  if (!normTarget.startsWith(normWsRoot) && normTarget.startsWith(tempDir)) {
-    return true;
-  }
-
-  const brainDir = normalizePath(path.join(os.homedir(), '.gemini', 'antigravity', 'brain'));
-  if (normTarget.startsWith(brainDir)) {
+  // 1. 豁免路径直接放行 (Desktop, docs, scratch, temp, brain, task-loop state)
+  if (isExemptPath(normTarget, normWsRoot)) {
     return true;
   }
 

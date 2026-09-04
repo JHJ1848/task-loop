@@ -122,8 +122,14 @@ def spawn_root_conversation(title, prompt, ws_root):
             return None
 
     print(
-        "[new-topic-session] 未发现 agentapi (AGY) 或 ZCode CLI。"
-        "ZCode 环境可设 ZCODE_CLI_BIN 指向 ZCode.exe，或手动新建会话后登记 sessions.json。",
+        "\n============================================================\n"
+        "[new-topic-session 优雅降级引导卡]\n"
+        "无法自动拉起专题会话（未检测到 agentapi 或 ZCode CLI 无头拉起未就绪）。\n"
+        "请按以下指引手动建立与绑定：\n"
+        "1. 在 IDE 侧边栏手动点击 [+] 新建一个独立专题会话；\n"
+        f"2. 在该新会话中运行: python scripts/init_task_loop.py --bind-current {title}\n"
+        "3. 或在 sessions.json 中将新会话 ID 手动登记至 vendors.<vendor>.modules 映射表中。\n"
+        "============================================================\n",
         file=sys.stderr,
     )
     return None
@@ -134,14 +140,31 @@ def _find_agentapi(env):
     if override and os.path.exists(override):
         return override
     home = os.path.expanduser("~")
-    for c in (
+    candidates = (
+        os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.bat"),
+        os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.cmd"),
         os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.exe"),
         os.path.join(home, ".gemini", "antigravity", "bin", "agentapi"),
+        os.path.join(home, ".antigravity", "bin", "agentapi.bat"),
+        os.path.join(home, ".antigravity", "bin", "agentapi.cmd"),
         os.path.join(home, ".antigravity", "bin", "agentapi.exe"),
         os.path.join(home, ".antigravity", "bin", "agentapi"),
-    ):
+    )
+    for c in candidates:
         if os.path.exists(c):
             return c
+
+    # Windows where / Unix which
+    which_cmd = "where" if sys.platform == "win32" else "which"
+    try:
+        res = subprocess.run([which_cmd, "agentapi"], capture_output=True, text=True, encoding="utf-8")
+        if res.stdout:
+            first = res.stdout.strip().splitlines()[0].strip()
+            if first and os.path.exists(first):
+                return first
+    except Exception:
+        pass
+
     return None
 
 
