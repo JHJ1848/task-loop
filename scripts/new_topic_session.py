@@ -137,8 +137,8 @@ def spawn_root_conversation(title, prompt, ws_root):
 
 def _find_agentapi(env):
     override = env.get("AGENTAPI_PATH")
-    if override and os.path.exists(override):
-        return override
+    if override is not None:
+        return override if os.path.exists(override) else None
     home = os.path.expanduser("~")
     candidates = (
         os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.bat"),

@@ -25,9 +25,10 @@ function testInjectContract() {
   withTempWorkspace(ws => {
     const env = {};
     const payload = {
-      session_id: 'sess_abc123',
+      session_id: 'sess_abc123_js',
       hook_event_name: 'UserPromptSubmit',
-      cwd: ws
+      cwd: ws,
+      isTest: true
     };
     const out = injectAdapter.processPayload(payload, env);
     assert.ok(out.hookSpecificOutput, 'missing hookSpecificOutput');

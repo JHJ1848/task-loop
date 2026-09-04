@@ -117,15 +117,25 @@ def find_allowlist_for_session(ws_root, conversation_id):
 
 
 def is_exempt_path(norm_target, norm_ws_root):
-    exempt_prefixes = [
+    # Inside the workspace, only specific subdirectories are exempt
+    if norm_ws_root and norm_target.startswith(norm_ws_root):
+        ws_exempt_prefixes = [
+            normalize_path(os.path.join(norm_ws_root, "docs")),
+            normalize_path(os.path.join(norm_ws_root, "scratch")),
+            normalize_path(os.path.join(norm_ws_root, ".agents", "task-loop")),
+        ]
+        for p in ws_exempt_prefixes:
+            if norm_target.startswith(p):
+                return True
+        return False
+
+    # Outside the workspace: allow OS tempdir, brain, Desktop
+    outside_exempt_prefixes = [
         normalize_path(tempfile.gettempdir()),
         normalize_path(os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")),
         normalize_path(os.path.join(os.path.expanduser("~"), "Desktop")),
-        normalize_path(os.path.join(norm_ws_root, "docs")),
-        normalize_path(os.path.join(norm_ws_root, "scratch")),
-        normalize_path(os.path.join(norm_ws_root, ".agents", "task-loop")),
     ]
-    for p in exempt_prefixes:
+    for p in outside_exempt_prefixes:
         if norm_target.startswith(p):
             return True
     return False

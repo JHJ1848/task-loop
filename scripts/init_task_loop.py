@@ -162,7 +162,7 @@ def spawn_root_conversation(title, prompt, ws_root):
     return None
 
 
-def resolve_module_assignments(suggestions, memory_docs, existing_modules=None):
+def resolve_module_assignments(suggestions, memory_docs=None, existing_modules=None):
     """单一事实源: 严格以 docs/memory/*.md 中的法定模块为准进行 1:1 对齐匹配。
     粘性绑定锁保护 (Sticky Binding Lock):
     优先以 sessions.json 中既有确立绑定的 modules 字典为最高置信度来源，

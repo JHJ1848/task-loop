@@ -123,15 +123,26 @@ function findAllowlistForSession(wsRoot, conversationId) {
 }
 
 function isExemptPath(normTarget, normWsRoot) {
-  const exemptPrefixes = [
+  // Inside the workspace, only specific subdirectories are exempt
+  if (normWsRoot && normTarget.startsWith(normWsRoot)) {
+    const wsExemptPrefixes = [
+      normalizePath(path.join(normWsRoot, 'docs')),
+      normalizePath(path.join(normWsRoot, 'scratch')),
+      normalizePath(path.join(normWsRoot, '.agents', 'task-loop'))
+    ];
+    for (const p of wsExemptPrefixes) {
+      if (normTarget.startsWith(p)) return true;
+    }
+    return false;
+  }
+
+  // Outside the workspace: allow OS tempdir, brain, Desktop
+  const outsideExemptPrefixes = [
     normalizePath(os.tmpdir()),
     normalizePath(path.join(os.homedir(), '.gemini', 'antigravity', 'brain')),
-    normalizePath(path.join(os.homedir(), 'Desktop')),
-    normalizePath(path.join(normWsRoot, 'docs')),
-    normalizePath(path.join(normWsRoot, 'scratch')),
-    normalizePath(path.join(normWsRoot, '.agents', 'task-loop'))
+    normalizePath(path.join(os.homedir(), 'Desktop'))
   ];
-  for (const p of exemptPrefixes) {
+  for (const p of outsideExemptPrefixes) {
     if (normTarget.startsWith(p)) return true;
   }
   return false;

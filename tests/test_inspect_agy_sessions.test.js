@@ -121,6 +121,41 @@ function runTest() {
   assert.strictEqual(topicSess.status, 'IDLE_SLEEPING');
   assert.strictEqual(topicSess.deep_link, `conversation://${topicId}`);
 
+  // Test 3: probeDispatchSession true/false activation probe
+  const dormantSessId = '44444444-4444-4444-4444-444444444444';
+  const dormantLogDir = path.join(tempBrain, dormantSessId, '.system_generated', 'logs');
+  fs.mkdirSync(dormantLogDir, { recursive: true });
+  const dormantLogFile = path.join(dormantLogDir, 'transcript.jsonl');
+  // Only sidebus dispatch message appended, no MODEL step
+  fs.writeFileSync(dormantLogFile, [
+    JSON.stringify({ type: 'USER_INPUT', source: 'USER_EXPLICIT', content: 'Initial message', created_at: twoHoursAgo }),
+    JSON.stringify({ type: 'PLANNER_RESPONSE', source: 'MODEL', content: 'Initial response', created_at: twoHoursAgo }),
+    JSON.stringify({ type: 'USER_INPUT', source: 'SYSTEM', content: '[主会话派单任务: WORK (测试任务)] 请执行修复', created_at: new Date().toISOString() })
+  ].join('\n'), 'utf8');
+
+  const { probeDispatchSession } = require('../scripts/inspect_agy_sessions');
+  const dormantProbe = probeDispatchSession(dormantSessId, { brainPath: tempBrain });
+  assert.strictEqual(dormantProbe.found, true);
+  assert.strictEqual(dormantProbe.is_working, false, 'Session with no MODEL step after dispatch should NOT be working');
+  assert.strictEqual(dormantProbe.working_status, 'DORMANT_NOT_ACTIVATED');
+  assert.strictEqual(dormantProbe.model_steps_count, 0);
+  assert.ok(dormantProbe.alert_card && dormantProbe.alert_card.includes('🔴 专题未激活告警卡'));
+
+  // Now append a MODEL step to simulate activation
+  fs.appendFileSync(dormantLogFile, '\n' + JSON.stringify({
+    type: 'PLANNER_RESPONSE',
+    source: 'MODEL',
+    thinking: 'Analyzing task...',
+    created_at: new Date().toISOString()
+  }), 'utf8');
+
+  const activeProbe = probeDispatchSession(dormantSessId, { brainPath: tempBrain });
+  assert.strictEqual(activeProbe.found, true);
+  assert.strictEqual(activeProbe.is_working, true, 'Session with MODEL step after dispatch SHOULD be working');
+  assert.strictEqual(activeProbe.working_status, 'WORKING_IN_PROGRESS');
+  assert.strictEqual(activeProbe.model_steps_count, 1);
+  assert.strictEqual(activeProbe.alert_card, null);
+
   // Cleanup
   fs.rmSync(tempDir, { recursive: true, force: true });
 

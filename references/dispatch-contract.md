@@ -277,15 +277,16 @@ flowchart TD
 ```json
 [
   {
-    "stage": "Stage 1: 30s 激活探针 (Activation Probe)",
-    "timing": "派单后挂载 schedule(DurationSeconds=30, Prompt=\"检查专题会话激活状态\", TimerCondition=\"any\")",
+    "stage": "Stage 1: 30s 真活跃探针 (True Activation Probe)",
+    "timing": "派单后挂载 schedule(DurationSeconds=30, Prompt=\"检查专题会话真激活状态\", TimerCondition=\"any\")",
     "trigger_condition": "派单发信 30 秒后触发",
-    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js 或读取 sessions.json / 日志，检查目标专题步数是否增长、是否进入 ACTIVE 状态。",
-    "abnormal_resolution": "若状态仍为 IDLE_SLEEPING 或步数未增加，主会话主动干预，并在界面向用户呈现 [-> 点击切换并激活专题会话](conversation://<session_id>) Deep Link，消除休眠断点。"
+    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> 精准核验：派单消息后是否至少存在 1 个 source='MODEL' 的真实大模型工作步。",
+    "pass_condition": "is_working === true 且 working_status === 'WORKING_IN_PROGRESS'（存在真实 MODEL 步）。通过后方可挂载 120s 巡检定时器。",
+    "abnormal_resolution": "若 is_working === false (DORMANT_NOT_ACTIVATED)，严禁脑补推测进度！严禁挂载 120s 定时器！必须立即输出【🔴 专题未激活告警卡】呈现 [-> 点击切换并激活专题会话](conversation://<session_id>) 提醒用户点击唤醒。"
   },
   {
     "stage": "Stage 2: 120s 偏差巡检与干预 (Alignment Audit)",
-    "timing": "派单后挂载 schedule(DurationSeconds=120, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\")",
+    "timing": "30s 真活跃探针通过后挂载 schedule(DurationSeconds=120, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\")",
     "trigger_condition": "派单发信 120 秒后触发",
     "inspection_actions": "读取目标专题 transcript.jsonl 最新 steps，走查：1. 是否偏离单一职责目标；2. 是否发生无限死循环/重复调用；3. 推演逻辑是否存在严重技术漏洞；4. 是否尝试越界修改。",
     "abnormal_resolution": "若发现执行偏差，主会话立即调用 send_message(recipient=\"<topic_session_id>\", message=\"【主中枢偏差修正指令】检测到执行路径偏离目标...请按以下修正方案调整...\") 进行强力干预。"
@@ -297,7 +298,8 @@ flowchart TD
 1. **统一标准工具**: 必须使用系统原生 `schedule` 工具设定倒计时（严禁使用后台 `sleep` 命令）；
 2. **提前交付短路**: 若专题会话在 30s 或 120s 内提前完成交付并发送 `send_message`，主中枢收到回执后自动唤醒并可直接回收/忽略该监督定时器；
 3. **巡检无干预放行**: 若 120s 巡检确认专题思路清晰且正在执行正常长耗时单测/构建，主会话不发送扰动指令，允许其平稳运行直至交付；
-4. **定时器冲突管理与主动销毁 (Conflict Avoidance)**: 严禁在未清理旧定时器的情况下挂载带有相同 `TimerCondition` 的新定时器（防范 `conflicting early termination condition` 报错）。在更新或追加新阶段看门狗定时器前，若前置定时器仍在运行，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器任务。
+4. **定时器冲突管理与主动销毁 (Conflict Avoidance)**: 严禁在未清理旧定时器的情况下挂载带有相同 `TimerCondition` 的新定时器（防范 `conflicting early termination condition` 报错）。在更新或追加新阶段看门狗定时器前，若前置定时器仍在运行，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器任务；
+5. **防假阳性铁律 (Anti-False-Positive Iron Rule)**: 30s 探针必须以 `--probe-dispatch` 返回的 `is_working === true` 为唯一通过标准。若为 false 则说明后台休眠未启动，严禁假装通过或进入 120s 盲等，必须立即告警。
 
 ---
 

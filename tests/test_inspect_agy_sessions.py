@@ -23,7 +23,7 @@ if sys.platform == "win32":
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from scripts.inspect_agy_sessions import inspect_agy_sessions, format_relative_time
+from scripts.inspect_agy_sessions import inspect_agy_sessions, format_relative_time, probe_dispatch_session
 
 
 class TestInspectAgySessions(unittest.TestCase):
@@ -128,6 +128,51 @@ class TestInspectAgySessions(unittest.TestCase):
         self.assertFalse(topic_sess["is_main"])
         self.assertEqual(topic_sess["status"], "IDLE_SLEEPING")
         self.assertEqual(topic_sess["deep_link"], f"conversation://{topic_id}")
+
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_probe_dispatch_session(self):
+        temp_dir = tempfile.mkdtemp(prefix="agy-probe-py-")
+        temp_brain = os.path.join(temp_dir, "brain")
+        os.makedirs(temp_brain, exist_ok=True)
+
+        dormant_sess_id = "44444444-4444-4444-4444-444444444444"
+        dormant_log_dir = os.path.join(temp_brain, dormant_sess_id, ".system_generated", "logs")
+        os.makedirs(dormant_log_dir, exist_ok=True)
+        dormant_log_file = os.path.join(dormant_log_dir, "transcript.jsonl")
+
+        now = datetime.now(timezone.utc)
+        two_hours_ago = (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+
+        # Write sidebus dispatch message only (no MODEL step after)
+        with open(dormant_log_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "USER_INPUT", "source": "USER_EXPLICIT", "content": "Initial message", "created_at": two_hours_ago}) + "\n")
+            f.write(json.dumps({"type": "PLANNER_RESPONSE", "source": "MODEL", "content": "Initial response", "created_at": two_hours_ago}) + "\n")
+            f.write(json.dumps({"type": "USER_INPUT", "source": "SYSTEM", "content": "[主会话派单任务: WORK (测试任务)] 请执行修复", "created_at": now.isoformat().replace("+00:00", "Z")}) + "\n")
+
+        dormant_probe = probe_dispatch_session(dormant_sess_id, brain_path=temp_brain)
+        self.assertTrue(dormant_probe["found"])
+        self.assertFalse(dormant_probe["is_working"], "Session with no MODEL step after dispatch should NOT be working")
+        self.assertEqual(dormant_probe["working_status"], "DORMANT_NOT_ACTIVATED")
+        self.assertEqual(dormant_probe["model_steps_count"], 0)
+        self.assertIsNotNone(dormant_probe["alert_card"])
+        self.assertIn("🔴 专题未激活告警卡", dormant_probe["alert_card"])
+
+        # Append MODEL step to simulate activation
+        with open(dormant_log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "type": "PLANNER_RESPONSE",
+                "source": "MODEL",
+                "thinking": "Analyzing task...",
+                "created_at": now.isoformat().replace("+00:00", "Z")
+            }) + "\n")
+
+        active_probe = probe_dispatch_session(dormant_sess_id, brain_path=temp_brain)
+        self.assertTrue(active_probe["found"])
+        self.assertTrue(active_probe["is_working"], "Session with MODEL step after dispatch SHOULD be working")
+        self.assertEqual(active_probe["working_status"], "WORKING_IN_PROGRESS")
+        self.assertEqual(active_probe["model_steps_count"], 1)
+        self.assertIsNone(active_probe["alert_card"])
 
         shutil.rmtree(temp_dir, ignore_errors=True)
 

@@ -23,7 +23,7 @@ core_gate = importlib.import_module("enforce_allowlist")
 def test_inject_contract():
     ws = tempfile.mkdtemp(prefix="test_zcode_hooks_py_")
     try:
-        payload = {"session_id": "sess_abc123", "hook_event_name": "UserPromptSubmit", "cwd": ws}
+        payload = {"session_id": "sess_abc123_py", "hook_event_name": "UserPromptSubmit", "cwd": ws, "isTest": True}
         out = inject_adapter.process_payload(payload, env={})
         assert "hookSpecificOutput" in out, "missing hookSpecificOutput"
         assert out["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
@@ -38,15 +38,15 @@ def test_inject_env_fallback_and_noop():
     ws = tempfile.mkdtemp(prefix="test_zcode_hooks2_py_")
     try:
         env = {"CLAUDE_SESSION_ID": "sess_env_fallback", "ZCODE_PROJECT_DIR": ws}
-        out = inject_adapter.process_payload({"cwd": ws}, env=env)
+        out = inject_adapter.process_payload({"cwd": ws, "isTest": True}, env=env)
         assert "sess_env_fallback" in out["hookSpecificOutput"]["additionalContext"]
 
         start = inject_adapter.process_payload(
-            {"session_id": "sess_start1", "hook_event_name": "SessionStart", "cwd": ws}, env={}
+            {"session_id": "sess_start1", "hook_event_name": "SessionStart", "cwd": ws, "isTest": True}, env={}
         )
         assert start["hookSpecificOutput"]["hookEventName"] == "SessionStart"
 
-        assert inject_adapter.process_payload({"cwd": ws}, env={}) == {}
+        assert inject_adapter.process_payload({"cwd": ws, "isTest": True}, env={}) == {}
     finally:
         shutil.rmtree(ws, ignore_errors=True)
 

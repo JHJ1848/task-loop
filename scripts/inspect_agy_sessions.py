@@ -287,13 +287,141 @@ def print_table(report):
     print("\n" + "=" * 80 + "\n")
 
 
+def probe_dispatch_session(session_id: str, brain_path: str = None):
+    if brain_path:
+        brain_dir = str(Path(brain_path).resolve())
+    else:
+        brain_dir = os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")
+
+    session_dir = os.path.join(brain_dir, session_id)
+    if not os.path.exists(session_dir):
+        return {
+            "session_id": session_id,
+            "found": False,
+            "is_working": False,
+            "working_status": "DORMANT_NOT_ACTIVATED",
+            "dispatch_found": False,
+            "model_steps_count": 0,
+            "reason": f"会话目录不存在: {session_dir}",
+            "deep_link": f"conversation://{session_id}",
+            "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未创建或无日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
+        }
+
+    log_file = os.path.join(session_dir, ".system_generated", "logs", "transcript.jsonl")
+    if not os.path.exists(log_file):
+        log_file = os.path.join(session_dir, ".system_generated", "logs", "transcript_full.jsonl")
+        if not os.path.exists(log_file):
+            return {
+                "session_id": session_id,
+                "found": False,
+                "is_working": False,
+                "working_status": "DORMANT_NOT_ACTIVATED",
+                "dispatch_found": False,
+                "model_steps_count": 0,
+                "reason": "未找到 transcript.jsonl 日志文件",
+                "deep_link": f"conversation://{session_id}",
+                "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
+            }
+
+    last_dispatch_index = -1
+    last_dispatch_step = None
+    steps = []
+
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        idx = 0
+        for line in lines:
+            line_str = line.strip()
+            if not line_str:
+                continue
+            try:
+                parsed = json.loads(line_str)
+                steps.append(parsed)
+                text = parsed.get("content") or ""
+                if not text and parsed.get("thinking"):
+                    text = json.dumps(parsed.get("thinking"))
+                if (
+                    "[主会话派单" in text
+                    or "【主会话派单" in text
+                    or (parsed.get("type") == "USER_INPUT" and any(k in text for k in ["单一职责目标", "物理白名单", "派单任务"]))
+                ):
+                    last_dispatch_index = idx
+                    last_dispatch_step = {
+                        "step_index": parsed.get("step_index", idx),
+                        "type": parsed.get("type"),
+                        "created_at": parsed.get("created_at"),
+                        "snippet": text[:100]
+                    }
+                idx += 1
+            except Exception:
+                pass
+    except Exception as e:
+        return {
+            "session_id": session_id,
+            "found": False,
+            "is_working": False,
+            "working_status": "DORMANT_NOT_ACTIVATED",
+            "reason": f"读取日志异常: {e}",
+            "deep_link": f"conversation://{session_id}"
+        }
+
+    if last_dispatch_index == -1:
+        for i in range(len(steps) - 1, -1, -1):
+            if steps[i].get("source") in ("USER_EXPLICIT", "SYSTEM") or steps[i].get("type") == "USER_INPUT":
+                last_dispatch_index = i
+                last_dispatch_step = {
+                    "step_index": steps[i].get("step_index", i),
+                    "type": steps[i].get("type"),
+                    "created_at": steps[i].get("created_at"),
+                    "snippet": (steps[i].get("content") or "")[:100]
+                }
+                break
+
+    model_steps_after_dispatch = 0
+    latest_model_step = None
+
+    for i in range(last_dispatch_index + 1, len(steps)):
+        st = steps[i]
+        if st.get("source") == "MODEL" or st.get("type") == "PLANNER_RESPONSE" or (st.get("tool_calls") and len(st.get("tool_calls")) > 0):
+            model_steps_after_dispatch += 1
+            latest_model_step = {
+                "step_index": st.get("step_index", i),
+                "type": st.get("type"),
+                "created_at": st.get("created_at"),
+                "has_tool_calls": bool(st.get("tool_calls") and len(st.get("tool_calls")) > 0),
+                "has_thinking": bool(st.get("thinking"))
+            }
+
+    is_working = model_steps_after_dispatch > 0
+    return {
+        "session_id": session_id,
+        "found": True,
+        "is_working": is_working,
+        "working_status": "WORKING_IN_PROGRESS" if is_working else "DORMANT_NOT_ACTIVATED",
+        "dispatch_found": (last_dispatch_index != -1),
+        "dispatch_step_index": last_dispatch_index,
+        "last_dispatch_step": last_dispatch_step,
+        "model_steps_count": model_steps_after_dispatch,
+        "latest_model_step": latest_model_step,
+        "deep_link": f"conversation://{session_id}",
+        "alert_card": None if is_working else f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未触发大模型推理！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description="Antigravity Project Session Inspector & State Probe")
     parser.add_argument("--root", default=".", help="Project root directory (default: .)")
     parser.add_argument("--brain-path", default=None, help="Custom AGY brain directory path")
     parser.add_argument("--active-window", type=int, default=30, help="Minutes to consider a session ACTIVE (default: 30)")
+    parser.add_argument("--probe-dispatch", default=None, help="Probe target session for real MODEL execution post-dispatch")
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of table")
     args = parser.parse_args()
+
+    if args.probe_dispatch:
+        probe_result = probe_dispatch_session(args.probe_dispatch, brain_path=args.brain_path)
+        print(json.dumps(probe_result, ensure_ascii=False, indent=2))
+        sys.exit(0)
 
     report = inspect_agy_sessions(root=args.root, brain_path=args.brain_path, active_window=args.active_window)
     if args.json:

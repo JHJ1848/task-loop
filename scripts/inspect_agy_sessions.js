@@ -259,12 +259,138 @@ function printTable(report) {
   console.log(`\n================================================================================\n`);
 }
 
+function probeDispatchSession(sessionId, options = {}) {
+  const brainDir = options.brainPath ? path.resolve(options.brainPath) : path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+  const sessionDir = path.join(brainDir, sessionId);
+
+  if (!fs.existsSync(sessionDir)) {
+    return {
+      session_id: sessionId,
+      found: false,
+      is_working: false,
+      working_status: 'DORMANT_NOT_ACTIVATED',
+      dispatch_found: false,
+      model_steps_count: 0,
+      reason: `会话目录不存在: ${sessionDir}`,
+      deep_link: `conversation://${sessionId}`,
+      alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未创建或无日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
+    };
+  }
+
+  let logFile = path.join(sessionDir, '.system_generated', 'logs', 'transcript.jsonl');
+  if (!fs.existsSync(logFile)) {
+    logFile = path.join(sessionDir, '.system_generated', 'logs', 'transcript_full.jsonl');
+    if (!fs.existsSync(logFile)) {
+      return {
+        session_id: sessionId,
+        found: false,
+        is_working: false,
+        working_status: 'DORMANT_NOT_ACTIVATED',
+        dispatch_found: false,
+        model_steps_count: 0,
+        reason: '未找到 transcript.jsonl 日志文件',
+        deep_link: `conversation://${sessionId}`,
+        alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
+      };
+    }
+  }
+
+  let lastDispatchIndex = -1;
+  let lastDispatchStep = null;
+  const steps = [];
+
+  try {
+    const content = fs.readFileSync(logFile, 'utf8');
+    const lines = content.split('\n');
+    let idx = 0;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        steps.push(parsed);
+        const text = parsed.content || (parsed.thinking ? JSON.stringify(parsed.thinking) : '') || '';
+        if (
+          text.includes('[主会话派单') ||
+          text.includes('【主会话派单') ||
+          (parsed.type === 'USER_INPUT' && (text.includes('单一职责目标') || text.includes('物理白名单') || text.includes('派单任务')))
+        ) {
+          lastDispatchIndex = idx;
+          lastDispatchStep = {
+            step_index: parsed.step_index ?? idx,
+            type: parsed.type,
+            created_at: parsed.created_at,
+            snippet: text.slice(0, 100)
+          };
+        }
+        idx++;
+      } catch (e) {}
+    }
+  } catch (e) {
+    return {
+      session_id: sessionId,
+      found: false,
+      is_working: false,
+      working_status: 'DORMANT_NOT_ACTIVATED',
+      reason: `读取日志异常: ${e.message}`,
+      deep_link: `conversation://${sessionId}`
+    };
+  }
+
+  if (lastDispatchIndex === -1) {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      if (steps[i].source === 'USER_EXPLICIT' || steps[i].type === 'USER_INPUT' || steps[i].source === 'SYSTEM') {
+        lastDispatchIndex = i;
+        lastDispatchStep = {
+          step_index: steps[i].step_index ?? i,
+          type: steps[i].type,
+          created_at: steps[i].created_at,
+          snippet: (steps[i].content || '').slice(0, 100)
+        };
+        break;
+      }
+    }
+  }
+
+  let modelStepsAfterDispatch = 0;
+  let latestModelStep = null;
+
+  for (let i = lastDispatchIndex + 1; i < steps.length; i++) {
+    const st = steps[i];
+    if (st.source === 'MODEL' || st.type === 'PLANNER_RESPONSE' || (st.tool_calls && st.tool_calls.length > 0)) {
+      modelStepsAfterDispatch++;
+      latestModelStep = {
+        step_index: st.step_index ?? i,
+        type: st.type,
+        created_at: st.created_at,
+        has_tool_calls: Boolean(st.tool_calls && st.tool_calls.length > 0),
+        has_thinking: Boolean(st.thinking)
+      };
+    }
+  }
+
+  const isWorking = modelStepsAfterDispatch > 0;
+  return {
+    session_id: sessionId,
+    found: true,
+    is_working: isWorking,
+    working_status: isWorking ? 'WORKING_IN_PROGRESS' : 'DORMANT_NOT_ACTIVATED',
+    dispatch_found: lastDispatchIndex !== -1,
+    dispatch_step_index: lastDispatchIndex,
+    last_dispatch_step: lastDispatchStep,
+    model_steps_count: modelStepsAfterDispatch,
+    latest_model_step: latestModelStep,
+    deep_link: `conversation://${sessionId}`,
+    alert_card: isWorking ? null : `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未触发大模型推理！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
+  };
+}
+
 if (require.main === module) {
   const args = process.argv.slice(2);
   let root = '.';
   let brainPath = null;
   let isJson = false;
   let activeWindow = 30;
+  let probeDispatchId = null;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--root' && args[i + 1]) {
@@ -273,17 +399,26 @@ if (require.main === module) {
       brainPath = args[++i];
     } else if (args[i] === '--active-window' && args[i + 1]) {
       activeWindow = parseInt(args[++i], 10) || 30;
+    } else if (args[i] === '--probe-dispatch' && args[i + 1]) {
+      probeDispatchId = args[++i];
     } else if (args[i] === '--json') {
       isJson = true;
     } else if (args[i] === '-h' || args[i] === '--help') {
       console.log(`Usage: node scripts/inspect_agy_sessions.js [options]`);
       console.log(`Options:`);
-      console.log(`  --root <path>           Project root directory (default: .)`);
-      console.log(`  --brain-path <path>     Custom AGY brain directory`);
-      console.log(`  --active-window <mins>  Minutes to consider a session ACTIVE (default: 30)`);
-      console.log(`  --json                  Output raw JSON instead of table`);
+      console.log(`  --root <path>               Project root directory (default: .)`);
+      console.log(`  --brain-path <path>         Custom AGY brain directory`);
+      console.log(`  --active-window <mins>      Minutes to consider a session ACTIVE (default: 30)`);
+      console.log(`  --probe-dispatch <sess_id>  Probe target session for real MODEL execution post-dispatch`);
+      console.log(`  --json                      Output raw JSON instead of table`);
       process.exit(0);
     }
+  }
+
+  if (probeDispatchId) {
+    const probeResult = probeDispatchSession(probeDispatchId, { brainPath });
+    console.log(JSON.stringify(probeResult, null, 2));
+    process.exit(0);
   }
 
   const report = inspectAgySessions({ root, brainPath, activeWindow });
@@ -294,4 +429,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { inspectAgySessions, formatRelativeTime, loadRegistrySessions };
+module.exports = { inspectAgySessions, probeDispatchSession, formatRelativeTime, loadRegistrySessions };

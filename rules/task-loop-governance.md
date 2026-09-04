@@ -79,12 +79,13 @@
 ## 6. 主会话派单双阶梯看门狗监督机制 (Dual-Stage Watchdog Supervision)
 
 为消除后台专题会话休眠未启动或执行过程走弯路/死循环的断点，主会话在派单后**必须建立 30s + 120s 双阶梯监督机制**：
-* **阶梯一：30s 激活探针 (30s Activation Probe)**:
+* **阶梯一：30s 真活跃探针 (30s True Activation Probe)**:
   - 派单后主会话挂载 30s 检查定时器（`schedule` 模式 `DurationSeconds=30`）；
-  - 定时器触发时，主会话运行会话状态探针（如 `inspect_agy_sessions` 或日志内省），检查目标专题步数是否增长、是否成功进入 `ACTIVE` 状态；
-  - 若检测到专题仍处于休眠 (`IDLE_SLEEPING`) 或未拉起状态，主会话立即主动干预，并在界面向用户呈现 `[-> 点击切换并激活专题会话](conversation://<session_id>)` Deep Link，确保链路不卡死。
+  - 定时器触发时，主会话运行会话真活跃探针 `node scripts/inspect_agy_sessions.js --probe-dispatch <session_id>`；
+  - **唯一通过门禁标准**: 返回 `is_working === true`（即派单消息后存在真实 `source: 'MODEL'` 工作步）；
+  - **防假阳性铁律**: 若 `is_working === false` (状态为 `DORMANT_NOT_ACTIVATED`)，严禁脑补推测进度，严禁挂载 120s 定时器，必须立即输出【🔴 专题未激活告警卡】(含 `conversation://<session_id>` 唤醒链接) 提醒用户点击激活。
 * **阶梯二：120s 偏差巡检与干预 (120s Alignment Audit & Intervention)**:
-  - 派单后主会话挂载 120s 巡检定时器（`schedule` 模式 `DurationSeconds=120`）；
+  - 30s 探针通过后，主会话挂载 120s 巡检定时器（`schedule` 模式 `DurationSeconds=120`）；
   - 定时器触发时，主会话读取目标专题的最新执行轨迹与推演思路（`transcript.jsonl`），执行偏差走查：
     1. 检查专题是否偏离初始单一职责目标 (Objective)；
     2. 检查专题是否陷入无限递归、重复调用或尝试越界修改；
