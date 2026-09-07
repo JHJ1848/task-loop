@@ -76,7 +76,9 @@ def test_install_to_temp():
             if mod_name in ("inject_session_context", "inject_session_context_zcode"):
                 del sys.modules[mod_name]
         inject_mod = importlib.import_module("inject_session_context_zcode")
-        out = inject_mod.process_payload({"session_id": "sess_itest", "cwd": result["dest"]}, env={})
+        out = inject_mod.process_payload(
+            {"session_id": "sess_itest", "cwd": result["dest"], "isTest": True, "skipDedupe": True}, env={}
+        )
         assert "[Plugin: task-loop | 会话上下文感知]" in out["hookSpecificOutput"]["additionalContext"]
 
         # 幂等重装: 第二次执行仍成功且内容一致

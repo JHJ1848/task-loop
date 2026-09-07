@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ master, main ]
 
+env:
+  PYTHONIOENCODING: utf-8
+
 jobs:
   test-node:
     name: Node.js Tests (${{ matrix.os }} - Node ${{ matrix.node-version }})
@@ -32,11 +35,9 @@ jobs:
 
       - name: Run All Node.js Test Suites
         shell: bash
-        run: |
-          for f in tests/*.test.js; do
-            echo "=== Running $f ==="
-            node "$f"
-          done
+        env:
+          PYTHONIOENCODING: utf-8
+        run: node scripts/run_all_tests.js
 
   test-python:
     name: Python Tests (${{ matrix.os }} - Python ${{ matrix.python-version }})
@@ -63,8 +64,6 @@ jobs:
 
       - name: Run All Python Test Suites
         shell: bash
-        run: |
-          for f in tests/test_*.py; do
-            echo "=== Running $f ==="
-            python "$f"
-          done
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python scripts/run_all_tests.py

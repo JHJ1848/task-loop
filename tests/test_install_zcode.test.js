@@ -58,7 +58,7 @@ function testInstallToTemp() {
 
     // Hook 冒烟: 副本自身可独立出上下文注入
     const inject = require(path.join(result.dest, 'scripts', 'hooks', 'inject_session_context_zcode.js'));
-    const out = inject.processPayload({ session_id: 'sess_itest', cwd: result.dest }, {});
+    const out = inject.processPayload({ session_id: 'sess_itest', cwd: result.dest, isTest: true, skipDedupe: true }, {});
     assert.ok(out.hookSpecificOutput.additionalContext.includes('[Plugin: task-loop | 会话上下文感知]'));
 
     console.log('Node.js install_zcode_plugin tests PASSED!');
