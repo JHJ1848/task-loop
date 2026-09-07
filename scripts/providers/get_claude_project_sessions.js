@@ -92,6 +92,7 @@ function parseTranscript(logFile, projectRoot, inspectActivity) {
       }
     }
   } catch (e) {
+    console.error(`[claude-provider] schema mismatch in ${path.basename(logFile)}: unreadable transcript: ${e.message}`);
     return null;
   }
 

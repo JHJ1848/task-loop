@@ -61,23 +61,34 @@ def scan_agy_sessions(project_root_str: str = ".", custom_brain_path: str = None
         try:
             with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
-                    line_lower = line.lower()
+                    line_str = line.strip()
+                    if not line_str:
+                        continue
+                    try:
+                        record = json.loads(line_str)
+                    except Exception as e:
+                        sys.stderr.write(f"[agy-provider] schema mismatch in {conv_id}: malformed json line: {line_str[:80]}\n")
+                        continue
+
+                    if not isinstance(record, dict):
+                        sys.stderr.write(f"[agy-provider] schema mismatch in {conv_id}: line record is not a dict\n")
+                        continue
+
+                    line_lower = line_str.lower()
                     if not is_match and (project_root in line_lower or project_root.replace(":", "%3a") in line_lower):
                         is_match = True
                     
                     # Extract user input prompts
-                    if '"type":"USER_INPUT"' in line or '"type": "USER_INPUT"' in line:
-                        match = re.search(r'"content"\s*:\s*"([^"]+)"', line)
-                        if match:
-                            raw_content = match.group(1)
-                            clean_content = re.sub(r'<[^>]+>', '', raw_content)
-                            clean_content = clean_content.replace("\\n", " ").replace('\\"', '"').strip()
-                            if clean_content and clean_content not in user_prompts:
-                                user_prompts.append(clean_content[:150])
+                    if record.get("type") == "USER_INPUT" and record.get("content"):
+                        raw_content = str(record["content"])
+                        clean_content = re.sub(r'<[^>]+>', '', raw_content)
+                        clean_content = clean_content.replace("\\n", " ").replace('\\"', '"').strip()
+                        if clean_content and clean_content not in user_prompts:
+                            user_prompts.append(clean_content[:150])
                     
                     # Extract touched files from tool calls if inspect_activity enabled
                     if inspect_activity:
-                        file_matches = re.findall(r'"(?:AbsolutePath|TargetFile|SearchPath)"\s*:\s*"([^"]+)"', line)
+                        file_matches = re.findall(r'"(?:AbsolutePath|TargetFile|SearchPath)"\s*:\s*"([^"]+)"', line_str)
                         for fm in file_matches:
                             clean_fm = fm.replace('\\\\', '/').replace('\\', '/')
                             if clean_fm.lower().startswith(project_root):
@@ -86,8 +97,8 @@ def scan_agy_sessions(project_root_str: str = ".", custom_brain_path: str = None
                                     touched_files.add(rel_path)
                             elif not clean_fm.startswith(('http://', 'https://')):
                                 touched_files.add(clean_fm.split('/')[-1])
-        except Exception:
-            pass
+        except Exception as e:
+            sys.stderr.write(f"[agy-provider] schema mismatch in {conv_id}: unreadable file {log_file}: {e}\n")
 
         if is_match:
             if user_prompts:

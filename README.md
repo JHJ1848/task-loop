@@ -14,7 +14,7 @@
   - **Level 1（简单）**：单点 Bugfix / 单文件修改，直发单线程极速闭环。
   - **Level 2（标准）**：模块内功能开发与重构，边界约束内自测与专题记忆回写。
   - **Level 3（复杂）**：跨模块架构演进 / 耗时 > 3 分钟，强制 Subagent 编排（Research / Worker / Reviewer 并行流转）。
-- **双运行时环境支持（Dual Runtime: Node.js & Python）**：为满足广大全栈开发者的习惯，所有调度与会话感知脚本均提供 Node.js（推荐主力，零 npm 依赖）与 Python 3.8+（备份备案，零 pip 依赖）双版本实现。
+- **双运行时环境支持（Dual Runtime: Node.js & Python）**：Node.js (18+) 为 Primary 主力黄金事实源（零 npm 外部依赖，极速启动）；Python (3.8+) 为等价标准库薄适配（零 pip 外部依赖），契约测试保障 100% 行为等价。
 
 ---
 
@@ -100,25 +100,16 @@ python scripts/find_project_sessions.py
 ]
 ```
 
-### 二、第一步: 获取 ZCode 分支源码
+### 二、第一步: 获取项目源码 (单主干 master 统一集成)
 
 ```bash
-# 克隆仓库并切换到 ZCode 分支
-# (master 分支是 AGY/Antigravity 主线; ZCode 分支才包含 .zcode-plugin 适配层)
+# 克隆仓库 (master 单主干全量内置 Google AGY、ZCode、Codex、Claude 四大厂商适配层)
 git clone <仓库地址> task-loop
 cd task-loop
-git checkout ZCode
 
 # 自检: 确认 ZCode 插件适配层存在
 # Windows (PowerShell) : Test-Path .zcode-plugin/plugin.json
 # macOS / Linux        : test -f .zcode-plugin/plugin.json && echo OK
-```
-
-若在错误分支执行安装，脚本会直接报错拒绝：
-
-```
-[Install FAIL] 未找到 <路径>\.zcode-plugin\plugin.json ：请确认当前仓库为包含
-ZCode 适配层 (.zcode-plugin/) 的分支后再执行安装。
 ```
 
 ### 三、第二步: 执行一键安装
@@ -214,7 +205,7 @@ python scripts/install_zcode_plugin.py
 **刷新（升级代码后同步副本）**——Git 工作区只是开发目录，ZCode 客户端永远只读取安装副本，因此改完代码必须重新执行安装脚本:
 
 ```bash
-git checkout ZCode && git pull
+git pull
 node scripts/install_zcode_plugin.js     # 幂等整目录覆盖, 无需先删除
 ```
 然后在客户端重载插件（或重启会话）。开启新对话即可使用最新版本。
@@ -235,7 +226,7 @@ node scripts/install_zcode_plugin.js     # 幂等整目录覆盖, 无需先删�
   {
     "faq_id": "FAQ 1",
     "question": "安装时报错 '未找到 .zcode-plugin/plugin.json'",
-    "answer": "当前检出的是 AGY 主线 master 分支。执行 git checkout ZCode 切换到 ZCode 适配分支后重试。"
+    "answer": "本项目自 v1.3.0 起已全量合并至 master 单主干统一演进。请执行 git pull 获取 master 分支最新代码后重试。"
   },
   {
     "faq_id": "FAQ 2",
@@ -267,6 +258,25 @@ node scripts/install_zcode_plugin.js     # 幂等整目录覆盖, 无需先删�
 ```json
 [
   {
+    "version": "1.4.0",
+    "created_at": "2026-09-07",
+    "updated_at": "2026-09-07",
+    "status": "Multi-Vendor Resilience & Parity",
+    "highlights": [
+      "四大厂商 Provider 植入 Schema 版本指纹探针，实现损坏日志/坏行优雅降级容错与结构化报警",
+      "find_project_sessions 采用安全隔离聚合架构，杜绝单厂商异常影响全盘扫描",
+      "双运行时策略收敛：确立 Node.js (18+) 为 Primary 黄金事实源，Python (3.8+) 为零外部依赖标准库薄适配",
+      "引入 test_contract_parity 对拍测试，100% 校验状态机、Hook 判定与会话探针跨运行时等价性",
+      "引入 GitHub Actions 跨平台 (Linux/Windows) 与跨版本 (Node 18/20/22, Python 3.8/3.10/3.12) CI 矩阵",
+      "端到端跨厂商全链路冒烟测试 test_multivendor_smoke",
+      "彻底清除历史遗留分支描述，完成 master 单主干统一化发布"
+    ],
+    "verified_governance": [
+      "✓ 零污染 Hook 治理落地：通过 PreInvocation Hook 按专题自动注入专属提示词与治理规则，彻底消除对用户项目 AGENTS.md 的侵入与污染",
+      "✓ 官方规范严格对照：对 AGY 官方文档 / SDK 文档与本地所有引用文档（原语签名、参数类型、生命周期与错误行为）进行全面严格核对与走查，彻底杜绝幻觉与语义偏差"
+    ]
+  },
+  {
     "version": "1.2.0-plugin",
     "created_at": "2026-08-25",
     "updated_at": "2026-08-25",
@@ -280,10 +290,6 @@ node scripts/install_zcode_plugin.js     # 幂等整目录覆盖, 无需先删�
       "1/2/3 复杂度分级调度与自动化派单包生成",
       "持久化状态机与渐进式披露参考注册表",
       "新增子代理专题 (subagent) 与钩子专题 (hook) 独立闭环"
-    ],
-    "pre_commit_checklist": [
-      "TODO 1: 零污染 Hook 治理落地：通过 PreInvocation Hook 按专题自动注入专属提示词与治理规则，彻底消除对用户项目 AGENTS.md 的侵入与污染",
-      "TODO 2: 官方规范严格对照：对 AGY 官方文档 / SDK 文档与本地所有引用文档（原语签名、参数类型、生命周期与错误行为）进行全面严格核对与走查，彻底杜绝幻觉与语义偏差"
     ]
   }
 ]

@@ -138,7 +138,8 @@ function scanZcodeSessions(projectRootStr = '.', options = null, inspectActivity
         }
       }
     } catch (e) {
-      continue; // unreadable rollout file -> skip quietly
+      console.error(`[zcode-provider] schema mismatch in ${sessionId}: unreadable rollout ${logFile}: ${e.message}`);
+      continue;
     }
 
     if (!isMatch) continue;

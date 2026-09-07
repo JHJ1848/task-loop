@@ -57,9 +57,12 @@ function readSessionMeta(sessionFile) {
         if (record.type === SESSION_META_TYPE && typeof record.payload === 'object' && record.payload !== null) {
           return record.payload;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.error(`[codex-provider] schema mismatch in ${path.basename(sessionFile)}: malformed json: ${e.message}`);
+      }
     }
   } catch (e) {
+    console.error(`[codex-provider] schema mismatch in ${path.basename(sessionFile)}: unreadable: ${e.message}`);
     return null;
   }
   return null;
@@ -95,6 +98,7 @@ function scanPersistedSessions(projectRoot, codexHome, includeSubagents) {
           record_type: threadSource === SUBAGENT_THREAD_SOURCE ? 'subagent_transcript' : 'session',
           session_id: sessionId,
           thread_id: sessionId,
+          title: meta.title || `Session ${sessionId}`,
           rollout_id: meta.id,
           parent_thread_id: meta.parent_thread_id,
           thread_source: threadSource,

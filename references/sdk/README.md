@@ -45,11 +45,13 @@
   {
     "vendor": "ZCode (Z.ai)",
     "doc_path": "references/sdk/zcode.md",
-    "status": "主力支持 (Primary Native)",
+    "status": "原生适配 (Single-Trunk 主力支持)",
     "capabilities": [
-      "七事件 Hook 管道注入 (SessionStart, UserPromptSubmit, PreToolUse 等)",
-      "会话反向内省 (db.sqlite / rollout JSONL 行扫描)",
-      "物理白名单拦截 (PreToolUse permissionDecision: 'deny')",
+      "七事件 Hook 管道 (SessionStart/UserPromptSubmit 瞬态注入, PreToolUse 白名单硬门禁)",
+      "Claude Code 兼容双命名 stdin/stdout 协议",
+      "会话反向内省双通道 (db.sqlite 只读读库 + rollout JSONL 行扫描)",
+      "原生 Agent(Task) 子代理同步编排 (进程内 spawn)",
+      "无头 CLI 会话拉起与续接 (zcode --cwd -p / --resume, 封装于 spawn_zcode_session Provider, 支持 login-api-key)",
       "独立快照导出与安装 (scripts/install_zcode_plugin.js / .py)",
       "本地插件市场自动生成 (marketplace.json / EXPORT-INFO.md)",
       "单主干 master 统一维护与多厂商分区持久化"
@@ -79,20 +81,6 @@
       "会话分叉与续接 (--resume, --fork-session)",
       "流式双向管道 (stream-json)",
       "官方 Agent SDK (claude-agent-sdk)"
-    ]
-  },
-  {
-    "vendor": "ZCode (Z.ai)",
-    "doc_path": "references/sdk/zcode.md",
-    "status": "原生适配 (Single-Trunk 收编)",
-    "capabilities": [
-      "七事件 Hook 管道 (SessionStart/UserPromptSubmit 瞬态注入, PreToolUse 白名单硬门禁)",
-      "Claude Code 兼容双命名 stdin/stdout 协议",
-      "会话反向内省双通道 (db.sqlite 只读读库 + rollout JSONL 行扫描)",
-      "原生 Agent(Task) 子代理同步编排 (进程内 spawn)",
-      "无头 CLI 会话拉起与续接 (zcode --cwd -p / --resume, 封装于 spawn_zcode_session Provider, 支持 login-api-key)",
-      "编程协议入口 (zcode app-server, ZCode Protocol stdio JSON-RPC)",
-      "插件化接入 (.zcode-plugin/plugin.json + hooks/hooks.json + skills/)"
     ]
   }
 ]

@@ -23,23 +23,36 @@ from get_claude_project_sessions import scan_claude_sessions
 from get_zcode_project_sessions import scan_zcode_sessions
 
 
+def safe_scan(vendor_name: str, scan_fn) -> list:
+    try:
+        return scan_fn() or []
+    except Exception as e:
+        sys.stderr.write(f"[find-sessions] {vendor_name} provider error: {e}\n")
+        return []
+
+
 def find_sessions(project_root: str = ".", vendor: str = "Auto", inspect: bool = False) -> list:
     all_sessions = []
     vendor = vendor.lower()
 
+    scan_agy = lambda: safe_scan("antigravity", lambda: scan_agy_sessions(project_root, inspect_activity=inspect))
+    scan_codex = lambda: safe_scan("codex", lambda: scan_codex_sessions(project_root))
+    scan_claude = lambda: safe_scan("claude", lambda: scan_claude_sessions(project_root, inspect_activity=inspect))
+    scan_zcode = lambda: safe_scan("zcode", lambda: scan_zcode_sessions(project_root, inspect_activity=inspect))
+
     if vendor == "antigravity":
-        all_sessions.extend(scan_agy_sessions(project_root, inspect_activity=inspect))
+        all_sessions.extend(scan_agy())
     elif vendor == "codex":
-        all_sessions.extend(scan_codex_sessions(project_root))
+        all_sessions.extend(scan_codex())
     elif vendor == "claude":
-        all_sessions.extend(scan_claude_sessions(project_root, inspect_activity=inspect))
+        all_sessions.extend(scan_claude())
     elif vendor == "zcode":
-        all_sessions.extend(scan_zcode_sessions(project_root, inspect_activity=inspect))
+        all_sessions.extend(scan_zcode())
     elif vendor == "all":
-        all_sessions.extend(scan_agy_sessions(project_root, inspect_activity=inspect))
-        all_sessions.extend(scan_codex_sessions(project_root))
-        all_sessions.extend(scan_claude_sessions(project_root, inspect_activity=inspect))
-        all_sessions.extend(scan_zcode_sessions(project_root, inspect_activity=inspect))
+        all_sessions.extend(scan_agy())
+        all_sessions.extend(scan_codex())
+        all_sessions.extend(scan_claude())
+        all_sessions.extend(scan_zcode())
     else:  # "auto"
         root_path = Path(project_root)
         policy_file = root_path / ".agents" / "task-loop" / "policy.json"
@@ -61,25 +74,25 @@ def find_sessions(project_root: str = ".", vendor: str = "Auto", inspect: bool =
                 active_vendor = "zcode"
 
         if active_vendor == "antigravity":
-            agy = scan_agy_sessions(project_root, inspect_activity=inspect)
+            agy = scan_agy()
             all_sessions.extend(agy)
             if not agy:
-                all_sessions.extend(scan_codex_sessions(project_root))
-                all_sessions.extend(scan_zcode_sessions(project_root, inspect_activity=inspect))
+                all_sessions.extend(scan_codex())
+                all_sessions.extend(scan_zcode())
         elif active_vendor == "codex":
-            codex = scan_codex_sessions(project_root)
+            codex = scan_codex()
             all_sessions.extend(codex)
             if not codex:
-                all_sessions.extend(scan_agy_sessions(project_root, inspect_activity=inspect))
+                all_sessions.extend(scan_agy())
         elif active_vendor == "claude":
-            all_sessions.extend(scan_claude_sessions(project_root, inspect_activity=inspect))
+            all_sessions.extend(scan_claude())
         elif active_vendor == "zcode":
-            zc = scan_zcode_sessions(project_root, inspect_activity=inspect)
+            zc = scan_zcode()
             all_sessions.extend(zc)
             if not zc:
-                all_sessions.extend(scan_agy_sessions(project_root, inspect_activity=inspect))
+                all_sessions.extend(scan_agy())
         else:
-            all_sessions.extend(scan_agy_sessions(project_root, inspect_activity=inspect))
+            all_sessions.extend(scan_agy())
 
     return all_sessions
 

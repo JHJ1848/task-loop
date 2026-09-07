@@ -146,7 +146,8 @@ def scan_sessions_via_db(project_root_str, options=None, inspect_activity=True):
                 item["recent_prompts"] = prompts[-5:]
                 item["parent_session_id"] = row["parent_id"]
             sessions.append(item)
-    except sqlite3.Error:
+    except sqlite3.Error as e:
+        sys.stderr.write(f"[zcode-provider] schema mismatch in db: {e}\n")
         return []
     finally:
         if con is not None:
@@ -186,7 +187,8 @@ def scan_sessions_via_rollout(project_root_str, options=None, inspect_activity=T
         try:
             with open(log_file, "r", encoding="utf-8", errors="ignore") as fh:
                 content = fh.read()
-        except OSError:
+        except OSError as e:
+            sys.stderr.write(f"[zcode-provider] schema mismatch in {session_id}: unreadable rollout {log_file}: {e}\n")
             continue
 
         lowered = content.lower()

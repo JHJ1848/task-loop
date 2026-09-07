@@ -1,6 +1,6 @@
 {
   "name": "task-loop",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Universal Cross-Agent Task Loop Plugin for Antigravity, Codex, and Claude Code",
   "author": "Antigravity Team",
   "capabilities": {

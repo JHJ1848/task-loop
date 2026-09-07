@@ -56,6 +56,19 @@ function scanAgySessions(projectRootStr = '.', customBrainPath = null, inspectAc
 
       for (const line of lines) {
         if (!line.trim()) continue;
+        let record = null;
+        try {
+          record = JSON.parse(line);
+        } catch (e) {
+          console.error(`[agy-provider] schema mismatch in ${convId}: malformed json line: ${line.substring(0, 80)}`);
+          continue;
+        }
+
+        if (!record || typeof record !== 'object') {
+          console.error(`[agy-provider] schema mismatch in ${convId}: line record is not an object`);
+          continue;
+        }
+
         const lineLower = line.toLowerCase();
         const projectRootEscaped = projectRoot.replace(':', '%3a');
 
@@ -64,14 +77,11 @@ function scanAgySessions(projectRootStr = '.', customBrainPath = null, inspectAc
         }
 
         // Extract user prompts
-        if (line.includes('"type":"USER_INPUT"') || line.includes('"type": "USER_INPUT"')) {
-          const match = line.match(/"content"\s*:\s*"([^"]+)"/);
-          if (match) {
-            let rawContent = match[1];
-            let clean = rawContent.replace(/<[^>]+>/g, '').replace(/\\n/g, ' ').replace(/\\"/g, '"').trim();
-            if (clean && !userPrompts.includes(clean)) {
-              userPrompts.push(clean.substring(0, 150));
-            }
+        if (record.type === 'USER_INPUT' && record.content) {
+          let rawContent = String(record.content);
+          let clean = rawContent.replace(/<[^>]+>/g, '').replace(/\\n/g, ' ').replace(/\\"/g, '"').trim();
+          if (clean && !userPrompts.includes(clean)) {
+            userPrompts.push(clean.substring(0, 150));
           }
         }
 
@@ -90,7 +100,7 @@ function scanAgySessions(projectRootStr = '.', customBrainPath = null, inspectAc
         }
       }
     } catch (e) {
-      // ignore
+      console.error(`[agy-provider] schema mismatch in ${convId}: unreadable file ${logFile}: ${e.message}`);
     }
 
     if (isMatch) {

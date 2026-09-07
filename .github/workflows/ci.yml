@@ -1,0 +1,70 @@
+name: CI (Multi-Vendor & Dual-Runtime Parity)
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test-node:
+    name: Node.js Tests (${{ matrix.os }} - Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        node-version: [ '18', '20', '22' ]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup Python for Dual-Runtime Parity Tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Run All Node.js Test Suites
+        shell: bash
+        run: |
+          for f in tests/*.test.js; do
+            echo "=== Running $f ==="
+            node "$f"
+          done
+
+  test-python:
+    name: Python Tests (${{ matrix.os }} - Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        python-version: [ '3.8', '3.10', '3.12' ]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup Node.js for Dual-Runtime Parity Tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run All Python Test Suites
+        shell: bash
+        run: |
+          for f in tests/test_*.py; do
+            echo "=== Running $f ==="
+            python "$f"
+          done

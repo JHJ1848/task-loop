@@ -126,7 +126,8 @@ def _parse_transcript(log_file: Path, project_root: str, inspect_activity: bool)
                                 touched_files.add(rel_path)
                         elif not clean_fm.startswith(('http://', 'https://')):
                             touched_files.add(clean_fm.split('/')[-1])
-    except Exception:
+    except Exception as e:
+        sys.stderr.write(f"[claude-provider] schema mismatch in {log_file.name}: unreadable transcript: {e}\n")
         return None
 
     # The munged dir already binds the session to this project; a cwd mismatch

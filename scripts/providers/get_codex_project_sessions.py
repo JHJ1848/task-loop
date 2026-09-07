@@ -63,10 +63,17 @@ def read_session_meta(session_file: Path) -> Optional[dict]:
     try:
         with session_file.open("r", encoding="utf-8") as source:
             for line in source:
-                record = json.loads(line)
-                if record.get("type") == SESSION_META_TYPE and isinstance(record.get("payload"), dict):
-                    return record["payload"]
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                try:
+                    record = json.loads(line_str)
+                    if record.get("type") == SESSION_META_TYPE and isinstance(record.get("payload"), dict):
+                        return record["payload"]
+                except json.JSONDecodeError as e:
+                    sys.stderr.write(f"[codex-provider] schema mismatch in {session_file.name}: malformed json: {e}\n")
+    except (OSError, UnicodeDecodeError) as e:
+        sys.stderr.write(f"[codex-provider] schema mismatch in {session_file.name}: unreadable: {e}\n")
         return None
     return None
 
@@ -75,11 +82,13 @@ def build_log_record(metadata: dict, session_file: Path, project_root: str) -> d
     stat = session_file.stat()
     session_id = str(metadata.get("session_id") or metadata.get("parent_thread_id") or "")
     thread_source = metadata.get("thread_source", "unknown")
+    title = metadata.get("title") or f"Session {session_id}"
     return {
         "vendor": "codex",
         "record_type": "subagent_transcript" if thread_source == SUBAGENT_THREAD_SOURCE else "session",
         "session_id": session_id,
         "thread_id": session_id,
+        "title": title,
         "rollout_id": metadata.get("id"),
         "parent_thread_id": metadata.get("parent_thread_id"),
         "thread_source": thread_source,
