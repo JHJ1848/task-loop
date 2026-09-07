@@ -267,10 +267,16 @@ function probeDispatchSession(sessionId, options = {}) {
     return {
       session_id: sessionId,
       found: false,
+      thread_running: false,
       is_working: false,
       working_status: 'DORMANT_NOT_ACTIVATED',
+      can_enter_120s_gate: false,
+      should_loop_30s_probe: true,
       dispatch_found: false,
       model_steps_count: 0,
+      tool_calls_count: 0,
+      thinking_steps_count: 0,
+      in_progress_steps_count: 0,
       reason: `会话目录不存在: ${sessionDir}`,
       deep_link: `conversation://${sessionId}`,
       alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未创建或无日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
@@ -284,10 +290,16 @@ function probeDispatchSession(sessionId, options = {}) {
       return {
         session_id: sessionId,
         found: false,
+        thread_running: false,
         is_working: false,
         working_status: 'DORMANT_NOT_ACTIVATED',
+        can_enter_120s_gate: false,
+        should_loop_30s_probe: true,
         dispatch_found: false,
         model_steps_count: 0,
+        tool_calls_count: 0,
+        thinking_steps_count: 0,
+        in_progress_steps_count: 0,
         reason: '未找到 transcript.jsonl 日志文件',
         deep_link: `conversation://${sessionId}`,
         alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
@@ -329,8 +341,16 @@ function probeDispatchSession(sessionId, options = {}) {
     return {
       session_id: sessionId,
       found: false,
+      thread_running: false,
       is_working: false,
       working_status: 'DORMANT_NOT_ACTIVATED',
+      can_enter_120s_gate: false,
+      should_loop_30s_probe: true,
+      dispatch_found: false,
+      model_steps_count: 0,
+      tool_calls_count: 0,
+      thinking_steps_count: 0,
+      in_progress_steps_count: 0,
       reason: `读取日志异常: ${e.message}`,
       deep_link: `conversation://${sessionId}`
     };
@@ -352,35 +372,71 @@ function probeDispatchSession(sessionId, options = {}) {
   }
 
   let modelStepsAfterDispatch = 0;
+  let toolCallsCount = 0;
+  let thinkingStepsCount = 0;
+  let inProgressStepsCount = 0;
+  let threadRunning = false;
   let latestModelStep = null;
 
   for (let i = lastDispatchIndex + 1; i < steps.length; i++) {
     const st = steps[i];
-    if (st.source === 'MODEL' || st.type === 'PLANNER_RESPONSE' || (st.tool_calls && st.tool_calls.length > 0)) {
+    const isModel = st.source === 'MODEL' || st.type === 'PLANNER_RESPONSE';
+    const hasToolCalls = Boolean(st.tool_calls && st.tool_calls.length > 0);
+    const hasThinking = Boolean(st.thinking);
+    const isInProgress = st.status === 'IN_PROGRESS';
+
+    if (hasToolCalls) {
+      toolCallsCount += (Array.isArray(st.tool_calls) ? st.tool_calls.length : 1);
+    }
+    if (hasThinking) {
+      thinkingStepsCount++;
+    }
+    if (isInProgress) {
+      inProgressStepsCount++;
+      threadRunning = true;
+    }
+
+    if (isModel || hasToolCalls || hasThinking || isInProgress) {
       modelStepsAfterDispatch++;
       latestModelStep = {
         step_index: st.step_index ?? i,
         type: st.type,
+        status: st.status || 'DONE',
         created_at: st.created_at,
-        has_tool_calls: Boolean(st.tool_calls && st.tool_calls.length > 0),
-        has_thinking: Boolean(st.thinking)
+        has_tool_calls: hasToolCalls,
+        has_thinking: hasThinking,
+        is_in_progress: isInProgress
       };
     }
   }
 
-  const isWorking = modelStepsAfterDispatch > 0;
+  // Also check if the absolute last step of the whole session is actively generating/in-progress
+  if (steps.length > 0 && steps[steps.length - 1].status === 'IN_PROGRESS') {
+    threadRunning = true;
+  }
+
+  const isWorking = Boolean(modelStepsAfterDispatch > 0 || threadRunning);
+  const canEnter120sGate = isWorking;
+  const shouldLoop30sProbe = !isWorking;
+
   return {
     session_id: sessionId,
     found: true,
+    thread_running: threadRunning,
     is_working: isWorking,
     working_status: isWorking ? 'WORKING_IN_PROGRESS' : 'DORMANT_NOT_ACTIVATED',
+    can_enter_120s_gate: canEnter120sGate,
+    should_loop_30s_probe: shouldLoop30sProbe,
     dispatch_found: lastDispatchIndex !== -1,
     dispatch_step_index: lastDispatchIndex,
     last_dispatch_step: lastDispatchStep,
     model_steps_count: modelStepsAfterDispatch,
+    tool_calls_count: toolCallsCount,
+    thinking_steps_count: thinkingStepsCount,
+    in_progress_steps_count: inProgressStepsCount,
     latest_model_step: latestModelStep,
     deep_link: `conversation://${sessionId}`,
-    alert_card: isWorking ? null : `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未触发大模型推理！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
+    alert_card: isWorking ? null : `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未进入大模型真实工作态 (未见 MODEL 步 / thread_running: false)！\n【自愈与门禁规则】:\n1. 绝对严禁挂载 120s 定时器进入盲等！\n2. 立即通过 agentapi.bat send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n[-> 点击切换并激活专题会话](conversation://${sessionId})\n3. 必须继续挂载 30s 探针循环监控，直到真实激活。`
   };
 }
 

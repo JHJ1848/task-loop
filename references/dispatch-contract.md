@@ -268,27 +268,27 @@ flowchart TD
 
 ---
 
-## 八、派单双阶梯看门狗监督机制 (Dual-Stage Watchdog Supervision)
+## 八、派单看门狗 30s 探针门禁循环与 120s 准入机制 (Watchdog Probe Gate Loop & Alignment Audit)
 
-为消除专题会话由于后台休眠未触发、陷入死循环或理解偏离目标导致的派单失控，主会话派单后必须挂载并执行【30s + 120s 双阶梯看门狗监督闭环】：
+为消除专题会话由于后台休眠未触发、陷入死循环或理解偏离目标导致的派单失控，主会话派单后必须严格执行【30s 探针门禁循环与 120s 准入机制】（彻底废除固定 30s->120s 无脑递进的旧流水线，严格以真实线程工作态为准）：
 
-### 1. 双阶梯监督时序与动作定义 (Watchdog Lifecycle JSON)
+### 1. 门禁循环与时序动作定义 (Watchdog Lifecycle JSON)
 
 ```json
 [
   {
-    "stage": "Stage 1: 30s 真活跃探针 (True Activation Probe)",
+    "stage": "Stage 1: 30s 探针循环与自愈门禁 (Probe Gate Loop & Self-Healing)",
     "timing": "派单后挂载 schedule(DurationSeconds=30, Prompt=\"检查专题会话真激活状态\", TimerCondition=\"any\")",
     "trigger_condition": "派单发信 30 秒后触发",
-    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> 精准核验：派单消息后是否至少存在 1 个 source='MODEL' 的真实大模型工作步。",
-    "pass_condition": "is_working === true 且 working_status === 'WORKING_IN_PROGRESS'（存在真实 MODEL 步）。通过后方可挂载 120s 巡检定时器。",
-    "abnormal_resolution": "若 is_working === false (DORMANT_NOT_ACTIVATED)，严禁脑补推测进度！严禁挂载 120s 定时器！必须立即输出【🔴 专题未激活告警卡】呈现 [-> 点击切换并激活专题会话](conversation://<session_id>) 提醒用户点击唤醒。"
+    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> 精准核验：派单后是否检测到真实工作态 (thread_running === true 或存在 source='MODEL' 工作步/思考/工具调用)。",
+    "pass_condition": "is_working === true (can_enter_120s_gate: true)。仅当探针确凿通过后，才准入挂载 120s 偏差巡检定时器。",
+    "abnormal_resolution": "若 is_working === false (未激活/无 MODEL 步): 1. 绝对严禁挂载 120s 定时器死等！2. 必须立即出具【🔴 专题未激活告警卡】提示用户唤醒；3. 立即调用 agentapi.bat send-message 补发唤醒包；4. 继续挂载 30s 探针循环监控，直到真实激活。"
   },
   {
-    "stage": "Stage 2: 120s 偏差巡检与干预 (Alignment Audit)",
-    "timing": "30s 真活跃探针通过后挂载 schedule(DurationSeconds=120, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\")",
-    "trigger_condition": "派单发信 120 秒后触发",
-    "inspection_actions": "读取目标专题 transcript.jsonl 最新 steps，走查：1. 是否偏离单一职责目标；2. 是否发生无限死循环/重复调用；3. 推演逻辑是否存在严重技术漏洞；4. 是否尝试越界修改。",
+    "stage": "Stage 2: 120s 偏差巡检准入门禁 (120s Alignment Audit)",
+    "timing": "仅在 30s 探针确凿通过 (is_working === true) 后准入挂载 schedule(DurationSeconds=120, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\")",
+    "trigger_condition": "准入通过且派单工作推进 120 秒后触发",
+    "inspection_actions": "读取目标专题 transcript.jsonl 最新 steps，走查：1. 是否偏离单一职责目标；2. 是否发生死循环/重复调用；3. 推演逻辑是否存在严重技术漏洞；4. 是否尝试越界修改。",
     "abnormal_resolution": "若发现执行偏差，主会话立即调用 send_message(recipient=\"<topic_session_id>\", message=\"【主中枢偏差修正指令】检测到执行路径偏离目标...请按以下修正方案调整...\") 进行强力干预。"
   }
 ]
@@ -299,7 +299,7 @@ flowchart TD
 2. **提前交付短路**: 若专题会话在 30s 或 120s 内提前完成交付并发送 `send_message`，主中枢收到回执后自动唤醒并可直接回收/忽略该监督定时器；
 3. **巡检无干预放行**: 若 120s 巡检确认专题思路清晰且正在执行正常长耗时单测/构建，主会话不发送扰动指令，允许其平稳运行直至交付；
 4. **定时器冲突管理与主动销毁 (Conflict Avoidance)**: 严禁在未清理旧定时器的情况下挂载带有相同 `TimerCondition` 的新定时器（防范 `conflicting early termination condition` 报错）。在更新或追加新阶段看门狗定时器前，若前置定时器仍在运行，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器任务；
-5. **防假阳性铁律 (Anti-False-Positive Iron Rule)**: 30s 探针必须以 `--probe-dispatch` 返回的 `is_working === true` 为唯一通过标准。若为 false 则说明后台休眠未启动，严禁假装通过或进入 120s 盲等，必须立即告警。
+5. **防假阳性铁律 (Anti-False-Positive Iron Rule)**: 30s 探针必须以 `--probe-dispatch` 返回的 `is_working === true` 为唯一通过标准。若为 false 则说明后台休眠未启动，严禁假装通过或进入 120s 盲等，必须立即告警并自愈重试。
 
 ---
 
@@ -314,7 +314,7 @@ flowchart TD
 - **修改物理边界 (Allowlist)**：[`path/to/file1`, `path/to/file2`]
 - **路由目标会话**：[Target Session ID / Module Key]
 - **跨专题冲突校验**：[无冲突 / 已隔离锁定目标文件]
-- **看门狗监督机制**：[已挂载 30s 激活探针 + 120s 偏差巡检定时器]
+- **看门狗监督机制**：[已挂载 30s 探针门禁循环 (待真激活准入 120s 巡检)]
 - **批判性门禁独立质检证据**：[单测 Exit Code 0 / Diff 白名单审查结果 / Reviewer 审查结果]
 - **验证与质检策略**：[自动化测试命令 + 人机混合验证步骤]
 ```

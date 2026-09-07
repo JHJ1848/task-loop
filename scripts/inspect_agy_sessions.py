@@ -298,10 +298,16 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
         return {
             "session_id": session_id,
             "found": False,
+            "thread_running": False,
             "is_working": False,
             "working_status": "DORMANT_NOT_ACTIVATED",
+            "can_enter_120s_gate": False,
+            "should_loop_30s_probe": True,
             "dispatch_found": False,
             "model_steps_count": 0,
+            "tool_calls_count": 0,
+            "thinking_steps_count": 0,
+            "in_progress_steps_count": 0,
             "reason": f"会话目录不存在: {session_dir}",
             "deep_link": f"conversation://{session_id}",
             "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未创建或无日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
@@ -314,10 +320,16 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
             return {
                 "session_id": session_id,
                 "found": False,
+                "thread_running": False,
                 "is_working": False,
                 "working_status": "DORMANT_NOT_ACTIVATED",
+                "can_enter_120s_gate": False,
+                "should_loop_30s_probe": True,
                 "dispatch_found": False,
                 "model_steps_count": 0,
+                "tool_calls_count": 0,
+                "thinking_steps_count": 0,
+                "in_progress_steps_count": 0,
                 "reason": "未找到 transcript.jsonl 日志文件",
                 "deep_link": f"conversation://{session_id}",
                 "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
@@ -360,8 +372,16 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
         return {
             "session_id": session_id,
             "found": False,
+            "thread_running": False,
             "is_working": False,
             "working_status": "DORMANT_NOT_ACTIVATED",
+            "can_enter_120s_gate": False,
+            "should_loop_30s_probe": True,
+            "dispatch_found": False,
+            "model_steps_count": 0,
+            "tool_calls_count": 0,
+            "thinking_steps_count": 0,
+            "in_progress_steps_count": 0,
             "reason": f"读取日志异常: {e}",
             "deep_link": f"conversation://{session_id}"
         }
@@ -379,33 +399,66 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
                 break
 
     model_steps_after_dispatch = 0
+    tool_calls_count = 0
+    thinking_steps_count = 0
+    in_progress_steps_count = 0
+    thread_running = False
     latest_model_step = None
 
     for i in range(last_dispatch_index + 1, len(steps)):
         st = steps[i]
-        if st.get("source") == "MODEL" or st.get("type") == "PLANNER_RESPONSE" or (st.get("tool_calls") and len(st.get("tool_calls")) > 0):
+        is_model = st.get("source") == "MODEL" or st.get("type") == "PLANNER_RESPONSE"
+        has_tool_calls = bool(st.get("tool_calls") and len(st.get("tool_calls")) > 0)
+        has_thinking = bool(st.get("thinking"))
+        is_in_progress = st.get("status") == "IN_PROGRESS"
+
+        if has_tool_calls:
+            tc = st.get("tool_calls")
+            tool_calls_count += len(tc) if isinstance(tc, list) else 1
+        if has_thinking:
+            thinking_steps_count += 1
+        if is_in_progress:
+            in_progress_steps_count += 1
+            thread_running = True
+
+        if is_model or has_tool_calls or has_thinking or is_in_progress:
             model_steps_after_dispatch += 1
             latest_model_step = {
                 "step_index": st.get("step_index", i),
                 "type": st.get("type"),
+                "status": st.get("status") or "DONE",
                 "created_at": st.get("created_at"),
-                "has_tool_calls": bool(st.get("tool_calls") and len(st.get("tool_calls")) > 0),
-                "has_thinking": bool(st.get("thinking"))
+                "has_tool_calls": has_tool_calls,
+                "has_thinking": has_thinking,
+                "is_in_progress": is_in_progress
             }
 
-    is_working = model_steps_after_dispatch > 0
+    # Also check if absolute last step of the whole session is actively in progress
+    if len(steps) > 0 and steps[-1].get("status") == "IN_PROGRESS":
+        thread_running = True
+
+    is_working = bool(model_steps_after_dispatch > 0 or thread_running)
+    can_enter_120s_gate = is_working
+    should_loop_30s_probe = not is_working
+
     return {
         "session_id": session_id,
         "found": True,
+        "thread_running": thread_running,
         "is_working": is_working,
         "working_status": "WORKING_IN_PROGRESS" if is_working else "DORMANT_NOT_ACTIVATED",
+        "can_enter_120s_gate": can_enter_120s_gate,
+        "should_loop_30s_probe": should_loop_30s_probe,
         "dispatch_found": (last_dispatch_index != -1),
         "dispatch_step_index": last_dispatch_index,
         "last_dispatch_step": last_dispatch_step,
         "model_steps_count": model_steps_after_dispatch,
+        "tool_calls_count": tool_calls_count,
+        "thinking_steps_count": thinking_steps_count,
+        "in_progress_steps_count": in_progress_steps_count,
         "latest_model_step": latest_model_step,
         "deep_link": f"conversation://{session_id}",
-        "alert_card": None if is_working else f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未触发大模型推理！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
+        "alert_card": None if is_working else f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未进入大模型真实工作态 (未见 MODEL 步 / thread_running: false)！\n【自愈与门禁规则】:\n1. 绝对严禁挂载 120s 定时器进入盲等！\n2. 立即通过 agentapi.bat send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n[-> 点击切换并激活专题会话](conversation://{session_id})\n3. 必须继续挂载 30s 探针循环监控，直到真实激活。"
     }
 
 

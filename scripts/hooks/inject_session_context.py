@@ -300,7 +300,7 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
             lines.append("  8. 任务派单流转: 寻找专题 -> 没有则按规范创建顶层专题会话 -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;")
             lines.append("  9. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 专题会话内 Subagent 并行协作;")
             lines.append("  10. 批判性门禁核验与杜绝盲目透传 (Critical Verification Gate & Anti-Rubber-Stamp): 严禁充当传声筒盲目轻信专题汇报！主会话必须执行四步独立质检：① 独立执行自动化单测/构建命令获取真实 Exit Code 0 证据；② 真实 Diff 审查，走查改动是否 100% 严格在 Allowlist 内且无冗余代码与格式污染；③ 必要时派遣 reviewer 子代理交叉走查；④ 验收通过方可更新状态，未通过强制下发 DELIVERABLE_REJECTED 驳回重修 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md);")
-            lines.append("  11. 双阶梯看门狗监督机制 (Dual-Stage Watchdog Supervision): 主会话派单后挂载 30s + 120s 监督定时器 (30s 激活探针 + 120s 偏差巡检)。注意定时器冲突管理：设置新定时器前若旧定时器仍在运行，必须先调用 manage_task(Action='kill') 显式销毁旧任务，防范 conflicting early termination condition 报错 (参考 references/dispatch-contract.md)。")
+            lines.append("  11. 看门狗 30s 探针门禁循环与 120s 准入机制 (Watchdog 30s Probe Gate Loop & 120s Audit Admission): 派单后挂载 30s 探针 (schedule DurationSeconds=30)。30s 触发时必须执行 node scripts/inspect_agy_sessions.js --probe-dispatch <session_id> 检查真活跃 (thread_running/is_working)。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 定时器！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 探针循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 偏差巡检定时器 (参考 references/dispatch-contract.md)。")
     elif details.get("module_key") == "session_control":
         sess_rules = plugin_rules.get("session_control")
         if sess_rules and isinstance(sess_rules, list):

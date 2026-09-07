@@ -96,7 +96,26 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 四、质检门禁与交付标准 (Verification Gate)
+## 四、派单看门狗 30s 探针门禁循环与 120s 准入机制 (Watchdog Supervision)
+
+为消除专题会话休眠未响应或偏离目标的失控，主会话派单后执行【30s 探针门禁循环 + 120s 偏差巡检准入】：
+
+```json
+[
+  {
+    "stage": "Stage 1: 30s 探针循环与自愈门禁",
+    "rule": "派单后挂载 schedule(DurationSeconds=30)。触发时运行 node scripts/inspect_agy_sessions.js --probe-dispatch <id>。若 is_working === false，绝对严禁挂载 120s 定时器！立即输出【🔴 专题未激活告警卡】、通过 agentapi 补发唤醒，并继续挂载 30s 探针循环监控直至真实激活。"
+  },
+  {
+    "stage": "Stage 2: 120s 偏差巡检准入门禁",
+    "rule": "仅当探针确凿返回 is_working === true 后，才准入挂载 schedule(DurationSeconds=120) 进行路径走查与偏差干预。"
+  }
+]
+```
+
+---
+
+## 五、质检门禁与交付标准 (Verification Gate)
 
 专题会话交付必须满足 5 步标准流：
 `1. 承接锁定 -> 2. 边界实施 -> 3. 本地自测 -> 4. 记忆沉淀 -> 5. 标准交付`。
@@ -104,7 +123,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 五、关联文档与受控记忆 (References)
+## 六、关联文档与受控记忆 (References)
 * **深度派发契约**: [`references/dispatch-contract.md`](../../references/dispatch-contract.md)
 * **治理总规范**: [`AGENTS.md`](../../AGENTS.md)
 * **受控记忆主索引**: [`docs/MEMORY.md`](../../docs/MEMORY.md)

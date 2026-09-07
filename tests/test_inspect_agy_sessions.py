@@ -152,26 +152,54 @@ class TestInspectAgySessions(unittest.TestCase):
 
         dormant_probe = probe_dispatch_session(dormant_sess_id, brain_path=temp_brain)
         self.assertTrue(dormant_probe["found"])
+        self.assertFalse(dormant_probe["thread_running"])
         self.assertFalse(dormant_probe["is_working"], "Session with no MODEL step after dispatch should NOT be working")
+        self.assertFalse(dormant_probe["can_enter_120s_gate"], "Dormant session must NOT enter 120s gate")
+        self.assertTrue(dormant_probe["should_loop_30s_probe"], "Dormant session must continue 30s probe loop")
         self.assertEqual(dormant_probe["working_status"], "DORMANT_NOT_ACTIVATED")
         self.assertEqual(dormant_probe["model_steps_count"], 0)
         self.assertIsNotNone(dormant_probe["alert_card"])
         self.assertIn("🔴 专题未激活告警卡", dormant_probe["alert_card"])
 
-        # Append MODEL step to simulate activation
+        # Test IN_PROGRESS streaming generation state
+        in_prog_sess_id = "55555555-5555-5555-5555-555555555555"
+        in_prog_dir = os.path.join(temp_brain, in_prog_sess_id, ".system_generated", "logs")
+        os.makedirs(in_prog_dir, exist_ok=True)
+        in_prog_file = os.path.join(in_prog_dir, "transcript.jsonl")
+        with open(in_prog_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"type": "USER_INPUT", "source": "SYSTEM", "content": "[主会话派单任务: WORK] 开始执行", "created_at": now.isoformat().replace("+00:00", "Z")}) + "\n")
+            f.write(json.dumps({"type": "PLANNER_RESPONSE", "source": "MODEL", "status": "IN_PROGRESS", "thinking": "Thinking in flight...", "created_at": now.isoformat().replace("+00:00", "Z")}) + "\n")
+
+        in_prog_probe = probe_dispatch_session(in_prog_sess_id, brain_path=temp_brain)
+        self.assertTrue(in_prog_probe["found"])
+        self.assertTrue(in_prog_probe["thread_running"], "IN_PROGRESS step must set thread_running to True")
+        self.assertTrue(in_prog_probe["is_working"], "IN_PROGRESS step must set is_working to True")
+        self.assertTrue(in_prog_probe["can_enter_120s_gate"], "IN_PROGRESS step must allow 120s gate admission")
+        self.assertFalse(in_prog_probe["should_loop_30s_probe"])
+        self.assertEqual(in_prog_probe["in_progress_steps_count"], 1)
+        self.assertEqual(in_prog_probe["thinking_steps_count"], 1)
+        self.assertIsNone(in_prog_probe["alert_card"])
+
+        # Append completed MODEL step to simulate full turn
         with open(dormant_log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps({
                 "type": "PLANNER_RESPONSE",
                 "source": "MODEL",
+                "status": "DONE",
                 "thinking": "Analyzing task...",
+                "tool_calls": [{"name": "view_file", "args": {}}],
                 "created_at": now.isoformat().replace("+00:00", "Z")
             }) + "\n")
 
         active_probe = probe_dispatch_session(dormant_sess_id, brain_path=temp_brain)
         self.assertTrue(active_probe["found"])
         self.assertTrue(active_probe["is_working"], "Session with MODEL step after dispatch SHOULD be working")
+        self.assertTrue(active_probe["can_enter_120s_gate"], "Active session allows 120s gate admission")
+        self.assertFalse(active_probe["should_loop_30s_probe"])
         self.assertEqual(active_probe["working_status"], "WORKING_IN_PROGRESS")
         self.assertEqual(active_probe["model_steps_count"], 1)
+        self.assertEqual(active_probe["tool_calls_count"], 1)
+        self.assertEqual(active_probe["thinking_steps_count"], 1)
         self.assertIsNone(active_probe["alert_card"])
 
         shutil.rmtree(temp_dir, ignore_errors=True)

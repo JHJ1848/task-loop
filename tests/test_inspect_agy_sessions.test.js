@@ -136,24 +136,53 @@ function runTest() {
   const { probeDispatchSession } = require('../scripts/inspect_agy_sessions');
   const dormantProbe = probeDispatchSession(dormantSessId, { brainPath: tempBrain });
   assert.strictEqual(dormantProbe.found, true);
+  assert.strictEqual(dormantProbe.thread_running, false);
   assert.strictEqual(dormantProbe.is_working, false, 'Session with no MODEL step after dispatch should NOT be working');
+  assert.strictEqual(dormantProbe.can_enter_120s_gate, false, 'Dormant session must NOT enter 120s gate');
+  assert.strictEqual(dormantProbe.should_loop_30s_probe, true, 'Dormant session must continue 30s probe loop');
   assert.strictEqual(dormantProbe.working_status, 'DORMANT_NOT_ACTIVATED');
   assert.strictEqual(dormantProbe.model_steps_count, 0);
   assert.ok(dormantProbe.alert_card && dormantProbe.alert_card.includes('🔴 专题未激活告警卡'));
 
-  // Now append a MODEL step to simulate activation
+  // Test 4: IN_PROGRESS streaming generation state detection
+  const inProgSessId = '55555555-5555-5555-5555-555555555555';
+  const inProgDir = path.join(tempBrain, inProgSessId, '.system_generated', 'logs');
+  fs.mkdirSync(inProgDir, { recursive: true });
+  const inProgFile = path.join(inProgDir, 'transcript.jsonl');
+  fs.writeFileSync(inProgFile, [
+    JSON.stringify({ type: 'USER_INPUT', source: 'SYSTEM', content: '[主会话派单任务: WORK] 开始执行', created_at: new Date().toISOString() }),
+    JSON.stringify({ type: 'PLANNER_RESPONSE', source: 'MODEL', status: 'IN_PROGRESS', thinking: 'Currently thinking in flight...', created_at: new Date().toISOString() })
+  ].join('\n'), 'utf8');
+
+  const inProgProbe = probeDispatchSession(inProgSessId, { brainPath: tempBrain });
+  assert.strictEqual(inProgProbe.found, true);
+  assert.strictEqual(inProgProbe.thread_running, true, 'IN_PROGRESS step must set thread_running to true');
+  assert.strictEqual(inProgProbe.is_working, true, 'IN_PROGRESS step must set is_working to true');
+  assert.strictEqual(inProgProbe.can_enter_120s_gate, true, 'IN_PROGRESS step must allow 120s gate admission');
+  assert.strictEqual(inProgProbe.should_loop_30s_probe, false);
+  assert.strictEqual(inProgProbe.in_progress_steps_count, 1);
+  assert.strictEqual(inProgProbe.thinking_steps_count, 1);
+  assert.strictEqual(inProgProbe.alert_card, null);
+
+  // Now append a completed MODEL step to simulate full turn
   fs.appendFileSync(dormantLogFile, '\n' + JSON.stringify({
     type: 'PLANNER_RESPONSE',
     source: 'MODEL',
+    status: 'DONE',
     thinking: 'Analyzing task...',
+    tool_calls: [{ name: 'view_file', args: {} }],
     created_at: new Date().toISOString()
   }), 'utf8');
 
   const activeProbe = probeDispatchSession(dormantSessId, { brainPath: tempBrain });
   assert.strictEqual(activeProbe.found, true);
   assert.strictEqual(activeProbe.is_working, true, 'Session with MODEL step after dispatch SHOULD be working');
+  assert.strictEqual(activeProbe.can_enter_120s_gate, true, 'Active session allows 120s gate admission');
+  assert.strictEqual(activeProbe.should_loop_30s_probe, false);
   assert.strictEqual(activeProbe.working_status, 'WORKING_IN_PROGRESS');
   assert.strictEqual(activeProbe.model_steps_count, 1);
+  assert.strictEqual(activeProbe.tool_calls_count, 1);
+  assert.strictEqual(activeProbe.thinking_steps_count, 1);
   assert.strictEqual(activeProbe.alert_card, null);
 
   // Cleanup
