@@ -162,12 +162,21 @@ function matchInVendorData(conversationId, data) {
 }
 
 function detectVendorFromSessionId(sessionId, fallbackVendor) {
-  if (!sessionId || typeof sessionId !== 'string') return fallbackVendor || 'antigravity';
+  if (!sessionId || typeof sessionId !== 'string') return fallbackVendor || null;
   if (sessionId.startsWith('sess_')) return 'zcode';
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
-    return 'antigravity';
-  }
-  return fallbackVendor || 'antigravity';
+  // UUID is shared by multiple hosts; only an explicit host signal may classify it.
+  return fallbackVendor || null;
+}
+
+function resolveTargetVendor(payload, conversationId) {
+  if (payload && payload.vendor) return String(payload.vendor).toLowerCase();
+  if (process.env.CODEX_THREAD_ID && (!conversationId || process.env.CODEX_THREAD_ID === conversationId)) return 'codex';
+  if (process.env.CODEX_SESSION_ID && (!conversationId || process.env.CODEX_SESSION_ID === conversationId)) return 'codex';
+  if (process.env.ZCODE_SESSION_ID && (!conversationId || process.env.ZCODE_SESSION_ID === conversationId)) return 'zcode';
+  if (process.env.ANTIGRAVITY_CONVERSATION_ID && (!conversationId || process.env.ANTIGRAVITY_CONVERSATION_ID === conversationId)) return 'antigravity';
+  const inferred = detectVendorFromSessionId(conversationId);
+  if (inferred) return inferred;
+  return typeof conversationId === 'string' && !/^[0-9a-f-]{36}$/i.test(conversationId) ? 'antigravity' : null;
 }
 
 function checkAndAcquireDedupeLock(conversationId) {
@@ -230,7 +239,21 @@ function getSessionDetails(conversationId, sessionData, targetVendor) {
     };
   }
 
-  const effectiveVendor = targetVendor || detectVendorFromSessionId(conversationId, 'antigravity');
+  const effectiveVendor = targetVendor ? String(targetVendor).toLowerCase() : detectVendorFromSessionId(conversationId);
+
+  if (effectiveVendor === 'codex') {
+    return {
+      session_id: conversationId,
+      is_main: false,
+      is_unregistered: true,
+      title: 'Codex vendor unsupported',
+      module_key: 'unknown',
+      created_at: null,
+      last_active_at: null,
+      summary: null,
+      memory_docs: []
+    };
+  }
 
   // 1. 如果包含 vendors 分区 (Schema v4 / v3)
   if (sessionData.vendors && typeof sessionData.vendors === 'object') {
@@ -240,14 +263,7 @@ function getSessionDetails(conversationId, sessionData, targetVendor) {
         return vDetails;
       }
     }
-    // 跨其他 vendor 分区匹配
-    for (const [vKey, vData] of Object.entries(sessionData.vendors)) {
-      if (vKey === effectiveVendor) continue;
-      const vDetails = matchInVendorData(conversationId, vData);
-      if (!vDetails.is_unregistered) {
-        return vDetails;
-      }
-    }
+    return matchInVendorData(conversationId, sessionData.vendors[effectiveVendor]);
   }
 
   // 2. 顶层单厂商匹配 (Schema v2 或当前 vendor 顶层数据)
@@ -259,7 +275,7 @@ function getSessionDetails(conversationId, sessionData, targetVendor) {
  */
 function extractMainThreadId(sessionData, targetVendor) {
   if (!sessionData) return null;
-  const effectiveVendor = targetVendor || 'antigravity';
+  const effectiveVendor = targetVendor || null;
   if (sessionData.vendors && sessionData.vendors[effectiveVendor] && sessionData.vendors[effectiveVendor].main_thread_id) {
     return sessionData.vendors[effectiveVendor].main_thread_id;
   }
@@ -294,12 +310,12 @@ function getPluginTopicRules(details, templates, mainThreadId) {
       lines.push(`  3. 主会话子代理派遣权限严格受限 (Reviewer & Explorer Only): 主会话严禁派遣 Worker (落地/写代码子代理)，主会话仅限派遣 reviewer (代码审查走查) 与 explorer / research (架构只读探索);`);
       lines.push(`  4. 实体会话与 KV Cache 价值: 主会话与专题会话为长期存在的物理会话实体 (Permanent Physical Session Entities)，常驻 IDE 左侧边栏列表中，存储历史积累并极大提升大模型 Prompt Token Cache (KV Cache) 命中率，大幅降低延迟与成本;`);
       lines.push(`  5. 需求定界与白名单: 提炼单一职责目标、验收准则与严格的物理白名单 (Allowlist)，明确任务类型 ([EXPLORE] 或 [WORK]);`);
-      lines.push(`  6. 防冲突与复用: 派发前强制比对现有专题清单 (modules/tags/docs/memory)，复用优先，严禁重复创建重叠专题;`);
+      lines.push(`  6. 专题职责正交对齐与严禁跨界污染 (Strict Topic Ownership & Anti-Pollution): 严禁逮着同一个活跃会话持续薅！派单前必须严格根据修改文件的物理路径与领域职责 (如 scripts/hooks 归 hook, providers/session 归 session_control, subagent 归 subagent, install/plugin 归 plugin_spec) 精确路由到法定专题。严禁把无关改动塞入其他专题导致上下文与 KV Cache 污染；若为全新业务需求，必须通过 /new-session 建立独立业务专题;`);
       lines.push(`  7. 缺失专题与不明确流转铁律: 若无可用专题会话或不清楚如何新建/请求会话，必须先查阅文档指导 (references/sdk/README.md, skills/new-session/SKILL.md, skills/session-control/SKILL.md)，若仍需确认必须主动向用户请求指引并询问，绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理;`);
-      lines.push(`  8. 任务派单流转: 寻找专题 -> 没有则按规范创建顶层专题会话 -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;`);
+      lines.push(`  8. 任务派单流转与权责核验 (Dispatch Workflow & Seam Gate): 寻找专题 -> 没有则按规范创建顶层专题会话 -> 派单前必须在思维链中核验拟下发 Allowlist 物理文件是否 100% 属于目标专题权责 (严禁搭便车派单) -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;`);
       lines.push(`  9. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 专题会话内 Subagent 并行协作;`);
-      lines.push(`  10. 批判性门禁核验与杜绝盲目透传 (Critical Verification Gate & Anti-Rubber-Stamp): 严禁充当传声筒盲目轻信专题汇报！主会话必须执行四步独立质检：① 独立执行自动化单测/构建命令获取真实 Exit Code 0 证据；② 真实 Diff 审查，走查改动是否 100% 严格在 Allowlist 内且无冗余代码与格式污染；③ 必要时派遣 reviewer 子代理交叉走查；④ 验收通过方可更新状态，未通过强制下发 DELIVERABLE_REJECTED 驳回重修 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md);`);
-      lines.push(`  11. 看门狗 30s 探针门禁循环与 120s 准入机制 (Watchdog 30s Probe Gate Loop & 120s Audit Admission): 派单后挂载 30s 探针 (schedule DurationSeconds=30)。30s 触发时必须执行 node scripts/inspect_agy_sessions.js --probe-dispatch <session_id> 检查真活跃 (thread_running/is_working)。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 定时器！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 探针循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 偏差巡检定时器 (参考 references/dispatch-contract.md)。`);
+      lines.push(`  10. 批判性门禁核验与质检分流 (Critical Verification Gate & Verification Triage): 严禁充当传声筒盲目轻信专题汇报！主会话必须执行质检核验：① 针对底层协议、核心算法、状态机及偏后端稳定计算，独立执行自动化单测/构建命令获取 Exit Code 0 证据；针对强前端交互、UI 渲染及轻量展示接口，免除新建冗余单测，执行编译/构建与语法检查，并向用户出具明确的【页面刷新验证指引卡】；② 真实 Diff 审查，走查改动是否严格在 Allowlist 内且无冗余代码与格式污染；③ 必要时派遣 reviewer 子代理交叉走查；④ 验收通过方可更新状态，未通过强制下发 DELIVERABLE_REJECTED 驳回重修 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md);`);
+      lines.push(`  11. 双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks): 派单后挂载 30s 进度监测器 (schedule DurationSeconds=30)。30s 触发时必须执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <session_id> 检查真活跃 (thread_running/is_working)。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 巡检任务！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 进度监测器循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 巡检任务 (参考 references/dispatch-contract.md)。`);
     }
   } else if (details.module_key === 'session_control') {
     if (Array.isArray(pluginRules.session_control) && pluginRules.session_control.length > 0) {
@@ -336,7 +352,7 @@ function getPluginTopicRules(details, templates, mainThreadId) {
       lines.push(`  1. 物理实体与领域深耕: 作为长期常驻 IDE 侧边栏的物理会话实体，持续沉淀领域上下文并最大化大模型 KV Cache 命中率;`);
       lines.push(`  2. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;`);
       lines.push(`  3. 专题内子代理协同: 专题会话承接任务后，可按需在专题内拉起子代理 (subagents) 进行多任务拆解协同或直接落地实施;`);
-      lines.push(`  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。`);
+      lines.push(`  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (稳定计算单测 Exit Code 0 vs 交互界面构建自测+刷新指引) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。`);
     }
   }
 
@@ -345,7 +361,7 @@ function getPluginTopicRules(details, templates, mainThreadId) {
     const targetMainId = mainThreadId || '<main_thread_id>';
     if (targetMainId !== details.session_id) {
       lines.push(`- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:`);
-      lines.push(`  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后，严禁仅在当前窗口输出文本结束！`);
+      lines.push(`  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后 (根据任务性质分流：稳定计算单测自证 vs 交互界面构建自测+提供刷新验证指引)，严禁仅在当前窗口输出文本结束！`);
       lines.push(`  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient="${targetMainId}", message="[专题交付: WORK]...") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！`);
     }
   }
@@ -424,11 +440,24 @@ function processPayload(payload) {
   try {
     let conversationId = payload.conversationId || payload.conversation_id || payload.sessionId || payload.session_id;
 
+    const targetVendor = resolveTargetVendor(payload, conversationId);
+
+    if (targetVendor === 'codex') {
+      return {
+        supported: false,
+        vendor: 'codex',
+        hook: 'PreInvocation',
+        status: 'unsupported',
+        reasonCode: 'CODEX_AUTOMATIC_HOOK_UNSUPPORTED',
+        reason: 'Codex automatic PreInvocation hook is unsupported; no context injection was performed.'
+      };
+    }
+
     if (!conversationId && process.env.ANTIGRAVITY_CONVERSATION_ID) {
       conversationId = process.env.ANTIGRAVITY_CONVERSATION_ID;
     }
 
-    if (!conversationId) {
+    if (!conversationId || !targetVendor) {
       return { injectSteps: [] };
     }
 
@@ -440,7 +469,6 @@ function processPayload(payload) {
     }
 
     const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
-    const targetVendor = payload.vendor || (process.env.ZCODE_SESSION_ID ? 'zcode' : (process.env.CODEX_THREAD_ID ? 'codex' : detectVendorFromSessionId(conversationId, 'antigravity')));
     const sessionData = findSessionsRegistry(wsRoot, targetVendor);
     const templates = findPromptTemplates(wsRoot);
     const activeTodo = findActiveTodo(wsRoot, conversationId);
@@ -503,6 +531,7 @@ module.exports = {
   findActiveTodo,
   matchInVendorData,
   detectVendorFromSessionId,
+  resolveTargetVendor,
   checkAndAcquireDedupeLock,
   extractMainThreadId,
   getSessionDetails,
@@ -510,4 +539,3 @@ module.exports = {
   generateInjectionMessage,
   processPayload
 };
-

@@ -59,15 +59,15 @@
   },
   {
     "vendor": "OpenAI Codex",
-    "doc_path": "references/sdk/codex.md",
-    "status": "预留适配 (Standard Adapter)",
+      "doc_path": "references/sdk/codex.md",
+      "guide": "Codex 会话说明书（随插件安装）",
+    "status": "稳定降级适配 (Stable Degradation Adapter)",
     "capabilities": [
       "运行时适配 (CODEX_THREAD_ID / CODEX_SESSION_ID)",
-      "Desktop 宿主工具 (create_thread, send_message_to_thread, wait_threads)",
-      "CLI 续接 (codex exec resume)",
+      "Desktop 工具仅在当前运行时明确暴露时可用",
+      "CLI 派单 (codex queue --thread <id> --message <text>)；显式选择时才使用 codex exec resume",
       "官方 TypeScript / Python SDK",
-      "MCP 协议调用 (codex / codex-reply)",
-      "进程级 JSON-RPC (codex app-server)"
+      "MCP / app-server 仅实验性入口，不纳入稳定自动派单"
     ]
   },
   {
@@ -114,4 +114,3 @@
   }
 ]
 ```
-

@@ -80,6 +80,8 @@ function runParityTests() {
   // 2. Parity Check: enforce_allowlist Hook Decision
   console.log('  Testing enforce_allowlist Hook parity...');
   const allowPayload = JSON.stringify({
+    vendor: 'antigravity',
+    conversationId: '83bae782-1e95-4923-a76f-2141fe8c5c61',
     toolCall: {
       name: 'replace_file_content',
       args: { TargetFile: 'SKILL.md' }
@@ -87,8 +89,9 @@ function runParityTests() {
     workspacePaths: [rootDir]
   });
 
-  const nodeAllow = runNode('scripts/hooks/enforce_allowlist.js', [], allowPayload);
-  const pyAllow = runPython('scripts/hooks/enforce_allowlist.py', [], allowPayload);
+  const allowEnv = { TASK_LOOP_ALLOWLIST: JSON.stringify(['SKILL.md']) };
+  const nodeAllow = runNode('scripts/hooks/enforce_allowlist.js', [], allowPayload, allowEnv);
+  const pyAllow = runPython('scripts/hooks/enforce_allowlist.py', [], allowPayload, allowEnv);
   assert.strictEqual(nodeAllow.code, 0);
   assert.strictEqual(pyAllow.code, 0);
 
@@ -101,6 +104,7 @@ function runParityTests() {
   // 3. Parity Check: inject_session_context Hook Output Shape
   console.log('  Testing inject_session_context Hook parity...');
   const injectPayload = JSON.stringify({
+    vendor: 'antigravity',
     conversationId: '83bae782-1e95-4923-a76f-2141fe8c5c61',
     workspacePaths: [rootDir],
     isTest: true

@@ -2,6 +2,35 @@
 
 本文档定义 `task-loop` 外层调度器如何识别、路由、续接和观察 Codex 任务。
 
+## 0. 稳定适配边界
+
+```json
+[
+  {
+    "supported": "已知 thread 的 CLI 队列派单",
+    "command": "codex queue --thread <id> --message <text>",
+    "success_condition": "仅 CLI exit code 0 返回 SUBMITTED"
+  },
+  {
+    "degraded": "显式 --resume 的批处理续接",
+    "command": "codex exec resume <id> <prompt>",
+    "success_condition": "仅显式选择且 CLI exit code 0 返回 SUBMITTED"
+  },
+  {
+    "unsupported": "自动 PreInvocation / PreToolUse Hook、直接写 .codex/sessions、按 UUID 猜测 AGY"
+  },
+  {
+    "experimental_only": "app-server / MCP；不得作为稳定自动派单或成功状态依据"
+  }
+]
+```
+
+`scripts/providers/codex_session_dispatch.js/.py` 在未执行、CLI 缺失或非零退出时只返回 `PREPARED_ONLY`，不会伪造成功或写入 `.codex/sessions`。
+
+### 0.1 Provider 解耦入口
+
+`scripts/providers/codex_session_provider.js/.py` 提供运行时纯适配入口 `submit/submit_async`。调用方可显式注入 `desktop`、`sdk`、`api` 函数；选择顺序固定为 Desktop -> SDK -> API -> CLI。适配器只有返回 `{submitted:true}` 才会映射为 `SUBMITTED`，否则返回 `PREPARED_ONLY`。Provider 不读取或写入 `.agents/task-loop`、`.codex/sessions`，也不猜测会话 ID。
+
 ---
 
 ## 1. 术语和边界 (JSON 规范)

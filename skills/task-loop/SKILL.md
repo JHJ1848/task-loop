@@ -96,19 +96,19 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 四、派单看门狗 30s 探针门禁循环与 120s 准入机制 (Watchdog Supervision)
+## 四、双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
 
-为消除专题会话休眠未响应或偏离目标的失控，主会话派单后执行【30s 探针门禁循环 + 120s 偏差巡检准入】：
+为消除专题会话休眠未响应或偏离目标的失控，主会话派单后执行【30s 响应监测器门禁循环 + 120s 巡检任务准入】：
 
 ```json
 [
   {
-    "stage": "Stage 1: 30s 探针循环与自愈门禁",
-    "rule": "派单后挂载 schedule(DurationSeconds=30)。触发时运行 node scripts/inspect_agy_sessions.js --probe-dispatch <id>。若 is_working === false，绝对严禁挂载 120s 定时器！立即输出【🔴 专题未激活告警卡】、通过 agentapi 补发唤醒，并继续挂载 30s 探针循环监控直至真实激活。"
+    "stage": "Stage 1: 30s 响应监测器循环与自愈门禁",
+    "rule": "派单后挂载 schedule(DurationSeconds=30)。触发时运行 node scripts/inspect_agy_sessions.js --monitor-dispatch <id>。若 is_working === false，绝对严禁挂载 120s 巡检任务！立即输出【🔴 专题未激活告警卡】、通过 agentapi 补发唤醒，并继续挂载 30s 进度监测器循环监控直至真实激活。"
   },
   {
-    "stage": "Stage 2: 120s 偏差巡检准入门禁",
-    "rule": "仅当探针确凿返回 is_working === true 后，才准入挂载 schedule(DurationSeconds=120) 进行路径走查与偏差干预。"
+    "stage": "Stage 2: 120s 巡检任务准入门禁",
+    "rule": "仅当响应监测器确凿返回 is_working === true 后，才准入挂载 schedule(DurationSeconds=120) 进行路径走查与偏差干预。"
   }
 ]
 ```
@@ -119,7 +119,13 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 专题会话交付必须满足 5 步标准流：
 `1. 承接锁定 -> 2. 边界实施 -> 3. 本地自测 -> 4. 记忆沉淀 -> 5. 标准交付`。
-交付报告通过 sidebus 结构化回传，必须包含：**Summary (核心摘要)**、**Changes (改动清单)**、**Evidence (单测/构建通过证据)** 以及人机混合验证操作指引。
+
+* **测试与质检分流准则 (Verification Triage)**：
+  - **后端算力与稳定算法 (`unit_test`)**：必须提供自动化单元测试通过与构建 Exit Code 0 的真实物理证据；
+  - **强前端交互与UI渲染 (`ui_reload`)**：严禁形式主义强行编写大量脆弱后端 mock 单测，执行构建/编译与语法检查，并向用户出具直观明确的【页面刷新验证指引卡】（包含重启服务、刷新路径与操作核验动作）；
+  - **全栈协作任务 (`hybrid`)**：后端算法出具单测证据，前端呈现出具交互验证指引。
+
+交付报告通过 sidebus 结构化回传，必须包含：**Summary (核心摘要)**、**Changes (改动清单)**、**Evidence (单测/构建/刷新验证证据)** 以及人机混合验证操作指引。
 
 ---
 

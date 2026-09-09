@@ -224,30 +224,45 @@ function isGovernanceOrStateFile(normTarget, normWsRoot) {
   return false;
 }
 
-function checkIsMainSession(sessionData, conversationId) {
+function getVendorData(sessionData, vendor) {
+  if (!sessionData || !vendor) return null;
+  if (sessionData.vendors && typeof sessionData.vendors === 'object') return sessionData.vendors[vendor] || null;
+  return vendor === 'antigravity' ? sessionData : null;
+}
+
+function checkIsMainSession(sessionData, conversationId, vendor) {
   if (!sessionData || !conversationId) return false;
-  if (sessionData.main_thread_id === conversationId) return true;
-  if (Array.isArray(sessionData.sessions) && sessionData.sessions.some(s => s.session_id === conversationId && s.is_main)) return true;
-  if (sessionData.vendors && typeof sessionData.vendors === 'object') {
-    for (const vData of Object.values(sessionData.vendors)) {
-      if (vData && typeof vData === 'object') {
-        if (vData.main_thread_id === conversationId) return true;
-        if (Array.isArray(vData.sessions) && vData.sessions.some(s => s.session_id === conversationId && s.is_main)) return true;
-      }
-    }
+  const vendorData = getVendorData(sessionData, vendor);
+  return Boolean(vendorData && (vendorData.main_thread_id === conversationId ||
+    (Array.isArray(vendorData.sessions) && vendorData.sessions.some(s => s && s.session_id === conversationId && s.is_main))));
+}
+
+function detectVendor(conversationId, explicitVendor) {
+  if (explicitVendor) return String(explicitVendor).toLowerCase();
+  if (process.env.CODEX_THREAD_ID && (!conversationId || process.env.CODEX_THREAD_ID === conversationId)) return 'codex';
+  if (process.env.CODEX_SESSION_ID && (!conversationId || process.env.CODEX_SESSION_ID === conversationId)) return 'codex';
+  if (process.env.ZCODE_SESSION_ID && (!conversationId || process.env.ZCODE_SESSION_ID === conversationId)) return 'zcode';
+  if (typeof conversationId === 'string' && /^[0-9a-f-]{36}$/i.test(conversationId)) return null;
+  if (conversationId && process.env.ANTIGRAVITY_CONVERSATION_ID === conversationId) return 'antigravity';
+  if (typeof conversationId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)) return 'antigravity';
+  return null;
+}
+
+function isRegisteredForVendor(sessionData, conversationId, vendor) {
+  if (!sessionData || !conversationId || !vendor) return false;
+  const vendorData = getVendorData(sessionData, vendor);
+  if (!vendorData || typeof vendorData !== 'object') return false;
+  if (vendorData.main_thread_id === conversationId) return true;
+  if (Array.isArray(vendorData.sessions) && vendorData.sessions.some(s => s && s.session_id === conversationId)) return true;
+  if (vendorData.modules && typeof vendorData.modules === 'object') {
+    return Object.values(vendorData.modules).some(s => s && s.session_id === conversationId);
   }
   return false;
 }
 
-function extractMainThreadId(sessionData) {
-  if (!sessionData) return null;
-  if (sessionData.main_thread_id) return sessionData.main_thread_id;
-  if (sessionData.vendors && typeof sessionData.vendors === 'object') {
-    for (const v of Object.values(sessionData.vendors)) {
-      if (v && v.main_thread_id) return v.main_thread_id;
-    }
-  }
-  return null;
+function extractMainThreadId(sessionData, vendor) {
+  const vendorData = getVendorData(sessionData, vendor);
+  return vendorData && vendorData.main_thread_id ? vendorData.main_thread_id : null;
 }
 
 function processPayload(payload) {
@@ -269,11 +284,24 @@ function processPayload(payload) {
     }
 
     const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
-    const conversationId = payload.conversationId;
-
+    const conversationId = payload.conversationId || payload.conversation_id || payload.sessionId || payload.session_id;
     // 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
     const sessionData = findSessionsRegistry(wsRoot);
-    const isMain = checkIsMainSession(sessionData, conversationId);
+    let vendor = detectVendor(conversationId, payload.vendor);
+    if (!payload.vendor && !vendor && conversationId && isRegisteredForVendor(sessionData, conversationId, 'antigravity')) vendor = 'antigravity';
+    if (vendor === 'codex') {
+      return { decision: 'deny', reason: '[task-loop PreToolUse DENY] Codex automatic file interception is unsupported; use Skills, Provider, and pre-dispatch allowlist validation.' };
+    }
+    if (!vendor || !['antigravity', 'zcode', 'claude'].includes(vendor)) {
+      return { decision: 'deny', reason: `[task-loop PreToolUse DENY] Unknown or missing vendor '${payload.vendor || 'unknown'}' cannot write files.` };
+    }
+    if (!conversationId) {
+      return { decision: 'deny', reason: `[task-loop PreToolUse DENY] Vendor '${vendor}' file writes require a registered session.` };
+    }
+    if (conversationId && (!vendor || !isRegisteredForVendor(sessionData, conversationId, vendor))) {
+      return { decision: 'deny', reason: `[task-loop PreToolUse DENY] Session '${conversationId}' is missing, unregistered, or mismatched for vendor '${vendor || 'unknown'}'.` };
+    }
+    const isMain = checkIsMainSession(sessionData, conversationId, vendor);
 
     if (isMain) {
       const normTarget = normalizePath(path.isAbsolute(targetFile) ? targetFile : path.resolve(wsRoot, targetFile));
@@ -288,14 +316,14 @@ function processPayload(payload) {
 
     const allowlist = findAllowlistForSession(wsRoot, conversationId);
 
-    // 如果没有配置白名单，默认放行
+    // Any write without a dispatched allowlist is fail-closed.
     if (!allowlist || allowlist.length === 0) {
-      return { decision: 'allow' };
+      return { decision: 'deny', reason: '[task-loop PreToolUse DENY] File writes require a non-empty dispatched allowlist.' };
     }
 
     const allowed = isPathAllowed(targetFile, allowlist, wsRoot);
     if (!allowed) {
-      const mainThreadId = extractMainThreadId(sessionData) || '<main_thread_id>';
+      const mainThreadId = extractMainThreadId(sessionData, vendor) || '<main_thread_id>';
       return {
         decision: 'deny',
         reason: `[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '${targetFile}' 不在当前任务白名单 (Allowlist: [${allowlist.join(', ')}]) 范围内，严禁越界修改！若确需修改此文件，必须向主治理中枢发起标准化白名单扩展申请 (ALLOWLIST_EXPANSION_REQUEST)：\nsend_message('${mainThreadId}', JSON.stringify({\n  "type": "ALLOWLIST_EXPANSION_REQUEST",\n  "target_files": ["${targetFile}"],\n  "reason": "<请在此详细阐述需要修改该文件的理由与影响分析>"\n}, null, 2))`
@@ -304,8 +332,7 @@ function processPayload(payload) {
 
     return { decision: 'allow' };
   } catch (err) {
-    // 降级保护：发生异常时安全放行
-    return { decision: 'allow' };
+    return { decision: 'deny', reason: '[task-loop PreToolUse DENY] File write validation failed.' };
   }
 }
 
@@ -349,5 +376,7 @@ module.exports = {
   processPayload,
   extractTargetFile,
   isPathAllowed,
-  findAllowlistForSession
+  findAllowlistForSession,
+  detectVendor,
+  isRegisteredForVendor
 };

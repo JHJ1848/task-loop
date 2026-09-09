@@ -15,6 +15,7 @@ import sys
 import os
 import json
 import tempfile
+import re
 
 if sys.platform == "win32":
     try:
@@ -211,35 +212,56 @@ def is_governance_or_state_file(norm_target, norm_ws_root):
     return False
 
 
-def check_is_main_session(session_data, conversation_id):
+def get_vendor_data(session_data, vendor):
+    if not isinstance(session_data, dict) or not vendor:
+        return None
+    if isinstance(session_data.get("vendors"), dict):
+        return session_data["vendors"].get(vendor)
+    return session_data if vendor == "antigravity" else None
+
+
+def check_is_main_session(session_data, conversation_id, vendor):
     if not session_data or not conversation_id:
         return False
-    if session_data.get("main_thread_id") == conversation_id:
-        return True
-    if isinstance(session_data.get("sessions"), list):
-        if any(s.get("session_id") == conversation_id and s.get("is_main") for s in session_data["sessions"]):
-            return True
-    if isinstance(session_data.get("vendors"), dict):
-        for v_data in session_data["vendors"].values():
-            if isinstance(v_data, dict):
-                if v_data.get("main_thread_id") == conversation_id:
-                    return True
-                if isinstance(v_data.get("sessions"), list):
-                    if any(s.get("session_id") == conversation_id and s.get("is_main") for s in v_data["sessions"]):
-                        return True
-    return False
+    vendor_data = get_vendor_data(session_data, vendor)
+    return bool(vendor_data and (vendor_data.get("main_thread_id") == conversation_id or
+        any(isinstance(s, dict) and s.get("session_id") == conversation_id and s.get("is_main") for s in vendor_data.get("sessions", []))))
 
 
-def extract_main_thread_id(session_data):
-    if not session_data or not isinstance(session_data, dict):
+def detect_vendor(conversation_id, explicit_vendor=None):
+    if explicit_vendor:
+        return str(explicit_vendor).lower()
+    if os.environ.get("CODEX_THREAD_ID") and (not conversation_id or os.environ.get("CODEX_THREAD_ID") == conversation_id):
+        return "codex"
+    if os.environ.get("CODEX_SESSION_ID") and (not conversation_id or os.environ.get("CODEX_SESSION_ID") == conversation_id):
+        return "codex"
+    if os.environ.get("ZCODE_SESSION_ID") and (not conversation_id or os.environ.get("ZCODE_SESSION_ID") == conversation_id):
+        return "zcode"
+    if isinstance(conversation_id, str) and re.fullmatch(r"[0-9a-f-]{36}", conversation_id, re.IGNORECASE):
         return None
-    if session_data.get("main_thread_id"):
-        return session_data["main_thread_id"]
-    if isinstance(session_data.get("vendors"), dict):
-        for v in session_data["vendors"].values():
-            if isinstance(v, dict) and v.get("main_thread_id"):
-                return v["main_thread_id"]
+    if conversation_id and os.environ.get("ANTIGRAVITY_CONVERSATION_ID") == conversation_id:
+        return "antigravity"
+    if isinstance(conversation_id, str) and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", conversation_id, re.IGNORECASE):
+        return "antigravity"
     return None
+
+
+def is_registered_for_vendor(session_data, conversation_id, vendor):
+    if not isinstance(session_data, dict) or not conversation_id or not vendor:
+        return False
+    vendor_data = get_vendor_data(session_data, vendor)
+    if not isinstance(vendor_data, dict):
+        return False
+    if vendor_data.get("main_thread_id") == conversation_id:
+        return True
+    if any(isinstance(s, dict) and s.get("session_id") == conversation_id for s in vendor_data.get("sessions", [])):
+        return True
+    return any(isinstance(s, dict) and s.get("session_id") == conversation_id for s in (vendor_data.get("modules") or {}).values())
+
+
+def extract_main_thread_id(session_data, vendor):
+    vendor_data = get_vendor_data(session_data, vendor)
+    return vendor_data.get("main_thread_id") if isinstance(vendor_data, dict) else None
 
 
 def process_payload(payload):
@@ -257,11 +279,21 @@ def process_payload(payload):
             return {"decision": "allow"}
 
         ws_root = resolve_workspace_root(payload.get("workspacePaths"))
-        conversation_id = payload.get("conversationId")
-
+        conversation_id = payload.get("conversationId") or payload.get("conversation_id") or payload.get("sessionId") or payload.get("session_id")
         # 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
         session_data = find_sessions_registry(ws_root)
-        is_main_session = check_is_main_session(session_data, conversation_id)
+        vendor = detect_vendor(conversation_id, payload.get("vendor"))
+        if not payload.get("vendor") and not vendor and conversation_id and is_registered_for_vendor(session_data, conversation_id, "antigravity"):
+            vendor = "antigravity"
+        if vendor == "codex":
+            return {"decision": "deny", "reason": "[task-loop PreToolUse DENY] Codex automatic file interception is unsupported; use Skills, Provider, and pre-dispatch allowlist validation."}
+        if not vendor or vendor not in ["antigravity", "zcode", "claude"]:
+            return {"decision": "deny", "reason": f"[task-loop PreToolUse DENY] Unknown or missing vendor '{payload.get('vendor') or 'unknown'}' cannot write files."}
+        if not conversation_id:
+            return {"decision": "deny", "reason": f"[task-loop PreToolUse DENY] Vendor '{vendor}' file writes require a registered session."}
+        if conversation_id and (not vendor or not is_registered_for_vendor(session_data, conversation_id, vendor)):
+            return {"decision": "deny", "reason": f"[task-loop PreToolUse DENY] Session '{conversation_id}' is missing, unregistered, or mismatched for vendor '{vendor or 'unknown'}'."}
+        is_main_session = check_is_main_session(session_data, conversation_id, vendor)
 
         if is_main_session:
             norm_target = normalize_path(target_file if os.path.isabs(target_file) else os.path.join(ws_root, target_file))
@@ -274,10 +306,10 @@ def process_payload(payload):
 
         allowlist = find_allowlist_for_session(ws_root, conversation_id)
         if not allowlist:
-            return {"decision": "allow"}
+            return {"decision": "deny", "reason": "[task-loop PreToolUse DENY] File writes require a non-empty dispatched allowlist."}
 
         if not is_path_allowed(target_file, allowlist, ws_root):
-            main_thread_id = extract_main_thread_id(session_data) or "<main_thread_id>"
+            main_thread_id = extract_main_thread_id(session_data, vendor) or "<main_thread_id>"
             req_json = json.dumps({
                 "type": "ALLOWLIST_EXPANSION_REQUEST",
                 "target_files": [target_file],
@@ -290,7 +322,7 @@ def process_payload(payload):
 
         return {"decision": "allow"}
     except Exception:
-        return {"decision": "allow"}
+        return {"decision": "deny", "reason": "[task-loop PreToolUse DENY] File write validation failed."}
 
 
 def main():

@@ -6,6 +6,7 @@ Covers inject_session_context_zcode.py and enforce_allowlist_zcode.py.
 """
 
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -18,6 +19,23 @@ sys.path.insert(0, str(SCRIPTS_HOOKS))
 inject_adapter = importlib.import_module("inject_session_context_zcode")
 gate_adapter = importlib.import_module("enforce_allowlist_zcode")
 core_gate = importlib.import_module("enforce_allowlist")
+
+
+def write_zcode_registry(ws, session_ids):
+    agent_dir = Path(ws) / ".agents" / "task-loop"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    registry = {
+        "schema_version": 4,
+        "vendors": {
+            "zcode": {
+                "vendor": "zcode",
+                "main_thread_id": None,
+                "modules": {},
+                "sessions": [{"session_id": session_id, "vendor": "zcode", "is_main": False} for session_id in session_ids],
+            }
+        },
+    }
+    (agent_dir / "sessions.json").write_text(json.dumps(registry, indent=2), encoding="utf-8")
 
 
 def test_inject_contract():
@@ -54,9 +72,11 @@ def test_inject_env_fallback_and_noop():
 class _AllowlistEnv:
     def __init__(self):
         self.prev = os.environ.get("TASK_LOOP_ALLOWLIST")
+        self.prev_zcode_session = os.environ.get("ZCODE_SESSION_ID")
 
     def __enter__(self):
         os.environ["TASK_LOOP_ALLOWLIST"] = '["src/**"]'
+        os.environ["ZCODE_SESSION_ID"] = "sess_gate1"
         return self
 
     def __exit__(self, *a):
@@ -64,11 +84,16 @@ class _AllowlistEnv:
             os.environ.pop("TASK_LOOP_ALLOWLIST", None)
         else:
             os.environ["TASK_LOOP_ALLOWLIST"] = self.prev
+        if self.prev_zcode_session is None:
+            os.environ.pop("ZCODE_SESSION_ID", None)
+        else:
+            os.environ["ZCODE_SESSION_ID"] = self.prev_zcode_session
 
 
 def test_gate_deny_and_allow():
     ws = tempfile.mkdtemp(prefix="test_zcode_gate_py_")
     try:
+        write_zcode_registry(ws, ["sess_gate1"])
         with _AllowlistEnv():
             deny_payload = {
                 "session_id": "sess_gate1",
@@ -84,6 +109,16 @@ def test_gate_deny_and_allow():
                 {**deny_payload, "tool_input": {"file_path": os.path.join(ws, "src", "app.js")}}, env={}
             )
             assert allow_out == {}
+
+            unregistered_out = gate_adapter.process_payload(
+                {
+                    **deny_payload,
+                    "session_id": "sess_unregistered",
+                    "tool_input": {"file_path": os.path.join(ws, "src", "app.js")},
+                },
+                env={},
+            )
+            assert unregistered_out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
             read_out = gate_adapter.process_payload({**deny_payload, "tool_name": "Read"}, env={})
             assert read_out == {}

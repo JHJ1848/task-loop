@@ -584,15 +584,7 @@ def init_task_loop(options=None):
     with open(vendor_specific_file, "w", encoding="utf-8") as f:
         json.dump(target_vendor_data, f, indent=2, ensure_ascii=False)
 
-    # 若其他已知厂商在 vendors 中有数据，也确保其物理文件同步更新/落盘
-    for v_key, v_data in vendors.items():
-        v_file = os.path.join(task_loop_dir, f"sessions.{v_key}.json")
-        if not os.path.exists(v_file) or v_key == target_vendor:
-            try:
-                with open(v_file, "w", encoding="utf-8") as f:
-                    json.dump(v_data, f, indent=2, ensure_ascii=False)
-            except Exception:
-                pass
+    # 只写当前厂商镜像；其他厂商物理文件保持零写入，避免跨厂商污染。
 
     # 写入全量主 sessions.json (Schema v4: 顶层仅元数据 + vendors 厂商分区, 顶层冗余副本已废除以杜绝跨厂商覆写)
     master_sessions_data = {

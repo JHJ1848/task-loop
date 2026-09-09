@@ -269,8 +269,8 @@ agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发�
   },
   {
     "gotcha_id": "Gotcha 16",
-    "title": "看门狗 30s 探针门禁循环与 120s 准入",
-    "rule": "inspect_agy_sessions.js --probe-dispatch 提供 thread_running/is_working 细粒度探针。若 is_working === false 绝对严禁挂载 120s 巡检定时器，必须出具告警卡、自愈补发并循环 30s 探针，直到确凿激活才准入 120s 偏差巡检。"
+    "title": "双阶梯进度监测与巡检机制",
+    "rule": "inspect_agy_sessions.js --monitor-dispatch 提供 thread_running/is_working 细粒度监测。若 is_working === false 绝对严禁挂载 120s 巡检任务，必须出具告警卡、自愈补发并循环 30s 进度监测器，直到确凿激活才准入 120s 巡检任务。"
   }
 ]
 ```

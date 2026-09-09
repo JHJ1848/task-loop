@@ -89,19 +89,50 @@ flowchart TD
     Report[专题会话提交改动证据] --> AutoCheck{自动化硬性门禁}
     AutoCheck -->|优先调用现有 Skill| CodeReview[code-review / systematic-debugging]
     CodeReview --> DiffCheck[Diff 核验: 是否严守 Allowlist]
-    DiffCheck --> LogCheck[物理日志: 编译/测试 Exit Code 0]
+    DiffCheck --> TriageCheck{验证分流矩阵裁决}
+
+    TriageCheck -->|unit_test: 稳定算法/底层状态机| LogCheck[物理单测日志: Exit Code 0]
+    TriageCheck -->|ui_reload: 强前端交互/展示接口| BuildCheck[编译构建/语法通过 + 刷新指引卡]
+    TriageCheck -->|hybrid: 全栈任务| HybridCheck[核心单测 + 交互指引]
     
-    LogCheck --> IsComplex{是否包含无法量化要素?<br/>UI审美/复杂交互/用户专有上下文}
-    IsComplex -->|否: 纯逻辑/后端| Pass[主会话批准并通过]
-    IsComplex -->|是: 需人机混合验证| PromptUser[向用户给出明确操作指引<br/>提示用户验证步骤与视觉确认]
+    LogCheck --> Pass[主会话批准并通过]
+    BuildCheck --> PromptUser[向用户出具【页面刷新验证指引卡】<br/>提示用户重启服务与刷新核验]
+    HybridCheck --> PromptUser
     PromptUser --> UserConfirm[用户交互确认] --> Pass
 ```
 
-1. **优先复用环境既有代码审查 Skill**：
-   - 质检时优先检测环境中已安装的审查技能（如 `code-review`、`superpowers:code-review`、`receiving-code-review`、`systematic-debugging`），以专业评审标准进行走查。
-2. **人机混合验证（Human-in-the-Loop）**：
-   - **客观现实**：图形渲染、UI 审美、跨端交互效果以及超出 AI 上下文的业务体验无法完全由脚本自动化衡量。
-   - **规则**：当遇到不可量化或不确定的视觉/业务点时，主会话严禁伪造“完全验证”，必须转为**人机混合验证**——由 AI 负责构建与日志核验，同时向用户输出详尽的**【用户验证指引卡】**（告知用户如何点击、查看何种预期效果），由用户做最终验收。
+### 1. 三层验证分流矩阵 (Verification Mode Matrix JSON)
+为杜绝一刀切要求“任何改动都必须新建单测”的形式主义倾向，质检门禁与执行端自测强制按照任务技术特征分流：
+
+```json
+[
+  {
+    "mode": "unit_test",
+    "target_scope": "偏后端稳定计算、底层协议状态机、核心算法、数据编解码与持久化状态逻辑",
+    "verification_policy": "必须独立执行自动化单测/构建命令，获取真实的 Exit Code 0 物理通过证据",
+    "rationale": "业务逻辑稳定不易频繁变更，回归断言价值高且维护成本低"
+  },
+  {
+    "mode": "ui_reload",
+    "target_scope": "强前端交互、UI 样式渲染、视图布局调整以及轻量级数据展示接口",
+    "verification_policy": "免除新建冗余且脆弱的单测，执行编译/构建与语法静态检查，并向用户出具明确的【页面刷新验证指引卡】",
+    "rationale": "前端界面多变，强行在后端编写大量 mock 单元测试耗时费力且容易因细节微调脆弱报错，服务重启后页面刷新/点击即验最为务实高效"
+  },
+  {
+    "mode": "hybrid",
+    "target_scope": "全栈协作任务、前后端一体化特性、复杂数据流水线联动前端呈现",
+    "verification_policy": "后端核心算法与计算逻辑执行单测自证 (Exit Code 0)，前端交互要素附带操作验证指引卡",
+    "rationale": "兼顾深层计算逻辑的确定性与前端视觉交互的灵活性"
+  }
+]
+```
+
+### 2. 优先复用环境既有代码审查 Skill
+质检时优先检测环境中已安装的审查技能（如 `code-review`、`superpowers:code-review`、`receiving-code-review`、`systematic-debugging`），以专业评审标准进行走查。
+
+### 3. 人机混合验证（Human-in-the-Loop）
+* **客观现实**：图形渲染、UI 审美、跨端交互效果以及超出 AI 上下文的业务体验无法完全由脚本自动化衡量。
+* **规则**：当遇到不可量化或不确定的视觉/业务点时，主会话严禁伪造“完全验证”，必须转为**人机混合验证**——由 AI 负责构建与语法核验，同时向用户输出详尽的**【页面刷新/用户验证指引卡】**（告知用户如何重启服务、访问路由、点击查看何种预期效果），由用户做最终验收。
 
 ---
 
@@ -136,7 +167,7 @@ flowchart TD
   },
   {
     "stage": "3. 本地自测 (Self-Verification)",
-    "action": "运行全量单元测试与编译构建（Exit Code 0）；Diff 走查核对无越界改动。"
+    "action": "根据技术特征精准分流自测：底层稳定计算与算法执行单元测试 (Exit Code 0)；强前端交互与UI展示严禁套写大量脆弱后端 mock 单测，执行编译/构建检查并出具页面刷新验证卡；Diff 走查核对无越界改动。"
   },
   {
     "stage": "4. 记忆回写 (Topic Memory Put)",
@@ -144,7 +175,7 @@ flowchart TD
   },
   {
     "stage": "5. 强制反向交付 (Mandatory Deliverable via Sidebus)",
-    "action": "自测通过后严禁仅在当前视窗输出文本停下，必须且强制在最后一轮调用 send_message(recipient=\"<main_thread_id>\", message=\"[专题交付: WORK]...\") 向上级汇报：Summary (核心摘要)、Changes (修改清单)、Evidence (测试证据) 与人机混合验证操作卡，触发主中枢验收。"
+    "action": "自测通过后严禁仅在当前视窗输出文本停下，必须且强制在最后一轮调用 send_message(recipient=\"<main_thread_id>\", message=\"[专题交付: WORK]...\") 向上级汇报：Summary (核心摘要)、Changes (修改清单)、Evidence (单测/构建/刷新验证证据) 与人机混合验证操作卡，触发主中枢验收。"
   }
 ]
 ```
@@ -268,25 +299,25 @@ flowchart TD
 
 ---
 
-## 八、派单看门狗 30s 探针门禁循环与 120s 准入机制 (Watchdog Probe Gate Loop & Alignment Audit)
+## 八、双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
 
-为消除专题会话由于后台休眠未触发、陷入死循环或理解偏离目标导致的派单失控，主会话派单后必须严格执行【30s 探针门禁循环与 120s 准入机制】（彻底废除固定 30s->120s 无脑递进的旧流水线，严格以真实线程工作态为准）：
+为消除专题会话由于后台休眠未触发、陷入死循环或理解偏离目标导致的派单失控，主会话派单后必须严格执行【30s 响应监测器门禁循环与 120s 巡检任务准入机制】（彻底废除固定 30s->120s 无脑递进的旧流水线，严格以真实线程工作态为准）：
 
-### 1. 门禁循环与时序动作定义 (Watchdog Lifecycle JSON)
+### 1. 门禁循环与时序动作定义 (Progress Monitor & Inspection Lifecycle JSON)
 
 ```json
 [
   {
-    "stage": "Stage 1: 30s 探针循环与自愈门禁 (Probe Gate Loop & Self-Healing)",
+    "stage": "Stage 1: 30s 响应监测器循环与自愈门禁 (Response Monitor Gate Loop & Self-Healing)",
     "timing": "派单后挂载 schedule(DurationSeconds=30, Prompt=\"检查专题会话真激活状态\", TimerCondition=\"any\")",
     "trigger_condition": "派单发信 30 秒后触发",
-    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> 精准核验：派单后是否检测到真实工作态 (thread_running === true 或存在 source='MODEL' 工作步/思考/工具调用)。",
-    "pass_condition": "is_working === true (can_enter_120s_gate: true)。仅当探针确凿通过后，才准入挂载 120s 偏差巡检定时器。",
-    "abnormal_resolution": "若 is_working === false (未激活/无 MODEL 步): 1. 绝对严禁挂载 120s 定时器死等！2. 必须立即出具【🔴 专题未激活告警卡】提示用户唤醒；3. 立即调用 agentapi.bat send-message 补发唤醒包；4. 继续挂载 30s 探针循环监控，直到真实激活。"
+    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <target_session_id> 精准核验：派单后是否检测到真实工作态 (thread_running === true 或存在 source='MODEL' 工作步/思考/工具调用)。",
+    "pass_condition": "is_working === true (can_enter_120s_gate: true)。仅当响应监测器确凿通过后，才准入挂载 120s 巡检任务定时器。",
+    "abnormal_resolution": "若 is_working === false (未激活/无 MODEL 步): 1. 绝对严禁挂载 120s 巡检任务死等！2. 必须立即出具【🔴 专题未激活告警卡】提示用户唤醒；3. 立即调用 agentapi.bat send-message 补发唤醒包；4. 继续挂载 30s 进度监测器循环监控，直到真实激活。"
   },
   {
-    "stage": "Stage 2: 120s 偏差巡检准入门禁 (120s Alignment Audit)",
-    "timing": "仅在 30s 探针确凿通过 (is_working === true) 后准入挂载 schedule(DurationSeconds=120, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\")",
+    "stage": "Stage 2: 120s 巡检任务准入门禁 (120s Inspection Task Admission)",
+    "timing": "仅在 30s 响应监测器确凿通过 (is_working === true) 后准入挂载 schedule(DurationSeconds=120, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\")",
     "trigger_condition": "准入通过且派单工作推进 120 秒后触发",
     "inspection_actions": "读取目标专题 transcript.jsonl 最新 steps，走查：1. 是否偏离单一职责目标；2. 是否发生死循环/重复调用；3. 推演逻辑是否存在严重技术漏洞；4. 是否尝试越界修改。",
     "abnormal_resolution": "若发现执行偏差，主会话立即调用 send_message(recipient=\"<topic_session_id>\", message=\"【主中枢偏差修正指令】检测到执行路径偏离目标...请按以下修正方案调整...\") 进行强力干预。"
@@ -298,12 +329,61 @@ flowchart TD
 1. **统一标准工具**: 必须使用系统原生 `schedule` 工具设定倒计时（严禁使用后台 `sleep` 命令）；
 2. **提前交付短路**: 若专题会话在 30s 或 120s 内提前完成交付并发送 `send_message`，主中枢收到回执后自动唤醒并可直接回收/忽略该监督定时器；
 3. **巡检无干预放行**: 若 120s 巡检确认专题思路清晰且正在执行正常长耗时单测/构建，主会话不发送扰动指令，允许其平稳运行直至交付；
-4. **定时器冲突管理与主动销毁 (Conflict Avoidance)**: 严禁在未清理旧定时器的情况下挂载带有相同 `TimerCondition` 的新定时器（防范 `conflicting early termination condition` 报错）。在更新或追加新阶段看门狗定时器前，若前置定时器仍在运行，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器任务；
-5. **防假阳性铁律 (Anti-False-Positive Iron Rule)**: 30s 探针必须以 `--probe-dispatch` 返回的 `is_working === true` 为唯一通过标准。若为 false 则说明后台休眠未启动，严禁假装通过或进入 120s 盲等，必须立即告警并自愈重试。
+4. **定时器冲突管理与主动销毁 (Conflict Avoidance)**: 严禁在未清理旧定时器的情况下挂载带有相同 `TimerCondition` 的新定时器（防范 `conflicting early termination condition` 报错）。在更新或追加新阶段进度监测或巡检定时器前，若前置定时器仍在运行，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器任务；
+5. **防假阳性铁律 (Anti-False-Positive Iron Rule)**: 30s 进度监测器必须以 `--monitor-dispatch`（或 `--probe-dispatch`）返回的 `is_working === true` 为唯一通过标准。若为 false 则说明后台休眠未启动，严禁假装通过或进入 120s 盲等，必须立即告警并自愈重试。
 
 ---
 
-## 九、透明思考与决策推演卡模板（Decision Matrix）
+## 九、专题空间防污染与物理路径权责对齐机制 (Topic Space Anti-Pollution & Path Ownership Matrix)
+
+为彻底解决主会话因路径依赖偏向于在同一个活跃会话持续派单、导致专题空间被无关文件修改严重污染、上下文和 KV Cache 噪音膨胀、法定专题被边缘化的问题，主会话派单前必须严格执行物理路径权责对齐与正交路由：
+
+### 1. 物理文件路径与法定专题权责映射矩阵 (Path Ownership Matrix JSON)
+
+```json
+[
+  {
+    "physical_path_pattern": "scripts/hooks/*, config/hooks.json, .agents/hooks.json",
+    "statutory_topic": "hook",
+    "topic_name": "[钩子专题] 生命周期 & 安全门禁",
+    "scope_description": "PreInvocation 瞬态上下文注入、PreToolUse 物理白名单门禁、生命周期拦截与安全防护。"
+  },
+  {
+    "physical_path_pattern": "scripts/providers/*, scripts/inspect_*, scripts/query_task_loop_state.*, references/sdk/*",
+    "statutory_topic": "session_control",
+    "topic_name": "[会话专题] 控制SDK & 日志反向内省",
+    "scope_description": "跨厂商会话 SDK 原语、会话日志内省、状态机查询 CLI、多厂商分区持久化与会话拓扑维护。"
+  },
+  {
+    "physical_path_pattern": "scripts/subagent_*, docs/memory/subagent.md",
+    "statutory_topic": "subagent",
+    "topic_name": "[子代理专题] 原生子代理 & 模版治理",
+    "scope_description": "Google Antigravity 原生子代理编排、动态模板治理、Workspace 隔离模式与原生兜底工作流。"
+  },
+  {
+    "physical_path_pattern": "scripts/install_*, plugin.json, rules/*",
+    "statutory_topic": "plugin_spec",
+    "topic_name": "[插件规范专题] 扩展规范 & 安装器",
+    "scope_description": "Antigravity Plugin 打包规范、多端安装器、Marketplace 发布与新项目自举规范。"
+  },
+  {
+    "physical_path_pattern": "新业务功能源码 (如 src/business/*, routes/*, models/*)",
+    "statutory_topic": "新业务专题 (New Topic)",
+    "topic_name": "[业务专题] 核心功能1 & 核心功能2",
+    "scope_description": "独立全新业务需求，严禁塞入底层基础设施专题，强制通过 /new-session 建立独立物理实体会话。"
+  }
+]
+```
+
+### 2. 派单前路由断言门禁与防搭便车铁律 (Routing Seam Gate Laws)
+
+1. **正交路由断言 (Orthogonal Routing Assertion)**: 主会话在生成派单包前，必须逐一检查拟下发 `allowlist` 物理文件列表，确认其 100% 属于目标专题的法定权责范围；
+2. **严禁搭便车派单 (No Free-Riding Dispatch)**: 严禁将属于 B 专题的文件修改顺带塞给 A 专题（例如在修复 session_control 时顺带让其修改 `scripts/hooks/*`）。如遇跨专题协同修改，必须拆解为两个独立的任务分别正交派发，串行或并行推进；
+3. **独立业务强隔离**: 严禁将用户新增的独立业务功能塞入 `hook`、`session_control`、`subagent` 等底层治理专题中，必须通过 `/new-session` 建立独立的物理业务专题会话。
+
+---
+
+## 十、透明思考与决策推演卡模板（Decision Matrix）
 
 主会话在每次执行需求分析、派发裁决或质检时，**必须在 Thinking 及最终回复中输出决策推演卡**：
 
@@ -312,16 +392,17 @@ flowchart TD
 - **用户需求初加工**：[提炼后的核心目标与范围]
 - **复杂度定级与理由**：Level [1/2/3]（原因：涉及模块数 X，代码改动预估 Y 行）
 - **修改物理边界 (Allowlist)**：[`path/to/file1`, `path/to/file2`]
+- **物理路径权责核验 (Routing Seam Gate)**：[已逐一比对：所有 Allowlist 文件 100% 属于目标专题法定权责，无跨界污染]
 - **路由目标会话**：[Target Session ID / Module Key]
 - **跨专题冲突校验**：[无冲突 / 已隔离锁定目标文件]
-- **看门狗监督机制**：[已挂载 30s 探针门禁循环 (待真激活准入 120s 巡检)]
+- **进度监测与巡检机制**：[已挂载 30s 进度监测器循环 (待真激活准入 120s 巡检任务)]
 - **批判性门禁独立质检证据**：[单测 Exit Code 0 / Diff 白名单审查结果 / Reviewer 审查结果]
 - **验证与质检策略**：[自动化测试命令 + 人机混合验证步骤]
 ```
 
 ---
 
-## 十、未来演进预留（TODO）
+## 十一、未来演进预留（TODO）
 
 * **TODO：调用链路追溯与项目级轻量持久化（Traceability Journal）**：
   - *规划方向*：未来可在 `.agents/task-loop/trace-journal.jsonl` 中记录 Main 到各 Topic 会话的调用链、派发快照与干预历史，便于排查复杂长周期任务的链路决策。

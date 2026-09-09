@@ -76,21 +76,21 @@
 
 ---
 
-## 6. 主会话派单看门狗 30s 探针门禁循环与 120s 准入机制 (Watchdog Probe Gate Loop & Alignment Audit)
+## 6. 主会话派单双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
 
-为消除后台专题会话休眠未启动或未响应导致的派单失控与死等，主会话派单后**严禁采用无条件直接进入 120s 的固定流水线**，必须严格执行【30s 探针循环门禁与 120s 准入闭环】：
+为消除后台专题会话休眠未启动或未响应导致的派单失控与死等，主会话派单后**严禁采用无条件直接进入 120s 的固定流水线**，必须严格执行【30s 响应监测器门禁循环与 120s 巡检任务准入闭环】：
 
-* **【Stage 1: 30s 探针循环与自愈门禁 (30s Probe Gate Loop & Self-Healing)】**:
-  - 派单后挂载 30s 激活探针定时器（`schedule DurationSeconds=30 Prompt="检查专题会话真激活状态" TimerCondition="any"`）；
-  - 30s 到期触发时，主会话必须运行真活跃探针：`node scripts/inspect_agy_sessions.js --probe-dispatch <session_id>`；
-  - **核心准入门禁条件**: 仅当探针确凿返回 `is_working === true`（存在 `source: 'MODEL'` 工作步、思考/工具调用或 `thread_running === true` 内存生成态，即 `can_enter_120s_gate: true`）时，才准入 Stage 2；
-  - **未激活处理与循环自愈铁律**: 若 `is_working === false` (状态为 `DORMANT_NOT_ACTIVATED` / `should_loop_30s_probe: true`)：
-    1. **绝对严禁调用 120s 定时器进入盲等！**
+* **【Stage 1: 30s 响应监测器循环与自愈门禁 (30s Response Monitor Gate Loop & Self-Healing)】**:
+  - 派单后挂载 30s 响应监测器定时器（`schedule DurationSeconds=30 Prompt="检查专题会话真激活状态" TimerCondition="any"`）；
+  - 30s 到期触发时，主会话必须运行真活跃监测：`node scripts/inspect_agy_sessions.js --monitor-dispatch <session_id>`；
+  - **核心准入门禁条件**: 仅当响应监测器确凿返回 `is_working === true`（存在 `source: 'MODEL'` 工作步、思考/工具调用或 `thread_running === true` 内存生成态，即 `can_enter_120s_gate: true`）时，才准入 Stage 2；
+  - **未激活处理与循环自愈铁律**: 若 `is_working === false` (状态为 `DORMANT_NOT_ACTIVATED` / `should_loop_30s_monitor: true`)：
+    1. **绝对严禁调用 120s 巡检任务定时器进入盲等！**
     2. 必须立即出具【🔴 专题未激活告警卡】(含 `conversation://<session_id>` 唤醒链接)；
     3. 立即通过 `agentapi.bat send-message`（或当前环境 CLI）自动补发激活包进行自愈唤醒；
-    4. **必须继续挂载 30s 探针循环监控**，重复本门禁直至确凿激活或用户手动干预。
-* **【Stage 2: 120s 偏差巡检准入门禁 (120s Alignment Audit Gate)】**:
-  - 仅当 Stage 1 探针确凿通过 (`is_working === true`) 后，才允许准入挂载 120s 巡检定时器（`schedule DurationSeconds=120 Prompt="巡检专题会话执行偏差" TimerCondition="any"`）；
+    4. **必须继续挂载 30s 进度监测器循环监控**，重复本门禁直至确凿激活或用户手动干预。
+* **【Stage 2: 120s 巡检任务准入门禁 (120s Inspection Task Admission Gate)】**:
+  - 仅当 Stage 1 响应监测器确凿通过 (`is_working === true`) 后，才允许准入挂载 120s 巡检定时器（`schedule DurationSeconds=120 Prompt="巡检专题会话执行偏差" TimerCondition="any"`）；
   - 120s 到期触发时，主会话读取目标专题的最新执行轨迹与推演思路（`transcript.jsonl`），执行偏差走查：
     1. 检查专题是否偏离初始单一职责目标 (Objective)；
     2. 检查专题是否陷入死循环、重复调用或尝试越界修改；
@@ -98,4 +98,4 @@
   - 若发现偏差，主会话立即通过 sidebus (`send_message`) 下发纠偏与修正指令；若执行正常但未结束，则允许其继续并等待最终交付。
 * **定时器生命周期与冲突管理**:
   - 严禁在未清理旧定时器的情况下挂载带有相同条件的定时器；
-  - 挂载新一轮 30s 探针或新阶段定时器前，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器，杜绝 `conflicting early termination condition`。
+  - 挂载新一轮 30s 进度监测器或新阶段定时器前，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器，杜绝 `conflicting early termination condition`。

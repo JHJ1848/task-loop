@@ -642,15 +642,7 @@ function initTaskLoop(options = {}) {
   // 写入当前厂商独立物理文件
   fs.writeFileSync(vendorSpecificFile, JSON.stringify(targetVendorData, null, 2), 'utf8');
 
-  // 若其他已知厂商在 vendors 中有数据，也确保其物理文件同步更新/落盘
-  for (const [vKey, vData] of Object.entries(vendors)) {
-    const vFile = path.join(taskLoopDir, `sessions.${vKey}.json`);
-    if (!fs.existsSync(vFile) || vKey === targetVendor) {
-      try {
-        fs.writeFileSync(vFile, JSON.stringify(vData, null, 2), 'utf8');
-      } catch {}
-    }
-  }
+  // 只写当前厂商镜像；其他厂商物理文件保持零写入，避免跨厂商污染。
 
   // 写入全量主 sessions.json (Schema v4: 顶层仅元数据 + vendors 厂商分区, 顶层冗余副本已废除以杜绝跨厂商覆写)
   const masterSessionsData = {

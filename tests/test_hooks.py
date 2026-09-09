@@ -77,6 +77,7 @@ class TestAntigravityHooks(unittest.TestCase):
 
     def test_pre_invocation_main_session(self):
         payload = {
+            "vendor": "antigravity",
             "conversationId": "main-thread-uuid-1234",
             "workspacePaths": [self.temp_dir],
             "invocationNum": 1,
@@ -91,6 +92,7 @@ class TestAntigravityHooks(unittest.TestCase):
 
     def test_pre_invocation_topic_session(self):
         payload = {
+            "vendor": "antigravity",
             "conversationId": "hook-topic-uuid-5678",
             "workspacePaths": [self.temp_dir],
             "invocationNum": 2,
@@ -110,6 +112,7 @@ class TestAntigravityHooks(unittest.TestCase):
 
     def test_pre_invocation_unknown_session(self):
         payload = {
+            "vendor": "antigravity",
             "conversationId": "unknown-uuid-9999",
             "workspacePaths": [self.temp_dir],
             "invocationNum": 1,
@@ -131,6 +134,7 @@ class TestAntigravityHooks(unittest.TestCase):
 
     def test_pre_tool_use_read_tool(self):
         payload = {
+            "vendor": "antigravity",
             "conversationId": "hook-topic-uuid-5678",
             "workspacePaths": [self.temp_dir],
             "toolCall": {
@@ -145,6 +149,7 @@ class TestAntigravityHooks(unittest.TestCase):
 
     def test_pre_tool_use_write_allowed(self):
         payload = {
+            "vendor": "antigravity",
             "conversationId": "hook-topic-uuid-5678",
             "workspacePaths": [self.temp_dir],
             "toolCall": {
@@ -160,6 +165,7 @@ class TestAntigravityHooks(unittest.TestCase):
 
     def test_pre_tool_use_write_dir_allowed(self):
         payload = {
+            "vendor": "antigravity",
             "conversationId": "hook-topic-uuid-5678",
             "workspacePaths": [self.temp_dir],
             "toolCall": {
@@ -175,6 +181,7 @@ class TestAntigravityHooks(unittest.TestCase):
 
     def test_pre_tool_use_write_denied(self):
         payload = {
+            "vendor": "antigravity",
             "conversationId": "hook-topic-uuid-5678",
             "workspacePaths": [self.temp_dir],
             "toolCall": {

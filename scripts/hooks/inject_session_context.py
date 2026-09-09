@@ -168,15 +168,30 @@ def match_in_vendor_data(conversation_id, data):
     }
 
 
-def detect_vendor_from_session_id(session_id: str, fallback_vendor: str = "antigravity") -> str:
+def detect_vendor_from_session_id(session_id: str, fallback_vendor: str = None) -> str:
     if not session_id or not isinstance(session_id, str):
-        return fallback_vendor or "antigravity"
+        return fallback_vendor
     if session_id.startswith("sess_"):
         return "zcode"
-    import re
-    if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", session_id, re.IGNORECASE):
+    # UUID is shared by multiple hosts; only an explicit host signal may classify it.
+    return fallback_vendor
+
+
+def resolve_target_vendor(payload, conversation_id):
+    if payload.get("vendor"):
+        return str(payload["vendor"]).lower()
+    if os.environ.get("CODEX_THREAD_ID") and (not conversation_id or os.environ.get("CODEX_THREAD_ID") == conversation_id):
+        return "codex"
+    if os.environ.get("CODEX_SESSION_ID") and (not conversation_id or os.environ.get("CODEX_SESSION_ID") == conversation_id):
+        return "codex"
+    if os.environ.get("ZCODE_SESSION_ID") and (not conversation_id or os.environ.get("ZCODE_SESSION_ID") == conversation_id):
+        return "zcode"
+    if os.environ.get("ANTIGRAVITY_CONVERSATION_ID") and (not conversation_id or os.environ.get("ANTIGRAVITY_CONVERSATION_ID") == conversation_id):
         return "antigravity"
-    return fallback_vendor or "antigravity"
+    inferred = detect_vendor_from_session_id(conversation_id)
+    if inferred:
+        return inferred
+    return "antigravity" if isinstance(conversation_id, str) and not re.fullmatch(r"[0-9a-f-]{36}", conversation_id, re.IGNORECASE) else None
 
 
 def check_and_acquire_dedupe_lock(conversation_id: str) -> bool:
@@ -238,7 +253,20 @@ def get_session_details(conversation_id, session_data, target_vendor=None):
             "memory_docs": []
         }
 
-    effective_vendor = target_vendor or detect_vendor_from_session_id(conversation_id, "antigravity")
+    effective_vendor = str(target_vendor).lower() if target_vendor else detect_vendor_from_session_id(conversation_id)
+
+    if effective_vendor == "codex":
+        return {
+            "session_id": conversation_id,
+            "is_main": False,
+            "is_unregistered": True,
+            "title": "Codex vendor unsupported",
+            "module_key": "unknown",
+            "created_at": None,
+            "last_active_at": None,
+            "summary": None,
+            "memory_docs": []
+        }
 
     # 1. 如果包含 vendors 分区 (Schema v4 / v3)
     if isinstance(session_data.get("vendors"), dict):
@@ -247,13 +275,7 @@ def get_session_details(conversation_id, session_data, target_vendor=None):
             if not v_details["is_unregistered"]:
                 return v_details
 
-        # 跨所有 vendor 分区匹配
-        for v_key, v_data in session_data["vendors"].items():
-            if v_key == effective_vendor:
-                continue
-            v_details = match_in_vendor_data(conversation_id, v_data)
-            if not v_details["is_unregistered"]:
-                return v_details
+        return match_in_vendor_data(conversation_id, session_data["vendors"].get(effective_vendor))
 
     # 2. 顶层单厂商匹配 (Schema v2 或当前 vendor 顶层数据)
     return match_in_vendor_data(conversation_id, session_data)
@@ -262,7 +284,7 @@ def get_session_details(conversation_id, session_data, target_vendor=None):
 def extract_main_thread_id(session_data, target_vendor=None):
     if not session_data or not isinstance(session_data, dict):
         return None
-    effective_vendor = target_vendor or "antigravity"
+    effective_vendor = target_vendor
     if isinstance(session_data.get("vendors"), dict) and effective_vendor in session_data["vendors"]:
         v = session_data["vendors"][effective_vendor]
         if isinstance(v, dict) and v.get("main_thread_id"):
@@ -295,12 +317,12 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
             lines.append("  3. 主会话子代理派遣权限严格受限 (Reviewer & Explorer Only): 主会话严禁派遣 Worker (落地/写代码子代理)，主会话仅限派遣 reviewer (代码审查走查) 与 explorer / research (架构只读探索);")
             lines.append("  4. 实体会话与 KV Cache 价值: 主会话与专题会话为长期存在的物理会话实体 (Permanent Physical Session Entities)，常驻 IDE 左侧边栏列表中，存储历史积累并极大提升大模型 Prompt Token Cache (KV Cache) 命中率，大幅降低延迟与成本;")
             lines.append("  5. 需求定界与白名单: 提炼单一职责目标、验收准则与严格的物理白名单 (Allowlist)，明确任务类型 ([EXPLORE] 或 [WORK]);")
-            lines.append("  6. 防冲突与复用: 派发前强制比对现有专题清单 (modules/tags/docs/memory)，复用优先，严禁重复创建重叠专题;")
+            lines.append("  6. 专题职责正交对齐与严禁跨界污染 (Strict Topic Ownership & Anti-Pollution): 严禁逮着同一个活跃会话持续薅！派单前必须严格根据修改文件的物理路径与领域职责 (如 scripts/hooks 归 hook, providers/session 归 session_control, subagent 归 subagent, install/plugin 归 plugin_spec) 精确路由到法定专题。严禁把无关改动塞入其他专题导致上下文与 KV Cache 污染；若为全新业务需求，必须通过 /new-session 建立独立业务专题;")
             lines.append("  7. 缺失专题与不明确流转铁律: 若无可用专题会话或不清楚如何新建/请求会话，必须先查阅文档指导 (references/sdk/README.md, skills/new-session/SKILL.md, skills/session-control/SKILL.md)，若仍需确认必须主动向用户请求指引并询问，绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理;")
-            lines.append("  8. 任务派单流转: 寻找专题 -> 没有则按规范创建顶层专题会话 -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;")
+            lines.append("  8. 任务派单流转与权责核验 (Dispatch Workflow & Seam Gate): 寻找专题 -> 没有则按规范创建顶层专题会话 -> 派单前必须在思维链中核验拟下发 Allowlist 物理文件是否 100% 属于目标专题权责 (严禁搭便车派单) -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;")
             lines.append("  9. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 专题会话内 Subagent 并行协作;")
-            lines.append("  10. 批判性门禁核验与杜绝盲目透传 (Critical Verification Gate & Anti-Rubber-Stamp): 严禁充当传声筒盲目轻信专题汇报！主会话必须执行四步独立质检：① 独立执行自动化单测/构建命令获取真实 Exit Code 0 证据；② 真实 Diff 审查，走查改动是否 100% 严格在 Allowlist 内且无冗余代码与格式污染；③ 必要时派遣 reviewer 子代理交叉走查；④ 验收通过方可更新状态，未通过强制下发 DELIVERABLE_REJECTED 驳回重修 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md);")
-            lines.append("  11. 看门狗 30s 探针门禁循环与 120s 准入机制 (Watchdog 30s Probe Gate Loop & 120s Audit Admission): 派单后挂载 30s 探针 (schedule DurationSeconds=30)。30s 触发时必须执行 node scripts/inspect_agy_sessions.js --probe-dispatch <session_id> 检查真活跃 (thread_running/is_working)。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 定时器！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 探针循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 偏差巡检定时器 (参考 references/dispatch-contract.md)。")
+            lines.append("  10. 批判性门禁核验与质检分流 (Critical Verification Gate & Verification Triage): 严禁充当传声筒盲目轻信专题汇报！主会话必须执行质检核验：① 针对底层协议、核心算法、状态机及偏后端稳定计算，独立执行自动化单测/构建命令获取 Exit Code 0 证据；针对强前端交互、UI 渲染及轻量展示接口，免除新建冗余单测，执行编译/构建与语法检查，并向用户出具明确的【页面刷新验证指引卡】；② 真实 Diff 审查，走查改动是否严格在 Allowlist 内且无冗余代码与格式污染；③ 必要时派遣 reviewer 子代理交叉走查；④ 验收通过方可更新状态，未通过强制下发 DELIVERABLE_REJECTED 驳回重修 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md);")
+            lines.append("  11. 双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks): 派单后挂载 30s 进度监测器 (schedule DurationSeconds=30)。30s 触发时必须执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <session_id> 检查真活跃 (thread_running/is_working)。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 巡检任务！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 进度监测器循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 巡检任务 (参考 references/dispatch-contract.md)。")
     elif details.get("module_key") == "session_control":
         sess_rules = plugin_rules.get("session_control")
         if sess_rules and isinstance(sess_rules, list):
@@ -337,14 +359,14 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
             lines.append("  1. 物理实体与领域深耕: 作为长期常驻 IDE 侧边栏的物理会话实体，持续沉淀领域上下文并最大化大模型 KV Cache 命中率;")
             lines.append("  2. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;")
             lines.append("  3. 专题内子代理协同: 专题会话承接任务后，可按需在专题内拉起子代理 (subagents) 进行多任务拆解协同或直接落地实施;")
-            lines.append("  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (单测 Exit Code 0) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。")
+            lines.append("  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (稳定计算单测 Exit Code 0 vs 交互界面构建自测+刷新指引) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。")
 
     # 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效，且目标主会话不能为自身，杜绝自发自收死循环)
     if not details.get("is_main"):
         target_main_id = main_thread_id or "<main_thread_id>"
         if target_main_id != details.get("session_id"):
             lines.append("- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:")
-            lines.append("  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后，严禁仅在当前窗口输出文本结束！")
+            lines.append("  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后 (根据任务性质分流：稳定计算单测自证 vs 交互界面构建自测+提供刷新验证指引)，严禁仅在当前窗口输出文本结束！")
             lines.append(f"  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient=\"{target_main_id}\", message=\"[专题交付: WORK]...\") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！")
 
     # 检查是否手动开启 Hook 提示词 dump 调试开关 (默认 false)
@@ -406,10 +428,22 @@ def generate_injection_message(conversation_id, session_data, active_todo, templ
 def process_payload(payload):
     try:
         conversation_id = payload.get("conversationId") or payload.get("conversation_id") or payload.get("sessionId") or payload.get("session_id")
+        target_vendor = resolve_target_vendor(payload, conversation_id)
+
+        if target_vendor == "codex":
+            return {
+                "supported": False,
+                "vendor": "codex",
+                "hook": "PreInvocation",
+                "status": "unsupported",
+                "reasonCode": "CODEX_AUTOMATIC_HOOK_UNSUPPORTED",
+                "reason": "Codex automatic PreInvocation hook is unsupported; no context injection was performed."
+            }
+
         if not conversation_id and "ANTIGRAVITY_CONVERSATION_ID" in os.environ:
             conversation_id = os.environ["ANTIGRAVITY_CONVERSATION_ID"]
 
-        if not conversation_id:
+        if not conversation_id or not target_vendor:
             return {"injectSteps": []}
 
         # 避免工作区插件与全局用户插件同时触发 PreInvocation 产生重复注入 (只要非测试模式即执行 2000ms 独占排他去重)
@@ -419,7 +453,6 @@ def process_payload(payload):
             return {"injectSteps": []}
 
         ws_root = resolve_workspace_root(payload.get("workspacePaths"))
-        target_vendor = payload.get("vendor") or ("zcode" if os.environ.get("ZCODE_SESSION_ID") else ("codex" if os.environ.get("CODEX_THREAD_ID") else detect_vendor_from_session_id(conversation_id, "antigravity")))
         session_data = find_sessions_registry(ws_root, target_vendor)
         templates = find_prompt_templates(ws_root)
         active_todo = find_active_todo(ws_root, conversation_id)

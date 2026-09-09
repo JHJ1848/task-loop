@@ -21,6 +21,22 @@ function withTempWorkspace(fn) {
   }
 }
 
+function writeZcodeRegistry(ws, sessionIds) {
+  const agentDir = path.join(ws, '.agents', 'task-loop');
+  fs.mkdirSync(agentDir, { recursive: true });
+  fs.writeFileSync(path.join(agentDir, 'sessions.json'), JSON.stringify({
+    schema_version: 4,
+    vendors: {
+      zcode: {
+        vendor: 'zcode',
+        main_thread_id: null,
+        modules: {},
+        sessions: sessionIds.map(session_id => ({ session_id, vendor: 'zcode', is_main: false }))
+      }
+    }
+  }, null, 2), 'utf8');
+}
+
 function testInjectContract() {
   withTempWorkspace(ws => {
     const env = {};
@@ -62,9 +78,12 @@ function testInjectSessionStartAndEnvFallback() {
 
 function testGateDenyShape() {
   const prevAllowlist = process.env.TASK_LOOP_ALLOWLIST;
+  const prevZcodeSession = process.env.ZCODE_SESSION_ID;
   process.env.TASK_LOOP_ALLOWLIST = JSON.stringify(['src/**']);
+  process.env.ZCODE_SESSION_ID = 'sess_gate1';
   try {
     withTempWorkspace(ws => {
+      writeZcodeRegistry(ws, ['sess_gate1']);
       const denyPayload = {
         session_id: 'sess_gate1',
         hook_event_name: 'PreToolUse',
@@ -88,6 +107,12 @@ function testGateDenyShape() {
       const allowOut = gateAdapter.processPayload(allowPayload, {});
       assert.deepStrictEqual(allowOut, {});
 
+      const unregisteredOut = gateAdapter.processPayload({
+        ...allowPayload,
+        session_id: 'sess_unregistered',
+      }, {});
+      assert.strictEqual(unregisteredOut.hookSpecificOutput.permissionDecision, 'deny');
+
       // Non-write tools pass silently regardless of path
       const readPayload = Object.assign({}, denyPayload, {
         tool_name: 'Read',
@@ -98,6 +123,8 @@ function testGateDenyShape() {
   } finally {
     if (prevAllowlist === undefined) delete process.env.TASK_LOOP_ALLOWLIST;
     else process.env.TASK_LOOP_ALLOWLIST = prevAllowlist;
+    if (prevZcodeSession === undefined) delete process.env.ZCODE_SESSION_ID;
+    else process.env.ZCODE_SESSION_ID = prevZcodeSession;
   }
 }
 

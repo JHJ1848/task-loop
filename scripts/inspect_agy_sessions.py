@@ -439,7 +439,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
 
     is_working = bool(model_steps_after_dispatch > 0 or thread_running)
     can_enter_120s_gate = is_working
-    should_loop_30s_probe = not is_working
+    should_loop_30s_monitor = not is_working
 
     return {
         "session_id": session_id,
@@ -448,7 +448,8 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
         "is_working": is_working,
         "working_status": "WORKING_IN_PROGRESS" if is_working else "DORMANT_NOT_ACTIVATED",
         "can_enter_120s_gate": can_enter_120s_gate,
-        "should_loop_30s_probe": should_loop_30s_probe,
+        "should_loop_30s_monitor": should_loop_30s_monitor,
+        "should_loop_30s_probe": should_loop_30s_monitor,
         "dispatch_found": (last_dispatch_index != -1),
         "dispatch_step_index": last_dispatch_index,
         "last_dispatch_step": last_dispatch_step,
@@ -458,21 +459,23 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
         "in_progress_steps_count": in_progress_steps_count,
         "latest_model_step": latest_model_step,
         "deep_link": f"conversation://{session_id}",
-        "alert_card": None if is_working else f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未进入大模型真实工作态 (未见 MODEL 步 / thread_running: false)！\n【自愈与门禁规则】:\n1. 绝对严禁挂载 120s 定时器进入盲等！\n2. 立即通过 agentapi.bat send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n[-> 点击切换并激活专题会话](conversation://{session_id})\n3. 必须继续挂载 30s 探针循环监控，直到真实激活。"
+        "alert_card": None if is_working else f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未进入大模型真实工作态 (未见 MODEL 步 / thread_running: false)！\n【自愈与门禁规则】:\n1. 绝对严禁挂载 120s 巡检任务进入盲等！\n2. 立即通过 agentapi.bat send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n[-> 点击切换并激活专题会话](conversation://{session_id})\n3. 必须继续挂载 30s 进度监测器循环监控，直到真实激活。"
     }
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Antigravity Project Session Inspector & State Probe")
+    parser = argparse.ArgumentParser(description="Antigravity Project Session Inspector & Progress Monitor")
     parser.add_argument("--root", default=".", help="Project root directory (default: .)")
     parser.add_argument("--brain-path", default=None, help="Custom AGY brain directory path")
     parser.add_argument("--active-window", type=int, default=30, help="Minutes to consider a session ACTIVE (default: 30)")
-    parser.add_argument("--probe-dispatch", default=None, help="Probe target session for real MODEL execution post-dispatch")
+    parser.add_argument("--monitor-dispatch", default=None, help="Monitor target session for real MODEL execution post-dispatch (alias: --probe-dispatch)")
+    parser.add_argument("--probe-dispatch", default=None, help="Alias for --monitor-dispatch")
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of table")
     args = parser.parse_args()
 
-    if args.probe_dispatch:
-        probe_result = probe_dispatch_session(args.probe_dispatch, brain_path=args.brain_path)
+    target_dispatch_id = args.monitor_dispatch or args.probe_dispatch
+    if target_dispatch_id:
+        probe_result = probe_dispatch_session(target_dispatch_id, brain_path=args.brain_path)
         print(json.dumps(probe_result, ensure_ascii=False, indent=2))
         sys.exit(0)
 

@@ -417,7 +417,7 @@ function probeDispatchSession(sessionId, options = {}) {
 
   const isWorking = Boolean(modelStepsAfterDispatch > 0 || threadRunning);
   const canEnter120sGate = isWorking;
-  const shouldLoop30sProbe = !isWorking;
+  const shouldLoop30sMonitor = !isWorking;
 
   return {
     session_id: sessionId,
@@ -426,7 +426,8 @@ function probeDispatchSession(sessionId, options = {}) {
     is_working: isWorking,
     working_status: isWorking ? 'WORKING_IN_PROGRESS' : 'DORMANT_NOT_ACTIVATED',
     can_enter_120s_gate: canEnter120sGate,
-    should_loop_30s_probe: shouldLoop30sProbe,
+    should_loop_30s_monitor: shouldLoop30sMonitor,
+    should_loop_30s_probe: shouldLoop30sMonitor,
     dispatch_found: lastDispatchIndex !== -1,
     dispatch_step_index: lastDispatchIndex,
     last_dispatch_step: lastDispatchStep,
@@ -436,7 +437,7 @@ function probeDispatchSession(sessionId, options = {}) {
     in_progress_steps_count: inProgressStepsCount,
     latest_model_step: latestModelStep,
     deep_link: `conversation://${sessionId}`,
-    alert_card: isWorking ? null : `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未进入大模型真实工作态 (未见 MODEL 步 / thread_running: false)！\n【自愈与门禁规则】:\n1. 绝对严禁挂载 120s 定时器进入盲等！\n2. 立即通过 agentapi.bat send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n[-> 点击切换并激活专题会话](conversation://${sessionId})\n3. 必须继续挂载 30s 探针循环监控，直到真实激活。`
+    alert_card: isWorking ? null : `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未进入大模型真实工作态 (未见 MODEL 步 / thread_running: false)！\n【自愈与门禁规则】:\n1. 绝对严禁挂载 120s 巡检任务进入盲等！\n2. 立即通过 agentapi.bat send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n[-> 点击切换并激活专题会话](conversation://${sessionId})\n3. 必须继续挂载 30s 进度监测器循环监控，直到真实激活。`
   };
 }
 
@@ -455,7 +456,7 @@ if (require.main === module) {
       brainPath = args[++i];
     } else if (args[i] === '--active-window' && args[i + 1]) {
       activeWindow = parseInt(args[++i], 10) || 30;
-    } else if (args[i] === '--probe-dispatch' && args[i + 1]) {
+    } else if ((args[i] === '--probe-dispatch' || args[i] === '--monitor-dispatch') && args[i + 1]) {
       probeDispatchId = args[++i];
     } else if (args[i] === '--json') {
       isJson = true;
@@ -465,7 +466,8 @@ if (require.main === module) {
       console.log(`  --root <path>               Project root directory (default: .)`);
       console.log(`  --brain-path <path>         Custom AGY brain directory`);
       console.log(`  --active-window <mins>      Minutes to consider a session ACTIVE (default: 30)`);
-      console.log(`  --probe-dispatch <sess_id>  Probe target session for real MODEL execution post-dispatch`);
+      console.log(`  --monitor-dispatch <id>     Monitor target session for real MODEL execution post-dispatch (alias: --probe-dispatch)`);
+      console.log(`  --probe-dispatch <sess_id>  Alias for --monitor-dispatch`);
       console.log(`  --json                      Output raw JSON instead of table`);
       process.exit(0);
     }

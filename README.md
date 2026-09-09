@@ -66,6 +66,22 @@ task-loop/
 
 ## [Quick Start] 快速上手
 
+## [Codex Compatibility]
+
+Codex 使用稳定降级 Provider：默认调用 `codex queue --thread <id> --message <text>`，只有显式 `--resume` 才使用 `codex exec resume <id> <prompt>`。仅 exit code 0 标为 `SUBMITTED`；CLI 不可用或失败均为 `PREPARED_ONLY`。Desktop thread 工具必须由当前运行时明确暴露；Codex 不接入 AGY/ZCode 的 PreInvocation 或 PreToolUse Hook，app-server/MCP 仅实验。
+
+Codex 会话说明书见 [`references/sdk/codex.md`](references/sdk/codex.md)，其中区分已验证 CLI、运行时注入的 Desktop/SDK/API 适配器，以及尚待实验的 App Server/MCP 协议。安装插件后该文件随 `references/` 一并提供。
+
+重复安装与验证（不手改 marketplace）：
+
+```powershell
+node -e "const fs=require('fs'); const p='.agents/plugins/task-loop/.codex-plugin/plugin.json'; const x=JSON.parse(fs.readFileSync(p,'utf8')); if(x.name!=='task-loop'||x.skills!=='./skills/'||Object.keys(x).length!==3) process.exit(1); console.log('manifest OK')"
+codex plugin add task-loop@personal --json
+codex plugin list --marketplace personal --json
+```
+
+新线程检查需要在 Codex Desktop 中新建该项目线程并调用 `task-loop` Skill；确认 Skill 可见即可。当前宿主未暴露稳定的 `create_thread`/`send_message_to_thread`/`wait_threads` 工具，因此不能用脚本伪造该项通过，也不应期待 AGY Hook 注入。
+
 ### 1. 作为 Antigravity Plugin 插件使用 (推荐)
 - **工作区级安装**：将本项目目录软链接或放置于工作区 `.agents/plugins/task-loop/`；
 - **全局用户级安装**：放置于 `~/.gemini/config/plugins/task-loop/`；
