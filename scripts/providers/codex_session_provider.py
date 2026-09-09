@@ -21,12 +21,12 @@ def normalize_request(request=None):
         "thread": request.get("thread") or request.get("threadId") or request.get("sessionId"),
         "message": request.get("message") or request.get("prompt"),
         "mode": "resume" if request.get("mode") == "resume" else "queue",
-        "dry_run": bool(request.get("dry_run", request.get("dryRun", False))),
+        "dry_run": bool(request.get("dry_run") or request.get("dryRun")),
     }
 
 
 def confirmed(transport, result):
-    if result and result.get("submitted") is True:
+    if isinstance(result, dict) and result.get("submitted") is True:
         return {"status": "SUBMITTED", "submitted": True, "transport": transport, "result": result}
     return prepared("Codex adapter did not return explicit submission confirmation", transport=transport, result=result)
 
@@ -38,22 +38,28 @@ def submit(request, capabilities=None, cli=True, run_cli=None):
     if normalized["dry_run"]:
         return prepared("dry-run; no Codex transport was executed", request=normalized)
     capabilities = capabilities or {}
+    failures = []
     for transport in ("desktop", "sdk", "api"):
         adapter = capabilities.get(transport)
         if not callable(adapter):
             continue
         if inspect.iscoroutinefunction(adapter):
-            return prepared("Async Codex adapter requires submit_async()", transport=transport)
+            failures.append(f"Codex {transport} adapter requires submit_async()")
+            continue
         try:
             result = adapter({**normalized, "transport": transport})
             if inspect.isawaitable(result):
-                return prepared("Codex adapter returned an awaitable; use submit_async()", transport=transport)
-            return confirmed(transport, result)
+                failures.append(f"Codex {transport} adapter returned an awaitable; use submit_async()")
+                continue
+            outcome = confirmed(transport, result)
+            if outcome.get("submitted") is True:
+                return outcome
+            failures.append(f"{transport}: {outcome.get('reason', 'adapter rejected submission')}")
         except Exception as error:
-            return prepared(f"Codex {transport} adapter failed: {error}", transport=transport)
+            failures.append(f"Codex {transport} adapter failed: {error}")
     if cli:
         return dispatch_cli(normalized, run_cli)
-    return prepared("No Codex Desktop, SDK, API, or CLI transport is available")
+    return prepared("; ".join(failures) or "No Codex Desktop, SDK, API, or CLI transport is available")
 
 
 async def submit_async(request, capabilities=None, cli=True, run_cli=None):
@@ -68,9 +74,11 @@ async def submit_async(request, capabilities=None, cli=True, run_cli=None):
             continue
         try:
             result = adapter({**normalized, "transport": transport})
-            if asyncio.iscoroutine(result):
+            if inspect.isawaitable(result):
                 result = await result
-            return confirmed(transport, result)
+            outcome = confirmed(transport, result)
+            if outcome.get("submitted") is True:
+                return outcome
         except Exception as error:
-            return prepared(f"Codex {transport} adapter failed: {error}", transport=transport)
+            continue
     return submit(normalized, {}, cli, run_cli)

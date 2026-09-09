@@ -7,8 +7,14 @@ assert.strictEqual(queue.status, 'SUBMITTED');
 assert.strictEqual(queue.submitted, true);
 
 const resume = provider.dispatch({ thread: 'thread-2', message: 'continue', mode: 'resume' }, () => ({ status: 0 }));
-assert.deepStrictEqual(resume.command.slice(1), ['exec', 'resume', 'thread-2', 'continue']);
+assert.deepStrictEqual(resume.command.slice(1), ['exec', 'resume', 'thread-2', '-']);
 assert.strictEqual(resume.status, 'SUBMITTED');
+let resumeInput;
+provider.dispatch({ thread: 'thread-2b', message: '--help', mode: 'resume' }, (argv, options) => {
+  resumeInput = options.input;
+  return { status: 0 };
+});
+assert.strictEqual(resumeInput, '--help');
 
 const failed = provider.dispatch({ thread: 'thread-3', message: 'nope' }, () => ({ status: 7 }));
 assert.strictEqual(failed.status, 'PREPARED_ONLY');

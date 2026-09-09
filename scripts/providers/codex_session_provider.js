@@ -7,7 +7,7 @@ function prepared(reason, extra = {}) {
 }
 
 function normalizeRequest(request = {}) {
-  request = request && typeof request === 'object' ? request : {};
+  request = request && typeof request === 'object' && !Array.isArray(request) ? request : {};
   return {
     thread: request.thread || request.threadId || request.sessionId,
     message: request.message || request.prompt,
@@ -27,26 +27,30 @@ function submit(request, capabilities = {}, options = {}) {
   if (!normalized.thread || !normalized.message) return prepared('thread and message are required');
   if (normalized.dryRun) return prepared('dry-run; no Codex transport was executed', { request: normalized });
 
+  const failures = [];
   for (const transport of ['desktop', 'sdk', 'api']) {
     const adapter = capabilities[transport];
     if (typeof adapter !== 'function') continue;
     if (adapter.constructor && adapter.constructor.name === 'AsyncFunction') {
-      return prepared('Async Codex adapter requires submitAsync()', { transport });
+      failures.push(`Codex ${transport} adapter requires submitAsync()`);
+      continue;
     }
     try {
       const result = adapter({ ...normalized, transport });
       if (result && typeof result.then === 'function') {
-        return prepared('Codex adapter returned a thenable; use submitAsync()', { transport });
+        failures.push(`Codex ${transport} adapter returned a thenable; use submitAsync()`);
+        continue;
       }
-      return confirmed(transport, result);
+      const outcome = confirmed(transport, result);
+      if (outcome.submitted === true) return outcome;
+      failures.push(`${transport}: ${outcome.reason}`);
     } catch (error) {
-      return prepared(`Codex ${transport} adapter failed: ${error.message}`, { transport });
+      failures.push(`Codex ${transport} adapter failed: ${error.message}`);
     }
   }
-  if (options.cli !== false) {
-    return cliDispatch.dispatch(normalized, options.runCli);
-  }
-  return prepared('No Codex Desktop, SDK, API, or CLI transport is available');
+  return options.cli !== false
+    ? cliDispatch.dispatch(normalized, options.runCli)
+    : prepared(failures.join('; ') || 'No Codex Desktop, SDK, API, or CLI transport is available');
 }
 
 async function submitAsync(request, capabilities = {}, options = {}) {
@@ -54,13 +58,16 @@ async function submitAsync(request, capabilities = {}, options = {}) {
   if (!normalized.thread || !normalized.message) return prepared('thread and message are required');
   if (normalized.dryRun) return prepared('dry-run; no Codex transport was executed', { request: normalized });
 
+  const failures = [];
   for (const transport of ['desktop', 'sdk', 'api']) {
     const adapter = capabilities[transport];
     if (typeof adapter !== 'function') continue;
     try {
-      return confirmed(transport, await adapter({ ...normalized, transport }));
+      const outcome = confirmed(transport, await adapter({ ...normalized, transport }));
+      if (outcome.submitted === true) return outcome;
+      failures.push(`${transport}: ${outcome.reason}`);
     } catch (error) {
-      return prepared(`Codex ${transport} adapter failed: ${error.message}`, { transport });
+      failures.push(`Codex ${transport} adapter failed: ${error.message}`);
     }
   }
   return submit(normalized, {}, options);

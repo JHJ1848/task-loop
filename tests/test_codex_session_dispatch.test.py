@@ -21,8 +21,13 @@ class CodexSessionDispatchTests(unittest.TestCase):
         self.assertEqual(result["command"][1:], ["queue", "--thread", "thread-1", "--message", "hello"])
 
     def test_resume_is_explicit(self):
-        result = MODULE.dispatch({"thread": "thread-2", "message": "continue", "mode": "resume"}, lambda command: Result(0))
-        self.assertEqual(result["command"][1:], ["exec", "resume", "thread-2", "continue"])
+        seen = {}
+        def runner(command, input_text=None):
+            seen["input"] = input_text
+            return Result(0)
+        result = MODULE.dispatch({"thread": "thread-2", "message": "--help", "mode": "resume"}, runner)
+        self.assertEqual(result["command"][1:], ["exec", "resume", "thread-2", "-"])
+        self.assertEqual(seen["input"], "--help")
 
     def test_failure_is_prepared_only(self):
         result = MODULE.dispatch({"thread": "thread-3", "message": "nope"}, lambda command: Result(7))

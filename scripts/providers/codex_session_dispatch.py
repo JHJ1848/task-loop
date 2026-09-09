@@ -26,7 +26,7 @@ def build_command(options, codex_bin=None):
         raise ValueError("--thread and --message are required")
     codex_bin = codex_bin or os.environ.get("CODEX_BIN", "codex")
     if options.get("mode") == "resume":
-        return [codex_bin, "exec", "resume", options["thread"], options["message"]]
+        return [codex_bin, "exec", "resume", options["thread"], "-"]
     return [codex_bin, "queue", "--thread", options["thread"], "--message", options["message"]]
 
 
@@ -41,9 +41,12 @@ def dispatch(options, run_command=None):
         return {"status": "PREPARED_ONLY", "submitted": False, "reason": str(error)}
     if options.get("dry_run"):
         return prepared(command, "dry-run; no Codex command was executed")
-    run_command = run_command or (lambda cmd: subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace"))
+    run_command = run_command or (lambda cmd, input_text=None: subprocess.run(cmd, input=input_text, capture_output=True, text=True, encoding="utf-8", errors="replace"))
     try:
-        result = run_command(command)
+        if options.get("mode") == "resume":
+            result = run_command(command, options.get("message"))
+        else:
+            result = run_command(command)
     except FileNotFoundError:
         return prepared(command, "Codex CLI is unavailable; command was not submitted")
     except Exception as error:

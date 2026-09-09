@@ -24,7 +24,7 @@ function buildCommand(options, codexBin = process.env.CODEX_BIN || 'codex') {
     throw new Error('--thread and --message are required');
   }
   return options.mode === 'resume'
-    ? { command: codexBin, args: ['exec', 'resume', options.thread, options.message] }
+    ? { command: codexBin, args: ['exec', 'resume', options.thread, '-'], input: options.message }
     : { command: codexBin, args: ['queue', '--thread', options.thread, '--message', options.message] };
 }
 
@@ -37,8 +37,12 @@ function prepared(command, reason) {
   };
 }
 
-function runCodexCommand(argv) {
-  return childProcess.spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', windowsHide: true });
+function runCodexCommand(argv, options = {}) {
+  return childProcess.spawnSync(argv[0], argv.slice(1), {
+    encoding: 'utf8',
+    windowsHide: true,
+    input: options.input
+  });
 }
 
 function dispatch(options, runCommand = runCodexCommand) {
@@ -53,7 +57,7 @@ function dispatch(options, runCommand = runCodexCommand) {
   const argv = [command.command, ...command.args];
   let result;
   try {
-    result = runCommand(argv);
+    result = runCommand(argv, { input: command.input });
   } catch (error) {
     return prepared(command, `Codex CLI launch failed: ${error.message}`);
   }

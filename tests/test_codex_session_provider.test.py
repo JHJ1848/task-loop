@@ -21,6 +21,14 @@ class ProviderTests(unittest.TestCase):
         result = MODULE.submit({"thread": "t", "message": "p"}, {"api": lambda _: {"submitted": False}}, cli=False)
         self.assertEqual(result["status"], "PREPARED_ONLY")
 
+    def test_adapter_failure_falls_back(self):
+        result = MODULE.submit({"thread": "t", "message": "p"}, {"desktop": lambda _: {"submitted": False}, "sdk": lambda _: {"submitted": True}}, cli=False)
+        self.assertEqual(result["transport"], "sdk")
+
+    def test_dry_run_aliases_are_or_semantics(self):
+        result = MODULE.submit({"thread": "t", "message": "p", "dry_run": False, "dryRun": True}, {"desktop": lambda _: {"submitted": True}}, cli=False)
+        self.assertEqual(result["status"], "PREPARED_ONLY")
+
     def test_cli_fallback(self):
         result = MODULE.submit({"thread": "t", "message": "p"}, {}, run_cli=lambda _: Result())
         self.assertEqual(result["status"], "SUBMITTED")
@@ -30,6 +38,13 @@ class ProviderTests(unittest.TestCase):
 
     def test_null_request_is_prepared(self):
         self.assertEqual(MODULE.submit(None, {}, cli=False)["status"], "PREPARED_ONLY")
+
+    def test_array_request_is_prepared(self):
+        self.assertEqual(MODULE.submit([], {}, cli=False)["status"], "PREPARED_ONLY")
+
+    def test_non_mapping_adapter_result_is_prepared(self):
+        result = MODULE.submit({"thread": "t", "message": "p"}, {"api": lambda _: True}, cli=False)
+        self.assertEqual(result["status"], "PREPARED_ONLY")
 
     def test_async_adapter_is_not_invoked_by_sync_submit(self):
         invoked = []

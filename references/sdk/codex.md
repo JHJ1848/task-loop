@@ -13,7 +13,7 @@
   },
   {
     "degraded": "显式 --resume 的批处理续接",
-    "command": "codex exec resume <id> <prompt>",
+    "command": "codex exec resume <id> - (prompt via stdin)",
     "success_condition": "仅显式选择且 CLI exit code 0 返回 SUBMITTED"
   },
   {
@@ -25,7 +25,7 @@
 ]
 ```
 
-`scripts/providers/codex_session_dispatch.js/.py` 在未执行、CLI 缺失或非零退出时只返回 `PREPARED_ONLY`，不会伪造成功或写入 `.codex/sessions`。
+`scripts/providers/codex_session_dispatch.js/.py` 在未执行、CLI 缺失或非零退出时只返回 `PREPARED_ONLY`，不会伪造成功或写入 `.codex/sessions`。`exec resume` 使用参数 `-` 并通过 stdin 传递 prompt，避免 prompt 被 CLI 解析为选项。
 
 ### 0.1 Provider 解耦入口
 
