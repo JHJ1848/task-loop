@@ -29,6 +29,14 @@ class CodexSessionDispatchTests(unittest.TestCase):
         self.assertEqual(result["status"], "PREPARED_ONLY")
         self.assertFalse(result["submitted"])
 
+    def test_launch_failure_is_prepared_only(self):
+        def fail(_command):
+            raise PermissionError("permission denied")
+
+        result = MODULE.dispatch({"thread": "thread-3b", "message": "nope"}, fail)
+        self.assertEqual(result["status"], "PREPARED_ONLY")
+        self.assertIn("launch failed", result["reason"])
+
     def test_dry_run_never_submits(self):
         result = MODULE.dispatch({"thread": "thread-4", "message": "preview", "dry_run": True})
         self.assertEqual(result["status"], "PREPARED_ONLY")

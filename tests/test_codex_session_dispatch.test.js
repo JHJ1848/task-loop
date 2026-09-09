@@ -14,6 +14,19 @@ const failed = provider.dispatch({ thread: 'thread-3', message: 'nope' }, () => 
 assert.strictEqual(failed.status, 'PREPARED_ONLY');
 assert.strictEqual(failed.submitted, false);
 
+const launchFailure = provider.dispatch({ thread: 'thread-3b', message: 'nope' }, () => {
+  throw new Error('permission denied');
+});
+assert.strictEqual(launchFailure.status, 'PREPARED_ONLY');
+assert.match(launchFailure.reason, /launch failed/);
+
+const argvSeen = [];
+provider.dispatch({ thread: 'thread-3c', message: 'argv' }, (argv) => {
+  argvSeen.push(argv);
+  return { status: 0 };
+});
+assert.deepStrictEqual(argvSeen[0].slice(1), ['queue', '--thread', 'thread-3c', '--message', 'argv']);
+
 const prepared = provider.dispatch({ thread: 'thread-4', message: 'preview', dryRun: true });
 assert.strictEqual(prepared.status, 'PREPARED_ONLY');
 assert.strictEqual(prepared.submitted, false);

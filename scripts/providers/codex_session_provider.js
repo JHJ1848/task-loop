@@ -7,6 +7,7 @@ function prepared(reason, extra = {}) {
 }
 
 function normalizeRequest(request = {}) {
+  request = request && typeof request === 'object' ? request : {};
   return {
     thread: request.thread || request.threadId || request.sessionId,
     message: request.message || request.prompt,
@@ -29,8 +30,15 @@ function submit(request, capabilities = {}, options = {}) {
   for (const transport of ['desktop', 'sdk', 'api']) {
     const adapter = capabilities[transport];
     if (typeof adapter !== 'function') continue;
+    if (adapter.constructor && adapter.constructor.name === 'AsyncFunction') {
+      return prepared('Async Codex adapter requires submitAsync()', { transport });
+    }
     try {
-      return confirmed(transport, adapter({ ...normalized, transport }));
+      const result = adapter({ ...normalized, transport });
+      if (result && typeof result.then === 'function') {
+        return prepared('Codex adapter returned a thenable; use submitAsync()', { transport });
+      }
+      return confirmed(transport, result);
     } catch (error) {
       return prepared(`Codex ${transport} adapter failed: ${error.message}`, { transport });
     }

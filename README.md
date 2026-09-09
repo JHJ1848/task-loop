@@ -68,7 +68,7 @@ task-loop/
 
 ## [Codex Compatibility]
 
-Codex 使用稳定降级 Provider：默认调用 `codex queue --thread <id> --message <text>`，只有显式 `--resume` 才使用 `codex exec resume <id> <prompt>`。仅 exit code 0 标为 `SUBMITTED`；CLI 不可用或失败均为 `PREPARED_ONLY`。Desktop thread 工具必须由当前运行时明确暴露；Codex 不接入 AGY/ZCode 的 PreInvocation 或 PreToolUse Hook，app-server/MCP 仅实验。
+Codex 使用稳定降级 Provider：默认调用 `codex queue --thread <id> --message <text>`，只有显式 `--resume` 才使用 `codex exec resume <id> <prompt>`。仅 exit code 0 标为 `SUBMITTED`；CLI 不可用或失败均为 `PREPARED_ONLY`。Desktop thread 工具必须由当前运行时明确暴露；Codex 不接入 AGY/ZCode 的 PreInvocation 或 PreToolUse Hook，MCP `mcp-server` 已弃用，App Server 仍属实验能力。
 
 Codex 会话说明书见 [`references/sdk/codex.md`](references/sdk/codex.md)，其中区分已验证 CLI、运行时注入的 Desktop/SDK/API 适配器，以及尚待实验的 App Server/MCP 协议。安装插件后该文件随 `references/` 一并提供。
 

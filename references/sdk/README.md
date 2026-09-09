@@ -67,7 +67,7 @@
       "Desktop 工具仅在当前运行时明确暴露时可用",
       "CLI 派单 (codex queue --thread <id> --message <text>)；显式选择时才使用 codex exec resume",
       "官方 TypeScript / Python SDK",
-      "MCP / app-server 仅实验性入口，不纳入稳定自动派单"
+      "MCP mcp-server 已弃用；App Server 仅实验性入口，不纳入稳定自动派单"
     ]
   },
   {

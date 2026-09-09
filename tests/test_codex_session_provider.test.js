@@ -6,4 +6,9 @@ assert.strictEqual(provider.submit({ thread: 't', message: 'p' }, { sdk: () => (
 assert.strictEqual(provider.submit({ thread: 't', message: 'p' }, { api: () => ({ submitted: false }) }, { cli: false }).status, 'PREPARED_ONLY');
 assert.strictEqual(provider.submit({ thread: 't', message: 'p' }, {}, { runCli: () => ({ status: 0 }) }).status, 'SUBMITTED');
 assert.strictEqual(provider.submit({ message: 'p' }, {}, { cli: false }).status, 'PREPARED_ONLY');
+assert.strictEqual(provider.submit(null, {}, { cli: false }).status, 'PREPARED_ONLY');
+let asyncInvoked = false;
+const asyncAdapter = async () => { asyncInvoked = true; return { submitted: true }; };
+assert.strictEqual(provider.submit({ thread: 't', message: 'p' }, { desktop: asyncAdapter }, { cli: false }).status, 'PREPARED_ONLY');
+assert.strictEqual(asyncInvoked, false);
 console.log('Codex session provider Node.js tests PASSED!');

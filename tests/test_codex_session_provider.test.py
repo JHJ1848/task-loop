@@ -28,6 +28,20 @@ class ProviderTests(unittest.TestCase):
     def test_missing_thread_is_prepared(self):
         self.assertEqual(MODULE.submit({"message": "p"}, {}, cli=False)["status"], "PREPARED_ONLY")
 
+    def test_null_request_is_prepared(self):
+        self.assertEqual(MODULE.submit(None, {}, cli=False)["status"], "PREPARED_ONLY")
+
+    def test_async_adapter_is_not_invoked_by_sync_submit(self):
+        invoked = []
+
+        async def adapter(_request):
+            invoked.append(True)
+            return {"submitted": True}
+
+        result = MODULE.submit({"thread": "t", "message": "p"}, {"desktop": adapter}, cli=False)
+        self.assertEqual(result["status"], "PREPARED_ONLY")
+        self.assertEqual(invoked, [])
+
 
 if __name__ == "__main__":
     unittest.main()

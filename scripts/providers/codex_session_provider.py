@@ -1,5 +1,6 @@
 """Runtime-only Codex transport selection. It never reads or writes task-loop state."""
 import asyncio
+import inspect
 import os
 import sys
 
@@ -15,7 +16,7 @@ def prepared(reason, **extra):
 
 
 def normalize_request(request=None):
-    request = request or {}
+    request = request if isinstance(request, dict) else {}
     return {
         "thread": request.get("thread") or request.get("threadId") or request.get("sessionId"),
         "message": request.get("message") or request.get("prompt"),
@@ -41,10 +42,12 @@ def submit(request, capabilities=None, cli=True, run_cli=None):
         adapter = capabilities.get(transport)
         if not callable(adapter):
             continue
+        if inspect.iscoroutinefunction(adapter):
+            return prepared("Async Codex adapter requires submit_async()", transport=transport)
         try:
             result = adapter({**normalized, "transport": transport})
-            if asyncio.iscoroutine(result):
-                return prepared("async adapters require submit_async()", transport=transport)
+            if inspect.isawaitable(result):
+                return prepared("Codex adapter returned an awaitable; use submit_async()", transport=transport)
             return confirmed(transport, result)
         except Exception as error:
             return prepared(f"Codex {transport} adapter failed: {error}", transport=transport)

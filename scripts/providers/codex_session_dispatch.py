@@ -46,6 +46,8 @@ def dispatch(options, run_command=None):
         result = run_command(command)
     except FileNotFoundError:
         return prepared(command, "Codex CLI is unavailable; command was not submitted")
+    except Exception as error:
+        return prepared(command, f"Codex CLI launch failed: {error}")
     if getattr(result, "returncode", None) == 0:
         return {"status": "SUBMITTED", "submitted": True, "command": command}
     return prepared(command, f"Codex CLI exited {getattr(result, 'returncode', 'without a status')}")

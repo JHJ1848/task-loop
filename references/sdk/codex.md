@@ -86,8 +86,8 @@
   },
   {
     "scenario": "Codex 作为更大多 Agent 编排中的一个执行者",
-    "preferred_interface": "codex mcp-server + Agents SDK",
-    "applicability": "MCP 的 codex / codex-reply 工具适合被上层 Agent 调用",
+    "preferred_interface": "codex mcp-server（已弃用；仅用于存量兼容评估）",
+    "applicability": "官方文档已将 codex mcp-server 标记为 deprecated；新集成不应选择它，优先使用 CLI、已核实 SDK 或 App Server 协议",
     "forbidden_behavior": "用扫描结果作为 codex-reply.threadId"
   },
   {
@@ -221,7 +221,7 @@ python scripts/find_project_sessions.py --root . --vendor Codex --current
 
 ## 6. Codex MCP Server 与 App Server
 
-### MCP Server 工具规范：
+### MCP Server 工具规范（deprecated）：
 ```json
 [
   {
@@ -236,6 +236,8 @@ python scripts/find_project_sessions.py --root . --vendor Codex --current
   }
 ]
 ```
+
+当前 Codex CLI 的 `mcp-server` 入口仅保留兼容性价值，官方文档标记为 deprecated；本项目不将其作为稳定自动派单路径，也不把 MCP 工具可用性作为 `SUBMITTED` 成功依据。参考：[Codex SDK 官方文档](https://learn.chatgpt.com/docs/codex-sdk.md)。
 
 ### App Server (JSON-RPC) 命令：
 ```bash

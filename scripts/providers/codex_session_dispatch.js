@@ -37,7 +37,11 @@ function prepared(command, reason) {
   };
 }
 
-function dispatch(options, runCommand = childProcess.spawnSync) {
+function runCodexCommand(argv) {
+  return childProcess.spawnSync(argv[0], argv.slice(1), { encoding: 'utf8', windowsHide: true });
+}
+
+function dispatch(options, runCommand = runCodexCommand) {
   let command;
   try {
     command = buildCommand(options);
@@ -46,9 +50,15 @@ function dispatch(options, runCommand = childProcess.spawnSync) {
   }
   if (options.dryRun) return prepared(command, 'dry-run; no Codex command was executed');
 
-  const result = runCommand(command.command, command.args, { encoding: 'utf8', windowsHide: true });
+  const argv = [command.command, ...command.args];
+  let result;
+  try {
+    result = runCommand(argv);
+  } catch (error) {
+    return prepared(command, `Codex CLI launch failed: ${error.message}`);
+  }
   if (result && result.status === 0 && !result.error) {
-    return { status: 'SUBMITTED', submitted: true, command: [command.command, ...command.args] };
+    return { status: 'SUBMITTED', submitted: true, command: argv };
   }
   if (result && result.error && result.error.code === 'ENOENT') {
     return prepared(command, 'Codex CLI is unavailable; command was not submitted');
@@ -56,7 +66,7 @@ function dispatch(options, runCommand = childProcess.spawnSync) {
   return {
     status: 'PREPARED_ONLY',
     submitted: false,
-    command: [command.command, ...command.args],
+    command: argv,
     reason: `Codex CLI exited ${result && typeof result.status === 'number' ? result.status : 'without a status'}`
   };
 }
@@ -69,4 +79,4 @@ function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { parseArgs, buildCommand, dispatch, main };
+module.exports = { parseArgs, buildCommand, dispatch, main, runCodexCommand };
