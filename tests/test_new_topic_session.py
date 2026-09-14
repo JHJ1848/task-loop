@@ -10,7 +10,8 @@ from scripts.new_topic_session import (
     parse_memory_doc,
     create_topic_memory_doc,
     provision_single_doc,
-    provision_all_missing
+    provision_all_missing,
+    spawn_root_conversation,
 )
 
 
@@ -69,6 +70,17 @@ class TestNewTopicSessionSkill(unittest.TestCase):
         self.assertEqual(len(survey["all_docs"]), 1)
         self.assertEqual(len(survey["missing"]), 1)
         self.assertEqual(len(survey["aligned"]), 0)
+
+    def test_codex_spawn_emits_template_only(self):
+        previous = os.environ.get("CODEX_THREAD_ID")
+        os.environ["CODEX_THREAD_ID"] = "codex-test-thread"
+        try:
+            self.assertIsNone(spawn_root_conversation("[测试专题] x", "初始化", self.tmp_ws))
+        finally:
+            if previous is None:
+                os.environ.pop("CODEX_THREAD_ID", None)
+            else:
+                os.environ["CODEX_THREAD_ID"] = previous
 
 
 if __name__ == "__main__":

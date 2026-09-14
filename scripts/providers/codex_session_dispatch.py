@@ -10,8 +10,9 @@ def parse_args(argv):
     index = 0
     while index < len(argv):
         arg = argv[index]
-        if arg in ("--thread", "--message") and index + 1 < len(argv):
-            options[arg[2:]] = argv[index + 1]
+        if arg in ("--thread", "--message", "--model", "--reasoning-effort") and index + 1 < len(argv):
+            key = "reasoning_effort" if arg == "--reasoning-effort" else arg[2:]
+            options[key] = argv[index + 1]
             index += 1
         elif arg == "--resume":
             options["mode"] = "resume"
@@ -26,8 +27,14 @@ def build_command(options, codex_bin=None):
         raise ValueError("--thread and --message are required")
     codex_bin = codex_bin or os.environ.get("CODEX_BIN", "codex")
     if options.get("mode") == "resume":
-        return [codex_bin, "exec", "resume", options["thread"], "-"]
-    return [codex_bin, "queue", "--thread", options["thread"], "--message", options["message"]]
+        command = [codex_bin, "exec", "resume", options["thread"], "-"]
+    else:
+        command = [codex_bin, "queue", "--thread", options["thread"], "--message", options["message"]]
+    if options.get("model"):
+        command.extend(["--model", options["model"]])
+    if options.get("reasoning_effort"):
+        command.extend(["--config", f'model_reasoning_effort="{options["reasoning_effort"]}"'])
+    return command
 
 
 def prepared(command, reason):

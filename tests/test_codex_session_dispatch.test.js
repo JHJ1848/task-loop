@@ -6,6 +6,18 @@ assert.deepStrictEqual(queue.command.slice(1), ['queue', '--thread', 'thread-1',
 assert.strictEqual(queue.status, 'SUBMITTED');
 assert.strictEqual(queue.submitted, true);
 
+const configured = provider.dispatch({
+  thread: 'thread-configured',
+  message: 'hello',
+  model: 'gpt-5.6-terra',
+  'reasoning_effort': 'xhigh',
+  dryRun: true
+});
+assert.deepStrictEqual(configured.command.slice(1), [
+  'queue', '--thread', 'thread-configured', '--message', 'hello',
+  '--model', 'gpt-5.6-terra', '--config', 'model_reasoning_effort="xhigh"'
+]);
+
 const resume = provider.dispatch({ thread: 'thread-2', message: 'continue', mode: 'resume' }, () => ({ status: 0 }));
 assert.deepStrictEqual(resume.command.slice(1), ['exec', 'resume', 'thread-2', '-']);
 assert.strictEqual(resume.status, 'SUBMITTED');

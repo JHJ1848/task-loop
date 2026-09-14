@@ -4,6 +4,8 @@
 
 ## 0. 稳定适配边界
 
+Hook 兼容性同样按厂商隔离：Codex 不提供 AGY/ZCode 的 `PreInvocation`、`PreToolUse` 生命周期，插件不得宣称自动注入或物理拦截已生效。Codex 仅支持通过 Skill 指令、调度前置校验和 fail-closed 结果实现等价约束；AGY/ZCode Hook 配置与行为保持原样。
+
 ```json
 [
   {
@@ -140,6 +142,130 @@ python scripts/find_project_sessions.py --root . --vendor Codex --current
 ---
 
 ## 4. Desktop 宿主工具 (JSON 规范)
+
+### 4.0 当前 Codex App Tools 能力登记
+
+当运行在 Codex Desktop 且宿主暴露 `codex-app-tools` 时，以下 MCP 工具是会话控制的首选入口：
+
+```json
+[
+  {"tool": "mcp__codex_app__list_projects", "purpose": "列出当前宿主可用的 local/remote/ChatGPT 项目及 projectId、Git 属性"},
+  {"tool": "mcp__codex_app__list_threads", "purpose": "列出当前应用可见的线程/聊天摘要、状态、项目关联和线程 ID"},
+  {"tool": "mcp__codex_app__read_thread", "purpose": "按 threadId 读取最近回合、消息、状态和可选工具输出；支持 cursor 分页"},
+  {"tool": "mcp__codex_app__create_thread", "purpose": "按项目或 projectless 创建新任务；仅在用户明确要求创建新任务时调用"},
+  {"tool": "mcp__codex_app__send_message_to_thread", "purpose": "向既有线程追加用户可见的 follow-up prompt"},
+  {"tool": "mcp__codex_app__wait_threads", "purpose": "等待一个或多个线程完成或需要关注，使用事件等待而非 transcript 轮询"},
+  {"tool": "mcp__codex_app__navigate_to_codex_page", "purpose": "在 Codex UI 中打开指定线程或聊天"},
+  {"tool": "mcp__codex_app__open_in_codex", "purpose": "在 Codex 面板打开文件、终端、浏览器或 review"}
+]
+```
+
+工具集合受宿主版本、权限和当前线程环境影响；未暴露的工具不得通过脚本伪造。`send_message_to_thread` 没有可自定义的 sender/role 字段，来源标识只能作为 prompt 正文中的约定前缀；它不能把消息伪装成系统消息。完成后回传 main 的标准链路是 `wait_threads` -> `read_thread`（必要时）-> `send_message_to_thread`。
+
+### 4.1 创建、请求、接收三段契约
+
+```json
+[
+  {
+    "stage": "创建",
+    "preferred": "当前宿主实际暴露的 create_thread",
+    "required_result": "返回真实 threadId 后才写入 vendors.codex",
+    "fallback": "无创建能力时返回 PREPARED_ONLY 并生成派单包"
+  },
+  {
+    "stage": "请求",
+    "preferred": "send_message_to_thread（已登记且项目一致的 thread）",
+    "fallback": "codex queue --thread <id> --message <text>；批处理明确选择时才用 codex exec resume <id> -，prompt 从 stdin 输入",
+    "success": "仅收到明确 submitted=true 或 CLI exit code 0 才算 SUBMITTED"
+  },
+  {
+    "stage": "接收",
+    "preferred": "wait_threads 获取状态变化，必要时 read_thread 读取最终文本",
+    "fallback": "codex exec resume 的 stdout/JSONL 由调用方消费；无接收能力不得伪造完成",
+    "forbidden": "把扫描历史、创建返回或派单成功当作模型回复"
+  }
+]
+```
+
+Desktop 工具集合随宿主版本变化；运行时未暴露 `create_thread`、`send_message_to_thread` 或 `wait_threads` 时，必须降级到 CLI/派单包，并向调用方报告降级状态。
+
+### 4.3 Codex 专属创建期模型策略
+
+该策略只属于 Codex Provider 和 `vendors.codex` 状态分区。AGY、ZCode、Claude 的模型选择与 Hook 行为不读取本节，也不会被本节默认值改写。
+
+```json
+{
+  "scope": "codex-only",
+  "creation_defaults": {
+    "main": {"model": "gpt-6-astra", "reasoning_effort": "medium"},
+    "topic": {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
+    "subagent": {"model": "gpt-5.6-luna", "reasoning_effort": "max"}
+  },
+  "precedence": [
+    "user explicit selection",
+    "existing session model_config",
+    "role creation default"
+  ],
+  "after_creation": "user-controlled"
+}
+```
+
+实现入口为 `scripts/providers/codex_model_policy.js/.py`。`init` 和 `new_topic_session` 只在 Codex 创建/首次绑定时写入 `model_config`；已有用户配置保持不变。Provider 的后续 `submit` 不自动重新注入默认模型，因此用户在 Desktop `/model` 或 CLI 中的后续切换不会被 task-loop 覆盖。
+
+CLI 创建期/续接期可使用 `--model <model>` 与 `--config model_reasoning_effort="<effort>"`。当前 `create_thread` 请求模板输出 `model` 与 `thinking`，其中 `thinking` 是宿主字段候选值；本项目已验证 CLI 参数，尚未把 Desktop 工具 schema 中的思考字段声明为稳定 API。若宿主拒绝该字段，应保留 `model` 并由用户在新任务中选择思考档位，不得修改全局 `~/.codex/config.toml`。
+
+```text
+[创建期]
+create_thread({ prompt, title, target, model: "gpt-5.6-terra", thinking: "xhigh" })
+
+[CLI 等价模板]
+codex queue --thread <id> --message "<text>" --model gpt-5.6-terra --config 'model_reasoning_effort="xhigh"'
+
+[创建后]
+由用户通过 Desktop /model 或对应 CLI 参数自行切换；task-loop 不再自动改写。
+```
+
+### 4.2 可复制指令模板
+
+```text
+[创建专题任务]
+目标项目: <project_id>
+标题: [<专题名称>] <功能摘要>
+提示词:
+你是 Codex 专题任务。只处理 <module_key>，读取 <memory_doc>，
+修改白名单: <allowlist>；禁止修改其他厂商状态与业务代码。
+创建成功后记录真实 threadId，并登记到 vendors.codex.modules.<module_key>。
+```
+
+```text
+[Desktop 请求]
+调用 send_message_to_thread({
+  threadId: "<registered_thread_id>",
+  prompt: "<任务内容>"
+})
+仅当返回 submitted=true 才报告 SUBMITTED；否则报告 PREPARED_ONLY。
+```
+
+```bash
+# [CLI 请求：已知线程]
+codex queue --thread <registered_thread_id> --message "<任务内容>"
+
+# [CLI 续接：显式批处理选择]
+printf '%s' '<任务内容>' | codex exec resume <registered_thread_id> -
+```
+
+```text
+[接收结果]
+Desktop: wait_threads({targets:[{threadId:"<id>"}], timeoutMs:<ms>})
+完成后再用 read_thread({threadId:"<id>", turnLimit:<n>}) 读取最终文本。
+CLI: 消费 stdout/JSONL，按事件顺序记录状态；无输出或非零退出不得标记完成。
+```
+
+```text
+[Hook 门禁]
+Codex 不执行 PreInvocation/PreToolUse。执行前先校验 vendor=codex、thread_id 已登记、
+module_key 在 allowlist；任一条件不满足即拒绝并返回 PREPARED_ONLY，禁止自动注入或物理拦截声明。
+```
 
 ```json
 [

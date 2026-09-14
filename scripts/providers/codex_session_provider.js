@@ -8,10 +8,13 @@ function prepared(reason, extra = {}) {
 
 function normalizeRequest(request = {}) {
   request = request && typeof request === 'object' && !Array.isArray(request) ? request : {};
+  const modelConfig = request.model_config && typeof request.model_config === 'object' ? request.model_config : {};
   return {
     thread: request.thread || request.threadId || request.sessionId,
     message: request.message || request.prompt,
     mode: request.mode === 'resume' ? 'resume' : 'queue',
+    model: request.model || modelConfig.model,
+    reasoning_effort: request.reasoning_effort || request.reasoningEffort || request.thinking || modelConfig.reasoning_effort,
     dryRun: Boolean(request.dryRun || request.dry_run)
   };
 }

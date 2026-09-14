@@ -10,6 +10,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const codexModelPolicy = require('./providers/codex_model_policy');
 
 /**
  * 容错 Provider 注册表: 已知厂商扫描器按序尝试加载, 缺失即跳过。
@@ -579,16 +580,27 @@ function initTaskLoop(options = {}) {
     }
   }
 
+  // Codex-only defaults are initialized once; existing per-session choices remain sticky.
+  if (targetVendor === 'codex') {
+    for (const [key, mod] of Object.entries(targetModules)) {
+      targetModules[key] = codexModelPolicy.applyInitialModelConfig(
+        { ...mod, vendor: mod.vendor || targetVendor, module_key: key, is_main: key === 'main' },
+        key === 'main' ? 'main' : (key === 'subagent' ? 'subagent' : (mod.role || 'topic'))
+      );
+    }
+  }
+
   // sessions 列表严格仅由 targetModules 1:1 转换得到，彻底杜绝历史临时/瞬态子代理会话的污染与重复
   const targetSessionsList = Object.entries(targetModules).map(([key, mod]) => ({
     session_id: mod.session_id,
-    vendor: mod.vendor,
+    vendor: mod.vendor || targetVendor,
     title: mod.title,
     is_main: (key === 'main' || mod.session_id === mainThreadId),
     module_key: key,
     resumable: true,
     summary: mod.summary || `专题模块: ${mod.title}`,
-    memory_docs: mod.memory_doc ? [mod.memory_doc] : []
+    memory_docs: mod.memory_doc ? [mod.memory_doc] : [],
+    ...(targetVendor === 'codex' && mod.model_config ? { model_config: mod.model_config } : {})
   }));
 
   const targetVendorData = {

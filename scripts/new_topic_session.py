@@ -20,6 +20,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers"))
 import spawn_zcode_session as zcode_spawn
 import task_loop_state as state_store
+from codex_model_policy import apply_initial_model_config, build_create_thread_request
+
+
+def detect_topic_vendor(env=None):
+    env = env if env is not None else os.environ
+    # Codex explicitly owns its thread environment when multiple host markers remain.
+    if env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"):
+        return "codex"
+    return state_store.normalize_vendor(state_store.detect_vendor(env))
 
 
 def normalize_path(p):
@@ -79,6 +88,14 @@ def spawn_root_conversation(title, prompt, ws_root):
     AGY: agentapi new-conversation; ZCode: zcode --cwd -p 无头拉起。
     返回 {"id": ..., "vendor": ...} 或 None。"""
     env = dict(os.environ)
+    current_vendor = detect_topic_vendor(env)
+    if current_vendor == "codex":
+        print(
+            "[new-topic-session] Codex 专属创建路径：脚本不调用 AGY/ZCode 创建 API。请由 Desktop create_thread 使用以下配置创建后，再执行 --bind-current <threadId>：",
+            file=sys.stderr,
+        )
+        print(json.dumps(build_create_thread_request(title=title, prompt=prompt, role="topic"), ensure_ascii=False, indent=2), file=sys.stderr)
+        return None
     for k in ["ANTIGRAVITY_CONVERSATION_ID", "ANTIGRAVITY_SOURCE_METADATA", "ANTIGRAVITY_TRAJECTORY_ID"]:
         env.pop(k, None)
 
@@ -170,7 +187,7 @@ def _find_agentapi(env):
 
 def load_sessions_state(ws_root):
     # Schema v4: 仅读取当前宿主厂商分区 (跨版本兼容读, 其余厂商分区零接触)
-    vendor = state_store.normalize_vendor(state_store.detect_vendor()) or "antigravity"
+    vendor = detect_topic_vendor() or "antigravity"
     sessions_path = os.path.join(ws_root, ".agents", "task-loop", "sessions.json")
     part = state_store.get_partition(sessions_path, vendor)
     base = {"schema_version": state_store.SCHEMA_VERSION, "main_thread_id": None, "modules": {}, "sessions": []}
@@ -184,7 +201,7 @@ def save_sessions_state(state, ws_root):
     task_loop_dir = os.path.join(ws_root, ".agents", "task-loop")
     os.makedirs(task_loop_dir, exist_ok=True)
 
-    vendor = state_store.normalize_vendor(state_store.detect_vendor()) or "antigravity"
+    vendor = detect_topic_vendor() or "antigravity"
     sessions_path = os.path.join(task_loop_dir, "sessions.json")
     topics_path = os.path.join(task_loop_dir, "topics.json")
 
@@ -262,6 +279,8 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
     doc_info = create_topic_memory_doc(module_key, topic_title, {"ws_root": ws_root, "force": options.get("force")})
     meta = parse_memory_doc(doc_info["doc_path"], ws_root)
     state = load_sessions_state(ws_root)
+    existing_module = (state.get("modules") or {}).get(meta["module_key"])
+    existing_model_config = existing_module.get("model_config") if isinstance(existing_module, dict) else None
 
     if options.get("dry_run"):
         return {
@@ -273,7 +292,7 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
             "message": f"[预览模式] 将把当前会话 (ID: {session_id}) 就地注册为专题 \"{meta['title']}\" 并绑定至 {meta['memory_doc']}"
         }
 
-    vendor = state_store.normalize_vendor(state_store.detect_vendor()) or "antigravity"
+    vendor = detect_topic_vendor() or "antigravity"
 
     if "modules" not in state or state["modules"] is None:
         state["modules"] = {}
@@ -282,7 +301,8 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
         "title": meta["title"],
         "tags": [meta["module_key"], "topic"],
         "memory_doc": meta["memory_doc"],
-        "summary": f"专题模块: {meta['title']}"
+        "summary": f"专题模块: {meta['title']}",
+        **({"model_config": existing_model_config or apply_initial_model_config({"module_key": meta["module_key"]}, "topic")["model_config"]} if vendor == "codex" else {}),
     }
 
     if "sessions" not in state or state["sessions"] is None:
@@ -295,7 +315,8 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
         "is_main": False,
         "module_key": meta["module_key"],
         "summary": f"专题模块: {meta['title']}",
-        "memory_docs": [meta["memory_doc"]]
+        "memory_docs": [meta["memory_doc"]],
+        **({"model_config": existing_model_config or apply_initial_model_config({"module_key": meta["module_key"]}, "topic")["model_config"]} if vendor == "codex" else {}),
     }
 
     existing_idx = next((i for i, s in enumerate(state["sessions"]) if s.get("module_key") == meta["module_key"] or s.get("session_id") == session_id), -1)

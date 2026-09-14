@@ -41,6 +41,8 @@ try:
 except ImportError:
     def scan_zcode_sessions(ws): return []
 
+from codex_model_policy import apply_initial_model_config
+
 
 def normalize_path(p):
     if not p:
@@ -508,7 +510,7 @@ def init_task_loop(options=None):
     except Exception:
         pass
     for key, item in assignments.items():
-        if key in approved_keys and item.get("vendor") == target_vendor:
+        if key in approved_keys and item.get("vendor") == target_vendor and key not in target_modules:
             target_modules[key] = {
                 "session_id": item["session_id"],
                 "title": item["suggested_topic_name"],
@@ -520,17 +522,30 @@ def init_task_loop(options=None):
                 "summary": f"专题模块: {item['suggested_topic_name']}"
             }
 
+    # Codex-only defaults are initialized once; existing per-session choices remain sticky.
+    if target_vendor == "codex":
+        for key, mod in list(target_modules.items()):
+            mod_with_identity = dict(mod)
+            mod_with_identity["vendor"] = mod.get("vendor") or target_vendor
+            mod_with_identity["module_key"] = key
+            mod_with_identity["is_main"] = key == "main"
+            target_modules[key] = apply_initial_model_config(
+                mod_with_identity,
+                "main" if key == "main" else ("subagent" if key == "subagent" else mod.get("role", "topic")),
+            )
+
     # sessions 列表严格仅由 target_modules 1:1 转换得到，彻底杜绝历史临时/瞬态子代理会话的污染与重复
     target_sessions_list = [
         {
             "session_id": mod["session_id"],
-            "vendor": mod["vendor"],
+            "vendor": mod.get("vendor") or target_vendor,
             "title": mod["title"],
             "is_main": (key == "main" or mod["session_id"] == main_thread_id),
             "module_key": key,
             "resumable": True,
             "summary": mod.get("summary") or f"专题模块: {mod['title']}",
-            "memory_docs": [mod["memory_doc"]] if mod.get("memory_doc") else []
+            "memory_docs": [mod["memory_doc"]] if mod.get("memory_doc") else [],
+            **({"model_config": mod["model_config"]} if target_vendor == "codex" and mod.get("model_config") else {}),
         }
         for key, mod in target_modules.items()
     ]

@@ -7,7 +7,7 @@ const {
   createTopicMemoryDoc,
   provisionSingleDoc,
   provisionAllMissing
-} = require('../scripts/new_topic_session');
+  } = require('../scripts/new_topic_session');
 
 function runNewSessionSkillTests() {
   console.log('--- Running test_new_topic_session.test.js ---');
@@ -49,6 +49,17 @@ function runNewSessionSkillTests() {
     assert.strictEqual(survey.allDocs.length, 2);
     assert.strictEqual(survey.missing.length, 2);
     assert.strictEqual(survey.aligned.length, 0);
+
+    // Codex creates through Desktop create_thread; this path only emits a request template.
+    const { spawnRootConversation } = require('../scripts/new_topic_session');
+    const previousCodexThread = process.env.CODEX_THREAD_ID;
+    process.env.CODEX_THREAD_ID = 'codex-test-thread';
+    try {
+      assert.strictEqual(spawnRootConversation('[测试专题] x', '初始化', tmpWs), null);
+    } finally {
+      if (previousCodexThread === undefined) delete process.env.CODEX_THREAD_ID;
+      else process.env.CODEX_THREAD_ID = previousCodexThread;
+    }
 
     console.log('✔ All new-session skill Node.js tests PASSED!');
   } finally {

@@ -17,10 +17,13 @@ def prepared(reason, **extra):
 
 def normalize_request(request=None):
     request = request if isinstance(request, dict) else {}
+    model_config = request.get("model_config") if isinstance(request.get("model_config"), dict) else {}
     return {
         "thread": request.get("thread") or request.get("threadId") or request.get("sessionId"),
         "message": request.get("message") or request.get("prompt"),
         "mode": "resume" if request.get("mode") == "resume" else "queue",
+        "model": request.get("model") or model_config.get("model"),
+        "reasoning_effort": request.get("reasoning_effort") or request.get("reasoningEffort") or request.get("thinking") or model_config.get("reasoning_effort"),
         "dry_run": bool(request.get("dry_run") or request.get("dryRun")),
     }
 

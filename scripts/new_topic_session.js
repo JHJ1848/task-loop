@@ -14,6 +14,13 @@ const os = require('os');
 const { spawnSync } = require('child_process');
 const zcodeSpawn = require('./providers/spawn_zcode_session');
 const stateStore = require('./task_loop_state');
+const codexModelPolicy = require('./providers/codex_model_policy');
+
+function detectTopicVendor(env = process.env) {
+  // Codex explicitly owns its thread environment when multiple host markers remain.
+  if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
+  return stateStore.normalizeVendor(stateStore.detectVendor(env));
+}
 
 function normalizePath(p) {
   return p ? p.replace(/\\/g, '/') : '';
@@ -80,6 +87,12 @@ function parseMemoryDoc(docPath, wsRoot) {
  */
 function spawnRootConversation(title, prompt, wsRoot) {
   const env = { ...process.env };
+  const currentVendor = detectTopicVendor(env);
+  if (currentVendor === 'codex') {
+    console.error('[new-topic-session] Codex 专属创建路径：脚本不调用 AGY/ZCode 创建 API。请由 Desktop create_thread 使用以下配置创建后，再执行 --bind-current <threadId>：');
+    console.error(JSON.stringify(codexModelPolicy.buildCreateThreadRequest({ title, prompt, role: 'topic' }), null, 2));
+    return null;
+  }
   delete env.ANTIGRAVITY_CONVERSATION_ID;
   delete env.ANTIGRAVITY_SOURCE_METADATA;
   delete env.ANTIGRAVITY_TRAJECTORY_ID;
@@ -185,7 +198,7 @@ function findAgentApiBinary(env) {
  */
 function loadSessionsState(wsRoot) {
   // Schema v4: 仅读取当前宿主厂商分区 (跨版本兼容读, 其余厂商分区零接触)
-  const vendor = stateStore.normalizeVendor(stateStore.detectVendor()) || 'antigravity';
+  const vendor = detectTopicVendor() || 'antigravity';
   const sessionsPath = path.join(wsRoot, '.agents', 'task-loop', 'sessions.json');
   const part = stateStore.getPartition(sessionsPath, vendor);
   if (part) {
@@ -204,7 +217,7 @@ function saveSessionsState(state, wsRoot) {
     fs.mkdirSync(taskLoopDir, { recursive: true });
   }
 
-  const vendor = stateStore.normalizeVendor(stateStore.detectVendor()) || 'antigravity';
+  const vendor = detectTopicVendor() || 'antigravity';
   const sessionsPath = path.join(taskLoopDir, 'sessions.json');
   const topicsPath = path.join(taskLoopDir, 'topics.json');
 
@@ -278,6 +291,8 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
   const { docPath, relPath } = createTopicMemoryDoc(moduleKey, topicTitle, { wsRoot, force: options.force });
   const meta = parseMemoryDoc(docPath, wsRoot);
   const state = loadSessionsState(wsRoot);
+  const existingModule = state.modules && state.modules[meta.module_key];
+  const existingModelConfig = existingModule && existingModule.model_config;
 
   if (options.dryRun) {
     return {
@@ -291,7 +306,7 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
   }
 
   // 判定当前厂商
-  const vendor = stateStore.normalizeVendor(stateStore.detectVendor()) || 'antigravity';
+  const vendor = detectTopicVendor() || 'antigravity';
 
   // 更新 state
   if (!state.modules) state.modules = {};
@@ -300,7 +315,8 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
     title: meta.title,
     tags: [meta.module_key, 'topic'],
     memory_doc: meta.memory_doc,
-    summary: `专题模块: ${meta.title}`
+    summary: `专题模块: ${meta.title}`,
+    ...(vendor === 'codex' ? { model_config: existingModelConfig || codexModelPolicy.applyInitialModelConfig({ module_key: meta.module_key }, 'topic').model_config } : {})
   };
 
   if (!state.sessions) state.sessions = [];
@@ -312,7 +328,8 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
     is_main: false,
     module_key: meta.module_key,
     summary: `专题模块: ${meta.title}`,
-    memory_docs: [meta.memory_doc]
+    memory_docs: [meta.memory_doc],
+    ...(vendor === 'codex' ? { model_config: existingModelConfig || codexModelPolicy.applyInitialModelConfig({ module_key: meta.module_key }, 'topic').model_config } : {})
   };
 
   if (existingIdx !== -1) {
@@ -653,6 +670,7 @@ if (require.main === module) {
 
 module.exports = {
   parseMemoryDoc,
+  detectTopicVendor,
   spawnRootConversation,
   createTopicMemoryDoc,
   createTopicAndSession,

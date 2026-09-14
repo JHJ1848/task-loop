@@ -7,8 +7,9 @@ function parseArgs(argv) {
   const options = { mode: 'queue', dryRun: false };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === '--thread' || arg === '--message') {
-      options[arg.slice(2)] = argv[index + 1];
+    if (arg === '--thread' || arg === '--message' || arg === '--model' || arg === '--reasoning-effort') {
+      const key = arg === '--reasoning-effort' ? 'reasoning_effort' : arg.slice(2);
+      options[key] = argv[index + 1];
       index += 1;
     } else if (arg === '--resume') {
       options.mode = 'resume';
@@ -23,9 +24,12 @@ function buildCommand(options, codexBin = process.env.CODEX_BIN || 'codex') {
   if (!options.thread || !options.message) {
     throw new Error('--thread and --message are required');
   }
-  return options.mode === 'resume'
-    ? { command: codexBin, args: ['exec', 'resume', options.thread, '-'], input: options.message }
-    : { command: codexBin, args: ['queue', '--thread', options.thread, '--message', options.message] };
+  const args = options.mode === 'resume'
+    ? ['exec', 'resume', options.thread, '-']
+    : ['queue', '--thread', options.thread, '--message', options.message];
+  if (options.model) args.push('--model', options.model);
+  if (options.reasoning_effort) args.push('--config', `model_reasoning_effort="${options.reasoning_effort}"`);
+  return { command: codexBin, args, input: options.mode === 'resume' ? options.message : undefined };
 }
 
 function prepared(command, reason) {

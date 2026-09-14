@@ -274,6 +274,23 @@ node scripts/install_zcode_plugin.js     # 幂等整目录覆盖, 无需先删�
 ```json
 [
   {
+    "version": "1.5.0",
+    "created_at": "2026-09-14",
+    "updated_at": "2026-09-14",
+    "status": "Codex Creation Model Policy & Dashboard Console",
+    "highlights": [
+      "Codex 专属创建期模型与推理深度策略 (Main: Astra/medium, Topic: Terra/xhigh, Subagent: Luna/max)",
+      "Codex 分派器 CLI 与 Desktop App Server 参数注入，修复 --reasoning-effort 丢失缺陷",
+      "全新单文件控制面板 (dashboard/index.html)，支持原生 HTML5 看板拖拽、0.2s 磁盘实时静默写盘与焦点保护",
+      "控制面板增加磨砂透明玻璃二次确认弹窗（流转与删除）、上方标签栏定时任务状态监控与 IndexedDB 句柄持久化",
+      "跨运行时双语 (Node.js/Python) 模型策略对拍测试通过 (51/51 PASS)，多厂商状态物理隔离保证"
+    ],
+    "verified_governance": [
+      "✓ Codex 策略创建期单向注入：只写 vendors.codex 分区，后续模型控制权 100% 归还用户",
+      "✓ 控制面板 0 Emoji 与纯原生自包含：零外部打包器依赖，全量矢量 SVG 与结构化纯文本"
+    ]
+  },
+  {
     "version": "1.4.0",
     "created_at": "2026-09-07",
     "updated_at": "2026-09-07",
