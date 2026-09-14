@@ -1,0 +1,2898 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>task-loop Console</title>
+  <style>
+    :root {
+      --bg-root: #0a0a0a;
+      --bg-subtle: #121212;
+      --bg-card: #181818;
+      --bg-card-hover: #202020;
+      --border-base: #282828;
+      --border-focus: #444444;
+      
+      --text-main: #f0f0f0;
+      --text-sub: #888888;
+      --text-muted: #555555;
+      
+      /* RGB Primary Accents */
+      --c-red: #ef4444;
+      --c-red-bg: rgba(239, 68, 68, 0.12);
+      --c-green: #10b981;
+      --c-green-bg: rgba(16, 185, 129, 0.12);
+      --c-blue: #3b82f6;
+      --c-blue-bg: rgba(59, 130, 246, 0.12);
+      --c-orange: #f59e0b;
+      --c-orange-bg: rgba(245, 158, 11, 0.12);
+
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-root);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 16px;
+      line-height: 1.55;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* 顶部导航与状态 */
+    header {
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-base);
+      padding: 14px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      font-family: var(--font-mono);
+      font-size: 21px;
+      color: var(--text-main);
+    }
+    .brand-tag {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 9px;
+      border-radius: 4px;
+      background: #242424;
+      color: var(--text-sub);
+      border: 1px solid var(--border-base);
+      letter-spacing: 0.5px;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    /* 通用按钮 */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-card);
+      color: var(--text-main);
+      border: 1px solid var(--border-base);
+      padding: 9px 17px;
+      border-radius: 6px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      text-decoration: none;
+      user-select: none;
+    }
+    .btn:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-focus);
+    }
+    .btn-blue {
+      background: var(--c-blue);
+      border-color: var(--c-blue);
+      color: #fff;
+    }
+    .btn-blue:hover {
+      background: #2563eb;
+      border-color: #2563eb;
+    }
+    .btn-green {
+      background: var(--c-green);
+      border-color: var(--c-green);
+      color: #fff;
+    }
+    .btn-green:hover {
+      background: #059669;
+      border-color: #059669;
+    }
+    .btn-red {
+      background: var(--c-red-bg);
+      border-color: var(--c-red);
+      color: var(--c-red);
+    }
+    .btn-red:hover {
+      background: var(--c-red);
+      color: #fff;
+    }
+
+    .btn svg {
+      width: 17px;
+      height: 17px;
+      stroke-width: 2;
+    }
+
+    /* 状态条 */
+    .status-bar {
+      background: #0f0f0f;
+      border-bottom: 1px solid var(--border-base);
+      padding: 12px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 14px;
+      font-family: var(--font-mono);
+      color: var(--text-sub);
+    }
+    .status-items {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .indicator-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .dot-green { background-color: var(--c-green); box-shadow: 0 0 8px var(--c-green); }
+    .dot-blue { background-color: var(--c-blue); box-shadow: 0 0 8px var(--c-blue); }
+    .dot-red { background-color: var(--c-red); box-shadow: 0 0 8px var(--c-red); }
+    .dot-amber { background-color: var(--c-orange); box-shadow: 0 0 8px var(--c-orange); }
+
+    /* 标签导航 */
+    .nav-tabs {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-base);
+      padding: 0 28px;
+    }
+    .nav-tabs-left {
+      display: flex;
+      gap: 8px;
+    }
+    .tab-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      background: transparent;
+      border: none;
+      color: var(--text-sub);
+      font-size: 15px;
+      font-weight: 600;
+      padding: 14px 20px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .tab-item:hover {
+      color: var(--text-main);
+    }
+    .tab-item.active {
+      color: var(--c-blue);
+      border-bottom-color: var(--c-blue);
+    }
+    .tab-item svg {
+      width: 18px;
+      height: 18px;
+    }
+
+    /* 顶部标签栏右侧定时任务监控状态组件 */
+    .tabs-timer-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    .timer-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 12px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-sub);
+      font-weight: 500;
+      letter-spacing: 0.2px;
+      user-select: none;
+      transition: all 0.2s ease;
+    }
+    .timer-badge:hover {
+      border-color: rgba(255, 255, 255, 0.16);
+      background: rgba(255, 255, 255, 0.08);
+    }
+    .timer-badge .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      display: inline-block;
+      animation: dotPulse 2s infinite;
+    }
+    .timer-badge .pulse-dot.green { background: var(--c-green); box-shadow: 0 0 6px var(--c-green); }
+    .timer-badge .pulse-dot.blue { background: var(--c-blue); box-shadow: 0 0 6px var(--c-blue); }
+    .timer-badge .pulse-dot.orange { background: var(--c-orange); box-shadow: 0 0 6px var(--c-orange); }
+
+    /* 面包屑路径条 */
+    .breadcrumb-bar {
+      background: #111111;
+      border-bottom: 1px solid var(--border-base);
+      padding: 9px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-sub);
+    }
+    .breadcrumb-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+    .breadcrumb-icon {
+      width: 15px;
+      height: 15px;
+      stroke: var(--text-sub);
+      flex-shrink: 0;
+    }
+    .bc-crumb {
+      color: var(--text-sub);
+    }
+    .bc-sep {
+      color: var(--text-muted);
+      margin: 0 1px;
+    }
+    .bc-file {
+      color: var(--text-main);
+      font-weight: 600;
+    }
+    .breadcrumb-right {
+      display: flex;
+      align-items: center;
+    }
+    .bc-mode-badge {
+      font-size: 12px;
+      padding: 3px 9px;
+      border-radius: 4px;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+    }
+    .bc-mode-badge.mode-embedded {
+      background: rgba(245, 158, 11, 0.12);
+      color: var(--c-orange);
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .bc-mode-badge.mode-disk {
+      background: var(--c-green-bg);
+      color: var(--c-green);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    /* 主布局 */
+    main {
+      flex: 1;
+      padding: 24px 28px;
+      max-width: 1600px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .view-panel {
+      display: none;
+    }
+    .view-panel.active {
+      display: block;
+    }
+
+    /* 厂商选择 */
+    .vendor-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      gap: 12px;
+    }
+    .vendor-switch {
+      display: flex;
+      gap: 6px;
+      background: var(--bg-subtle);
+      padding: 4px;
+      border-radius: 6px;
+      border: 1px solid var(--border-base);
+    }
+    .vendor-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: transparent;
+      border: none;
+      color: var(--text-sub);
+      padding: 7px 15px;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      cursor: pointer;
+      border-radius: 4px;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .vendor-btn svg {
+      width: 17px;
+      height: 17px;
+      flex-shrink: 0;
+      fill: currentColor;
+    }
+    .vendor-btn:hover {
+      color: var(--text-main);
+      background: #1c1c1c;
+    }
+    .vendor-btn.active {
+      background: #252525;
+      color: var(--c-blue);
+    }
+
+    /* 拓扑网格 */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+      gap: 16px;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-base);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: border-color 0.15s;
+    }
+    .card:hover {
+      border-color: var(--border-focus);
+    }
+    .card.main-card {
+      border-left: 4px solid var(--c-blue);
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .card-title {
+      font-weight: 600;
+      font-size: 17px;
+      color: var(--text-main);
+    }
+    .badge {
+      font-size: 12px;
+      font-family: var(--font-mono);
+      padding: 3px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border-base);
+      background: #121212;
+      color: var(--text-sub);
+      white-space: nowrap;
+    }
+    .badge-blue { color: var(--c-blue); border-color: var(--c-blue-bg); background: var(--c-blue-bg); }
+    .badge-green { color: var(--c-green); border-color: var(--c-green-bg); background: var(--c-green-bg); }
+    .badge-red { color: var(--c-red); border-color: var(--c-red-bg); background: var(--c-red-bg); }
+
+    .kv-table {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 14px;
+      font-family: var(--font-mono);
+    }
+    .kv-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 5px 0;
+      border-bottom: 1px dashed #202020;
+    }
+    .kv-key {
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .kv-val {
+      color: var(--text-sub);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* 看板 */
+    .kanban-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+    @media (max-width: 1080px) {
+      .kanban-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 640px) {
+      .kanban-grid { grid-template-columns: 1fr; }
+    }
+
+    .kanban-col {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-base);
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      min-height: 580px;
+      transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .kanban-col.drag-over {
+      border-color: var(--c-blue);
+      background-color: rgba(59, 130, 246, 0.05);
+      box-shadow: inset 0 0 0 1px var(--c-blue);
+    }
+    .kanban-head {
+      padding: 13px 16px;
+      border-bottom: 1px solid var(--border-base);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .kanban-head-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .kanban-head-pending { color: var(--c-orange); }
+    .kanban-head-progress { color: var(--c-blue); }
+    .kanban-head-dispatched { color: var(--c-red); }
+    .kanban-head-done { color: var(--c-green); }
+
+    .kanban-count {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 4px;
+      background: #1e1e1e;
+      color: var(--text-sub);
+    }
+    .task-container {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      flex: 1;
+    }
+
+    /* 任务卡片与可实时行内编辑 (标题/描述/负责人/复杂度) */
+    .task-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-base);
+      border-radius: 6px;
+      padding: 15px;
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+      transition: all 0.15s ease;
+      cursor: grab;
+      user-select: none;
+    }
+    .task-card:active {
+      cursor: grabbing;
+    }
+    .task-card.dragging {
+      opacity: 0.4;
+      transform: scale(0.98);
+      border-color: var(--c-blue);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+    .task-card:hover {
+      border-color: var(--border-focus);
+    }
+    .task-edit-title {
+      font-weight: 600;
+      font-size: 16px;
+      line-height: 1.4;
+      color: var(--text-main);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 4px 6px;
+      outline: none;
+      width: 100%;
+      cursor: text;
+      user-select: text;
+    }
+    .task-edit-title:focus {
+      background: #0f0f0f;
+      border-color: var(--c-blue);
+    }
+    .task-edit-desc {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-sub);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      padding: 4px 6px;
+      outline: none;
+      width: 100%;
+      resize: vertical;
+      min-height: 46px;
+      font-family: inherit;
+      cursor: text;
+      user-select: text;
+    }
+    .task-edit-desc:focus {
+      background: #0f0f0f;
+      border-color: var(--c-blue);
+    }
+
+    /* 任务负责人行内输入 */
+    .task-assignee-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-base);
+      border-radius: 4px;
+      padding: 4px 8px;
+    }
+    .task-field-icon {
+      width: 15px;
+      height: 15px;
+      stroke: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .task-edit-assignee {
+      font-size: 13px;
+      color: var(--text-sub);
+      background: transparent;
+      border: none;
+      outline: none;
+      width: 100%;
+      font-family: var(--font-mono);
+      cursor: text;
+      user-select: text;
+    }
+    .task-edit-assignee:focus {
+      color: var(--text-main);
+    }
+
+    .task-meta-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 4px;
+      gap: 8px;
+    }
+    .task-tags {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .task-select {
+      background: #121212;
+      border: 1px solid var(--border-base);
+      color: var(--text-sub);
+      border-radius: 4px;
+      padding: 3px 7px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      outline: none;
+      cursor: pointer;
+    }
+    .task-select:hover, .task-select:focus {
+      border-color: var(--c-blue);
+      color: var(--text-main);
+    }
+    .task-select-complexity {
+      color: var(--c-blue);
+      font-weight: 600;
+    }
+    .tag-clickable {
+      cursor: pointer;
+      user-select: none;
+    }
+    .tag-clickable:hover {
+      border-color: var(--c-blue);
+      color: var(--c-blue);
+    }
+
+    .task-ctrls {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .icon-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-sub);
+      padding: 6px 7px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+    .icon-btn:hover {
+      background: #252525;
+      color: var(--text-main);
+    }
+    .icon-btn.btn-del:hover {
+      color: var(--c-red);
+      background: var(--c-red-bg);
+    }
+    .icon-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    /* 策略与租约 */
+    .policy-layout {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 16px;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .form-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #202020;
+    }
+    .form-label {
+      font-size: 14px;
+      color: var(--text-sub);
+      font-family: var(--font-mono);
+    }
+    .form-input {
+      background: #0f0f0f;
+      border: 1px solid var(--border-base);
+      color: var(--text-main);
+      padding: 7px 12px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: var(--font-mono);
+      outline: none;
+    }
+    .form-input:focus {
+      border-color: var(--c-blue);
+    }
+
+    /* Raw JSON 编辑器 */
+    .raw-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .raw-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .raw-textarea {
+      width: 100%;
+      height: 600px;
+      background: #0f0f0f;
+      color: #cfcfcf;
+      border: 1px solid var(--border-base);
+      border-radius: 6px;
+      padding: 14px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.5;
+      outline: none;
+      resize: vertical;
+    }
+    .raw-textarea:focus {
+      border-color: var(--c-blue);
+    }
+
+    /* 极简底部 */
+    footer {
+      border-top: 1px solid var(--border-base);
+      padding: 12px 28px;
+      font-size: 13px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--bg-subtle);
+    }
+
+    /* Toast 弹窗 */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: rgba(28, 28, 28, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--border-focus);
+      color: var(--text-main);
+      font-size: 14px;
+      display: none;
+      z-index: 1000;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+      border-radius: 6px;
+    }
+
+    /* 实时同步状态指示器 */
+    .sync-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      padding: 7px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border-base);
+      background: var(--bg-card);
+      color: var(--text-sub);
+      user-select: none;
+      transition: all 0.2s ease;
+    }
+    .sync-indicator.sync-live {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.05);
+      color: var(--text-main);
+    }
+
+    /* 现代通透磨砂玻璃弹窗 (Glassmorphism & Transparency) */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.52);
+      backdrop-filter: blur(14px) saturate(180%);
+      -webkit-backdrop-filter: blur(14px) saturate(180%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      animation: modalFadeIn 0.18s ease-out;
+    }
+    @keyframes modalFadeIn {
+      from { opacity: 0; transform: scale(0.96); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    .modal-card {
+      background: rgba(24, 24, 28, 0.72);
+      backdrop-filter: blur(24px) saturate(190%);
+      -webkit-backdrop-filter: blur(24px) saturate(190%);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      width: 480px;
+      max-width: 92vw;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+      overflow: hidden;
+    }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-main);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .modal-body {
+      padding: 22px 20px;
+    }
+    .modal-task-title {
+      font-weight: 600;
+      font-size: 17px;
+      color: var(--text-main);
+      margin-bottom: 16px;
+      line-height: 1.45;
+      word-break: break-all;
+    }
+    .modal-flow {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .flow-pill {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 6px;
+      letter-spacing: 0.5px;
+    }
+    .flow-pill-pending { color: var(--c-orange); background: var(--c-orange-bg); border: 1px solid rgba(245, 158, 11, 0.35); }
+    .flow-pill-in_progress { color: var(--c-blue); background: var(--c-blue-bg); border: 1px solid rgba(59, 130, 246, 0.35); }
+    .flow-pill-dispatched { color: var(--c-red); background: var(--c-red-bg); border: 1px solid rgba(239, 68, 68, 0.35); }
+    .flow-pill-done { color: var(--c-green); background: var(--c-green-bg); border: 1px solid rgba(16, 185, 129, 0.35); }
+    .flow-arrow { stroke: var(--text-muted); flex-shrink: 0; }
+    .modal-hint {
+      font-size: 13px;
+      color: var(--text-sub);
+      line-height: 1.5;
+    }
+    .modal-danger-box {
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 6px;
+      padding: 12px 14px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 16px;
+      color: #fca5a5;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .modal-danger-box svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+      stroke: var(--c-red);
+      margin-top: 1px;
+    }
+    .modal-actions {
+      padding: 14px 20px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.02);
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    /* 拓扑卡片运行状态微标 */
+    .session-status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 4px 9px;
+      border-radius: 4px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .status-active, .status-running {
+      color: var(--c-green);
+      background: var(--c-green-bg);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-idle {
+      color: var(--c-blue);
+      background: var(--c-blue-bg);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+    .status-unbound {
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid var(--border-base);
+    }
+    .pulse-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 6px currentColor;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部导航 -->
+  <header>
+    <div class="brand">
+      <div class="brand-logo">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M12 7v5l3 3"/>
+        </svg>
+        <span>TASK-LOOP</span>
+      </div>
+      <span class="brand-tag" data-i18n="brand_sub">CONSOLE</span>
+    </div>
+
+    <div class="header-actions">
+      <!-- 语言切换按钮 (SVG 地球) -->
+      <button class="btn" id="btn-toggle-lang" data-i18n-title="lang_switch_title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="2" y1="12" x2="22" y2="12"/>
+          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+        </svg>
+        <span id="text-lang">ZH / EN</span>
+      </button>
+
+      <!-- 关联目录按钮 (SVG 文件夹) -->
+      <button class="btn" id="btn-open-dir" data-i18n-title="btn_dir_title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span data-i18n="btn_dir">DIR</span>
+      </button>
+
+      <!-- 实时同步指示器 -->
+      <div class="sync-indicator" id="sync-indicator" title="0.2s Real-time Polling & Instant In-Place Write">
+        <span class="indicator-dot dot-amber" id="dot-sync"></span>
+        <span id="text-sync">AUTO-SYNC (MEM)</span>
+      </div>
+
+      <!-- 重置按钮 (SVG 刷新) -->
+      <button class="btn" id="btn-reset-data" data-i18n-title="btn_reset_title">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+        </svg>
+        <span data-i18n="btn_reset">RESET</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 状态条 -->
+  <div class="status-bar">
+    <div class="status-items">
+      <div class="status-item">
+        <span class="indicator-dot dot-blue" id="dot-source"></span>
+        <span id="text-source">EMBEDDED SNAPSHOT</span>
+      </div>
+      <div class="status-item">
+        <span data-i18n="status_vendor">VENDOR:</span>
+        <strong id="text-active-vendor" style="color: var(--c-blue);">antigravity</strong>
+      </div>
+      <div class="status-item">
+        <span data-i18n="status_lease">LEASE:</span>
+        <strong id="text-lease-status" style="color: var(--c-green);">UNLOCKED</strong>
+      </div>
+    </div>
+  </div>
+
+  <!-- 标签导航 -->
+  <div class="nav-tabs">
+    <div class="nav-tabs-left">
+      <button class="tab-item active" data-tab="view-kanban">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="9"/>
+          <rect x="14" y="3" width="7" height="5"/>
+          <rect x="14" y="12" width="7" height="9"/>
+          <rect x="3" y="16" width="7" height="5"/>
+        </svg>
+        <span data-i18n="tab_kanban">KANBAN</span>
+      </button>
+      <button class="tab-item" data-tab="view-topology">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="6" cy="6" r="3"/>
+          <circle cx="18" cy="18" r="3"/>
+          <line x1="8.5" y1="8.5" x2="15.5" y2="15.5"/>
+        </svg>
+        <span data-i18n="tab_topology">TOPOLOGY</span>
+      </button>
+      <button class="tab-item" data-tab="view-policy">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <span data-i18n="tab_policy">POLICY & LEASE</span>
+      </button>
+      <button class="tab-item" data-tab="view-raw">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="16 18 22 12 16 6"/>
+          <polyline points="8 6 2 12 8 18"/>
+        </svg>
+        <span data-i18n="tab_raw">RAW JSON</span>
+      </button>
+    </div>
+
+    <!-- 定时任务状态与最近同步时间 -->
+    <div class="tabs-timer-status" id="tabs-timer-status">
+      <span class="timer-badge" id="tab-poll-badge" title="高频轮询定时任务 (0.2s 实时磁盘探测)">
+        <span class="pulse-dot green"></span>
+        <span id="tab-poll-text">POLL: 0.2s</span>
+      </span>
+      <span class="timer-badge" id="tab-health-badge" title="专题健康探测定时任务 (5s 周期)">
+        <span class="pulse-dot blue"></span>
+        <span id="tab-health-text">HEALTH: 5s</span>
+      </span>
+      <span class="timer-badge" id="tab-sync-badge" title="最近数据同步状态与时间">
+        <span class="pulse-dot orange" id="dot-sync-badge"></span>
+        <span id="tab-sync-text">SYNC: READY</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- 面包屑路径条 -->
+  <div class="breadcrumb-bar">
+    <div class="breadcrumb-left">
+      <svg class="breadcrumb-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+      </svg>
+      <span class="bc-crumb" data-i18n="bc_root">Root</span>
+      <span class="bc-sep">&gt;</span>
+      <span class="bc-crumb">.agents</span>
+      <span class="bc-sep">&gt;</span>
+      <span class="bc-crumb">task-loop</span>
+      <span class="bc-sep">&gt;</span>
+      <strong class="bc-file" id="breadcrumb-file">todo.json</strong>
+    </div>
+    <div class="breadcrumb-right">
+      <span class="bc-mode-badge mode-embedded" id="breadcrumb-mode-badge">[EMBEDDED MEMORY]</span>
+    </div>
+  </div>
+
+  <main>
+    <!-- 面板 1: 任务看板 (KANBAN) -->
+    <div class="view-panel active" id="view-kanban">
+      <div style="display: flex; justify-content: flex-end; margin-bottom: 14px;">
+        <button class="btn btn-blue" id="btn-add-task">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <line x1="12" y1="5" x2="12" y2="19"/>
+            <line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          <span data-i18n="btn_new_task">NEW TASK</span>
+        </button>
+      </div>
+
+      <div class="kanban-grid">
+        <!-- 待办 (Pending) - 橙色调 -->
+        <div class="kanban-col" data-status="pending">
+          <div class="kanban-head">
+            <div class="kanban-head-left kanban-head-pending">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+              <span data-i18n="col_pending">PENDING</span>
+            </div>
+            <span class="kanban-count" id="count-pending">0</span>
+          </div>
+          <div class="task-container" id="col-pending"></div>
+        </div>
+
+        <!-- 执行中 (In Progress) - 蓝色调 -->
+        <div class="kanban-col" data-status="in_progress">
+          <div class="kanban-head">
+            <div class="kanban-head-left kanban-head-progress">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+              </svg>
+              <span data-i18n="col_in_progress">IN PROGRESS</span>
+            </div>
+            <span class="kanban-count" id="count-in_progress">0</span>
+          </div>
+          <div class="task-container" id="col-in_progress"></div>
+        </div>
+
+        <!-- 验收门禁 (Dispatched) - 红色调 -->
+        <div class="kanban-col" data-status="dispatched">
+          <div class="kanban-head">
+            <div class="kanban-head-left kanban-head-dispatched">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                <polyline points="22,6 12,13 2,6"/>
+              </svg>
+              <span data-i18n="col_dispatched">DISPATCHED</span>
+            </div>
+            <span class="kanban-count" id="count-dispatched">0</span>
+          </div>
+          <div class="task-container" id="col-dispatched"></div>
+        </div>
+
+        <!-- 已完成 (Done) - 绿色调 -->
+        <div class="kanban-col" data-status="done">
+          <div class="kanban-head">
+            <div class="kanban-head-left kanban-head-done">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              <span data-i18n="col_done">DONE</span>
+            </div>
+            <span class="kanban-count" id="count-done">0</span>
+          </div>
+          <div class="task-container" id="col-done"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 面板 2: 厂商与专题拓扑 (TOPOLOGY) -->
+    <div class="view-panel" id="view-topology">
+      <div class="vendor-bar">
+        <div class="vendor-switch" id="vendor-pills"></div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <div class="sync-indicator" id="topology-health-indicator" title="Periodic Session Health Check (5s)">
+            <span class="indicator-dot dot-green"></span>
+            <span id="text-health-time">HEALTH: 5s</span>
+          </div>
+          <button class="btn" id="btn-health-check" style="padding: 6px 12px; font-size: 12px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="14" height="14">
+              <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+            <span data-i18n="btn_check_now">CHECK NOW</span>
+          </button>
+        </div>
+      </div>
+      <div class="cards-grid" id="topology-grid"></div>
+    </div>
+
+    <!-- 面板 3: 调度策略与排他租约 (POLICY & LEASE) -->
+    <div class="view-panel" id="view-policy">
+      <div class="policy-layout">
+        <!-- 调度策略 -->
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title" data-i18n="policy_title">SCHEDULER POLICY</span>
+            <span class="badge badge-blue" data-i18n="policy_badge">CONFIG</span>
+          </div>
+          <div class="kv-table">
+            <div class="form-row">
+              <span class="form-label" data-i18n="policy_active_vendor">active_vendor</span>
+              <select class="form-input" id="policy-vendor">
+                <option value="antigravity">antigravity</option>
+                <option value="zcode">zcode</option>
+                <option value="codex">codex</option>
+                <option value="claude">claude</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <span class="form-label" data-i18n="policy_lease_minutes">lease_minutes</span>
+              <input type="number" class="form-input" id="policy-lease-min" style="width: 80px;" min="1" max="180">
+            </div>
+            <div class="form-row">
+              <span class="form-label" data-i18n="policy_allow_push">allow_remote_push</span>
+              <input type="checkbox" id="policy-allow-push">
+            </div>
+          </div>
+        </div>
+
+        <!-- 租约锁 -->
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title" data-i18n="lease_title">ATOMIC LEASE LOCK</span>
+            <span class="badge" id="lease-badge">UNLOCKED</span>
+          </div>
+          <div class="kv-table">
+            <div class="kv-row">
+              <span class="kv-key" data-i18n="lease_holder">holder</span>
+              <span class="kv-val" id="lease-holder">none</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key" data-i18n="lease_acquired">acquired_at</span>
+              <span class="kv-val" id="lease-acquired">none</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key" data-i18n="lease_expires">expires_at</span>
+              <span class="kv-val" id="lease-expires">none</span>
+            </div>
+          </div>
+          <div style="margin-top: 6px;">
+            <button class="btn btn-blue" id="btn-toggle-lease" style="width: 100%; justify-content: center;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <span id="btn-toggle-lease-text">TOGGLE LOCK</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 面板 4: RAW JSON -->
+    <div class="view-panel" id="view-raw">
+      <div class="raw-container">
+        <div class="raw-bar">
+          <div class="vendor-switch">
+            <button class="vendor-btn active raw-switch" data-file="sessions">sessions.json</button>
+            <button class="vendor-btn raw-switch" data-file="todo">todo.json</button>
+            <button class="vendor-btn raw-switch" data-file="policy">policy.json</button>
+          </div>
+          <button class="btn btn-blue" id="btn-apply-raw">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span data-i18n="raw_apply">APPLY JSON</span>
+          </button>
+        </div>
+        <textarea class="raw-textarea" id="raw-editor" spellcheck="false"></textarea>
+      </div>
+    </div>
+  </main>
+
+  <!-- 极简页脚 -->
+  <footer>
+    <span data-i18n="footer_left">task-loop / cross-agent console</span>
+    <span>schema v4</span>
+  </footer>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- 状态流转二次确认弹窗 -->
+  <div class="modal-backdrop" id="modal-confirm" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="modal-title" data-i18n="modal_confirm_title">CONFIRM STATUS CHANGE</span>
+        <button class="icon-btn" id="btn-modal-close" title="Close (Esc)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-task-title" id="modal-task-name"></div>
+        <div class="modal-flow">
+          <span class="flow-pill" id="modal-from-status">PENDING</span>
+          <svg class="flow-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" width="18" height="18" stroke-width="2">
+            <line x1="5" y1="12" x2="19" y2="12"/>
+            <polyline points="12 5 19 12 12 19"/>
+          </svg>
+          <span class="flow-pill" id="modal-to-status">IN PROGRESS</span>
+        </div>
+        <div class="modal-hint" data-i18n="modal_confirm_hint">This change will be immediately persisted to disk.</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="btn-modal-cancel" data-i18n="btn_cancel">CANCEL</button>
+        <button class="btn btn-blue" id="btn-modal-confirm" data-i18n="btn_confirm">CONFIRM</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 删除任务二次确认弹窗 (磨砂玻璃透明样式) -->
+  <div class="modal-backdrop" id="modal-delete" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <span class="modal-title" data-i18n="modal_delete_title">CONFIRM DELETE TASK</span>
+        <button class="icon-btn" id="btn-modal-del-close" title="Close (Esc)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" width="16" height="16">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-task-title" id="modal-del-task-name"></div>
+        <div class="modal-danger-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+            <line x1="12" y1="9" x2="12" y2="13"/>
+            <line x1="12" y1="17" x2="12.01" y2="17"/>
+          </svg>
+          <div data-i18n="modal_delete_warn">Warning: This operation cannot be undone. The task will be permanently deleted from todo.json.</div>
+        </div>
+        <div class="modal-hint" data-i18n="modal_delete_hint">Are you sure you want to proceed with deletion?</div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="btn-modal-del-cancel" data-i18n="btn_cancel">CANCEL</button>
+        <button class="btn btn-red" id="btn-modal-del-confirm" data-i18n="btn_delete_confirm">DELETE TASK</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================
+    // 1. 双语国际化字典 (Zero-Dep i18n Dictionary)
+    // ==========================================
+    const I18N = {
+      zh: {
+        brand_sub: '治理中枢控制台',
+        lang_switch_title: '切换语言 / Switch Language',
+        btn_dir: '关联目录',
+        btn_dir_title: '关联本地 .agents/task-loop 目录 (获得原位保存权限)',
+        btn_reset: '重置快照',
+        btn_reset_title: '重置回内置默认种子数据',
+        status_src_embedded: '内置种子快照',
+        status_src_dir_prefix: '本地目录: ',
+        status_vendor: '活动厂商:',
+        status_lease: '租约状态:',
+        tab_kanban: '任务看板',
+        tab_topology: '架构拓扑',
+        tab_policy: '策略与租约',
+        tab_raw: '原始配置',
+        btn_new_task: '新建任务',
+        col_pending: '待派发',
+        col_in_progress: '执行中',
+        col_dispatched: '验收门禁',
+        col_done: '已完成',
+        task_placeholder_title: '任务标题...',
+        task_placeholder_desc: '目标与验收说明...',
+        task_placeholder_assignee: '负责人 (如 main, dashboard...)',
+        task_assignee_title: '节点负责人',
+        task_del_title: '删除任务',
+        task_cycle_complexity: '切换复杂度 L1 / L2 / L3',
+        task_cycle_mode: '切换验证模式 unit_test / ui_reload / hybrid',
+        topology_main_title: '主治理中枢',
+        topology_main_badge: '主会话',
+        topology_topic_badge: '专题会话',
+        topology_key_session: '会话 ID',
+        topology_key_memory: '记忆文档',
+        topology_key_resumable: '可续接派单',
+        topology_btn_open: '打开会话',
+        topology_btn_copy: '复制协议链接',
+        policy_title: '调度策略配置',
+        policy_badge: '配置项',
+        policy_active_vendor: '活动厂商 (active_vendor)',
+        policy_lease_minutes: '租约时长/分 (lease_minutes)',
+        policy_allow_push: '允许远程推送 (allow_remote_push)',
+        lease_title: '原子租约排他锁',
+        lease_holder: '当前持有者',
+        lease_acquired: '加锁时间',
+        lease_expires: '过期时间',
+        lease_btn_lock: '模拟获取租约锁',
+        lease_btn_unlock: '主动释放租约锁',
+        lease_unlocked: '空闲中 (UNLOCKED)',
+        lease_locked: '已锁定 (LOCKED)',
+        raw_apply: '应用配置至内存',
+        footer_left: 'task-loop 跨厂商智能体任务闭环控制台',
+        yes: '支持',
+        no: '否',
+        toast_lang_switched: '已切换为中文',
+        toast_task_moved: '任务状态已流转至: ',
+        toast_task_deleted: '任务已删除',
+        toast_task_created: '已新建任务',
+        toast_copied_link: '已复制 Deep Link 链接',
+        toast_dir_attached: '已成功关联本地目录: ',
+        toast_dir_error: '关联目录失败: ',
+        toast_reset: '已恢复内置默认数据快照',
+        toast_raw_applied: '已应用配置: ',
+        mode_inplace_write: '本地磁盘直写',
+        mode_readonly_snapshot: '内存种子快照/待关联',
+        bc_root: 'Root',
+        sync_live: '实时同步 (0.2s)',
+        sync_mem: '内存实时 (未关联DIR)',
+        modal_confirm_title: '确认流转任务状态',
+        modal_confirm_hint: '确认后状态将即刻持久化写入本地磁盘文件。',
+        modal_delete_title: '确认删除任务',
+        modal_delete_warn: '警告：此操作不可撤销，该任务将从 todo.json 中永久物理删除。',
+        modal_delete_hint: '请确认是否立即执行删除操作？',
+        btn_confirm: '确认流转',
+        btn_delete_confirm: '确认删除',
+        btn_cancel: '取消',
+        btn_check_now: '立即检测',
+        health_status_running: '运行中',
+        health_status_idle: '就绪空闲',
+        health_status_unbound: '未绑定',
+        toast_health_checked: '已完成专题会话运行状态健康检测'
+      },
+      en: {
+        brand_sub: 'CONSOLE',
+        lang_switch_title: 'Switch Language / 切换语言',
+        btn_dir: 'DIR',
+        btn_dir_title: 'Attach local .agents/task-loop directory for in-place write',
+        btn_reset: 'RESET',
+        btn_reset_title: 'Reset to embedded snapshot',
+        status_src_embedded: 'EMBEDDED SNAPSHOT',
+        status_src_dir_prefix: 'DIR: ',
+        status_vendor: 'VENDOR:',
+        status_lease: 'LEASE:',
+        tab_kanban: 'KANBAN',
+        tab_topology: 'TOPOLOGY',
+        tab_policy: 'POLICY & LEASE',
+        tab_raw: 'RAW JSON',
+        btn_new_task: 'NEW TASK',
+        col_pending: 'PENDING',
+        col_in_progress: 'IN PROGRESS',
+        col_dispatched: 'DISPATCHED',
+        col_done: 'DONE',
+        task_placeholder_title: 'Task Title...',
+        task_placeholder_desc: 'Objective & Description...',
+        task_placeholder_assignee: 'Assignee (e.g. main, dashboard...)',
+        task_assignee_title: 'Task Assignee',
+        task_del_title: 'Delete Task',
+        task_cycle_complexity: 'Toggle complexity L1 / L2 / L3',
+        task_cycle_mode: 'Toggle verification mode unit_test / ui_reload / hybrid',
+        topology_main_title: 'MAIN ORCHESTRATOR',
+        topology_main_badge: 'MAIN',
+        topology_topic_badge: 'TOPIC',
+        topology_key_session: 'session_id',
+        topology_key_memory: 'memory_doc',
+        topology_key_resumable: 'resumable',
+        topology_btn_open: 'OPEN',
+        topology_btn_copy: 'COPY LINK',
+        policy_title: 'SCHEDULER POLICY',
+        policy_badge: 'CONFIG',
+        policy_active_vendor: 'active_vendor',
+        policy_lease_minutes: 'lease_minutes',
+        policy_allow_push: 'allow_remote_push',
+        lease_title: 'ATOMIC LEASE LOCK',
+        lease_holder: 'holder',
+        lease_acquired: 'acquired_at',
+        lease_expires: 'expires_at',
+        lease_btn_lock: 'ACQUIRE LOCK',
+        lease_btn_unlock: 'RELEASE LOCK',
+        lease_unlocked: 'UNLOCKED',
+        lease_locked: 'LOCKED',
+        raw_apply: 'APPLY JSON',
+        footer_left: 'task-loop / cross-agent console',
+        yes: 'YES',
+        no: 'NO',
+        toast_lang_switched: 'Language switched to English',
+        toast_task_moved: 'TASK MOVED -> ',
+        toast_task_deleted: 'TASK DELETED',
+        toast_task_created: 'CREATED NEW TASK',
+        toast_copied_link: 'COPIED DEEP LINK',
+        toast_dir_attached: 'DIR ATTACHED: ',
+        toast_dir_error: 'DIR ERROR: ',
+        toast_reset: 'RESET TO DEFAULT SNAPSHOT',
+        toast_raw_applied: 'APPLIED ',
+        mode_inplace_write: 'IN-PLACE WRITE',
+        mode_readonly_snapshot: 'EMBEDDED SNAPSHOT',
+        bc_root: 'Root',
+        sync_live: 'AUTO-SYNC (0.2s)',
+        sync_mem: 'AUTO-SYNC (MEM)',
+        modal_confirm_title: 'CONFIRM STATUS CHANGE',
+        modal_confirm_hint: 'This change will be immediately persisted to disk.',
+        modal_delete_title: 'CONFIRM DELETE TASK',
+        modal_delete_warn: 'Warning: This operation cannot be undone. The task will be permanently deleted from todo.json.',
+        modal_delete_hint: 'Are you sure you want to proceed with deletion?',
+        btn_confirm: 'CONFIRM',
+        btn_delete_confirm: 'DELETE TASK',
+        btn_cancel: 'CANCEL',
+        btn_check_now: 'CHECK NOW',
+        health_status_running: 'RUNNING',
+        health_status_idle: 'IDLE',
+        health_status_unbound: 'UNBOUND',
+        toast_health_checked: 'Topic session health check completed'
+      }
+    };
+
+    // ==========================================
+    // 2. 内置默认种子数据 (Embedded Seed Data)
+    // ==========================================
+    const DEFAULT_SESSIONS = {
+      "schema_version": 4,
+      "updated_at": "2026-09-09T10:15:39.470Z",
+      "vendors": {
+        "antigravity": {
+          "schema_version": 3,
+          "vendor": "antigravity",
+          "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+          "updated_at": "2026-09-08T09:20:00.000Z",
+          "modules": {
+            "main": {
+              "session_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+              "title": "[主会话] 任务编排 & 治理中枢",
+              "tags": ["main", "orchestrator"],
+              "memory_doc": "docs/MEMORY.md",
+              "vendor": "antigravity",
+              "resumable": true,
+              "summary": "治理中枢与门禁质检"
+            },
+            "session_control": {
+              "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+              "title": "[Session] SDK & Scripting",
+              "tags": ["session_control", "topic"],
+              "memory_doc": "docs/memory/session_control.md",
+              "vendor": "antigravity",
+              "resumable": true,
+              "summary": "跨厂商会话日志反向内省与六大标准原语"
+            },
+            "hook": {
+              "session_id": "1057c10a-523d-47a4-858e-eabeaa784932",
+              "title": "[钩子专题] 生命周期 & 安全门禁",
+              "tags": ["hook", "topic"],
+              "memory_doc": "docs/memory/hook.md",
+              "vendor": "antigravity",
+              "resumable": true,
+              "summary": "生命周期钩子与 Allowlist 白名单物理拦截"
+            },
+            "subagent": {
+              "session_id": "83bae782-1e95-4923-a76f-2141fe8c5c61",
+              "title": "[子代理专题] Subagent机制 & 动态模板",
+              "tags": ["subagent", "topic"],
+              "memory_doc": "docs/memory/subagent.md",
+              "vendor": "antigravity",
+              "resumable": true,
+              "summary": "AGY 原生子代理编排原语与瞬态沙箱生命周期"
+            },
+            "plugin_spec": {
+              "session_id": "da7311b9-7b54-4d9e-8fa5-22e7ba3b7c0b",
+              "title": "[插件专题] 多厂商插件规范与导出安装",
+              "tags": ["plugin_spec", "topic"],
+              "memory_doc": "docs/memory/plugin_spec.md",
+              "vendor": "antigravity",
+              "resumable": true,
+              "summary": "规范导出、双目录同步与多宿主适配"
+            },
+            "dashboard": {
+              "session_id": "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d",
+              "title": "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)",
+              "tags": ["dashboard", "topic"],
+              "memory_doc": "docs/memory/dashboard.md",
+              "vendor": "antigravity",
+              "resumable": true,
+              "summary": "专题模块: [控制面板专题] 状态监控 & 拖拽交互 (dashboard)"
+            }
+          }
+        },
+        "zcode": {
+          "schema_version": 3,
+          "vendor": "zcode",
+          "main_thread_id": "sess_5625de9f-b41d-415a-9b8c-c9304bb29748",
+          "updated_at": "2026-09-01T02:49:32.407Z",
+          "modules": {
+            "main": {
+              "session_id": "sess_5625de9f-b41d-415a-9b8c-c9304bb29748",
+              "title": "[主会话] 任务编排 & 治理中枢",
+              "tags": ["main", "orchestrator"],
+              "memory_doc": "docs/MEMORY.md",
+              "vendor": "zcode",
+              "resumable": true,
+              "summary": "ZCode 治理主会话"
+            },
+            "session_control": {
+              "session_id": "sess_zcode_session_ctrl",
+              "title": "[专题] 会话控制与内省",
+              "tags": ["session_control", "topic"],
+              "memory_doc": "docs/memory/session_control.md",
+              "vendor": "zcode",
+              "resumable": true,
+              "summary": "ZCode db.sqlite 与 rollout 日志反向检索"
+            }
+          }
+        },
+        "codex": {
+          "schema_version": 3,
+          "vendor": "codex",
+          "main_thread_id": "thread_codex_main_sample",
+          "modules": {
+            "main": {
+              "session_id": "thread_codex_main_sample",
+              "title": "[主会话] 任务编排 & 治理中枢",
+              "vendor": "codex",
+              "resumable": true,
+              "summary": "Codex App Server 中枢会话"
+            }
+          }
+        },
+        "claude": {
+          "schema_version": 3,
+          "vendor": "claude",
+          "main_thread_id": "11111111-2222-3333-4444-555555555555",
+          "modules": {
+            "main": {
+              "session_id": "11111111-2222-3333-4444-555555555555",
+              "title": "[主会话] 任务编排 & 治理中枢",
+              "vendor": "claude",
+              "resumable": true,
+              "summary": "Claude Code -p 无头中枢"
+            }
+          }
+        }
+      }
+    };
+
+    const DEFAULT_TODO = {
+      "schema_version": 2,
+      "items": [
+        {
+          "id": "task-001",
+          "title": "重构控制面板 UI: 极简黑白底 + 红蓝绿 + 双语i18n",
+          "objective": "单文件无依赖，SVG图标替代文字，支持中英文双语一键无缝切换与本地记忆",
+          "status": "in_progress",
+          "complexity": 2,
+          "verification_mode": "ui_reload",
+          "assignee_thread_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+          "allowlist": ["dashboard/index.html"],
+          "created_at": "2026-09-10T02:36:00Z"
+        },
+        {
+          "id": "task-002",
+          "title": "优化测试与质检分流: 杜绝强前端交互形式主义单测",
+          "objective": "建立后端算法单测自证与强前端交互页面刷新验证指引卡的分流矩阵",
+          "status": "done",
+          "complexity": 2,
+          "verification_mode": "unit_test",
+          "assignee_thread_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+          "allowlist": [
+            "scripts/hooks/inject_session_context.js",
+            "references/dispatch-contract.md"
+          ],
+          "created_at": "2026-09-07T08:14:00Z"
+        },
+        {
+          "id": "task-003",
+          "title": "术语机制升级: 看门狗 -> 进度监测器 + 巡检任务",
+          "objective": "废止陈旧生硬的看门狗词汇，全面升级为双阶梯进度监测与巡检机制",
+          "status": "done",
+          "complexity": 2,
+          "verification_mode": "unit_test",
+          "assignee_thread_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+          "allowlist": ["scripts/inspect_agy_sessions.js"],
+          "created_at": "2026-09-08T02:57:00Z"
+        },
+        {
+          "id": "task-004",
+          "title": "跨厂商会话历史聚合分析 CLI 优化",
+          "objective": "对拍四大厂商会话扫描器输出 Schema 并规范化输出格式",
+          "status": "pending",
+          "complexity": 1,
+          "verification_mode": "unit_test",
+          "assignee_thread_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+          "allowlist": ["scripts/find_project_sessions.js"],
+          "created_at": "2026-09-10T03:00:00Z"
+        }
+      ]
+    };
+
+    const DEFAULT_POLICY = {
+      "schema_version": 1,
+      "active_vendor": "antigravity",
+      "lease_minutes": 25,
+      "allow_remote_push": false,
+      "model_profiles": {
+        "simple": "gpt-5.6-luna",
+        "standard": "gpt-5.6-terra",
+        "complex": "gpt-5.6-sol"
+      }
+    };
+
+    const DEFAULT_LEASE = {
+      "holder": null,
+      "acquired_at": null,
+      "expires_at": null,
+      "status": "UNLOCKED"
+    };
+
+    // ==========================================
+    // 3. 状态管理器 (State Manager)
+    // ==========================================
+    let initialLang = 'zh';
+    try {
+      const stored = localStorage.getItem('task_loop_lang');
+      if (stored && (stored === 'zh' || stored === 'en')) {
+        initialLang = stored;
+      } else if (navigator.language && !navigator.language.toLowerCase().startsWith('zh')) {
+        initialLang = 'en';
+      }
+    } catch (e) {}
+
+    const state = {
+      lang: initialLang,
+      sessions: JSON.parse(JSON.stringify(DEFAULT_SESSIONS)),
+      todo: JSON.parse(JSON.stringify(DEFAULT_TODO)),
+      policy: JSON.parse(JSON.stringify(DEFAULT_POLICY)),
+      lease: JSON.parse(JSON.stringify(DEFAULT_LEASE)),
+      currentVendor: 'antigravity',
+      currentTab: 'view-kanban',
+      currentRaw: 'sessions',
+      isDirty: false,
+      dirHandle: null
+    };
+
+    function t(key) {
+      const dict = I18N[state.lang] || I18N.en;
+      return dict[key] !== undefined ? dict[key] : key;
+    }
+
+    function showToast(msg) {
+      const toast = document.getElementById('toast');
+      toast.innerText = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 2200);
+    }
+
+    function markDirty() {
+      state.isDirty = true;
+      document.getElementById('dirty-status').style.display = 'flex';
+      const saveBtn = document.getElementById('btn-save-disk');
+      saveBtn.classList.remove('btn-green');
+      saveBtn.classList.add('btn-blue');
+    }
+
+    function clearDirty() {
+      state.isDirty = false;
+      document.getElementById('dirty-status').style.display = 'none';
+      const saveBtn = document.getElementById('btn-save-disk');
+      saveBtn.classList.remove('btn-blue');
+      saveBtn.classList.add('btn-green');
+    }
+
+    function applyI18n() {
+      const dict = I18N[state.lang] || I18N.en;
+      
+      // 更新所有 data-i18n 文本
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (dict[key] !== undefined) el.innerText = dict[key];
+      });
+
+      // 更新所有 data-i18n-title 提示
+      document.querySelectorAll('[data-i18n-title]').forEach(el => {
+        const key = el.getAttribute('data-i18n-title');
+        if (dict[key] !== undefined) el.setAttribute('title', dict[key]);
+      });
+
+      // 切换按钮文字
+      document.getElementById('text-lang').innerText = state.lang === 'zh' ? 'EN' : '中文';
+    }
+
+    function toggleLanguage() {
+      state.lang = state.lang === 'zh' ? 'en' : 'zh';
+      try {
+        localStorage.setItem('task_loop_lang', state.lang);
+      } catch (e) {}
+      applyI18n();
+      renderAll();
+      showToast(t('toast_lang_switched'));
+    }
+
+    // ==========================================
+    // 4. 渲染器 (Renderers)
+    // ==========================================
+    function renderStatusBar() {
+      document.getElementById('text-active-vendor').innerText = state.policy.active_vendor || 'antigravity';
+      
+      const leaseStatus = state.lease.status || 'UNLOCKED';
+      const leaseEl = document.getElementById('text-lease-status');
+      leaseEl.innerText = leaseStatus === 'LOCKED' ? t('lease_locked') : t('lease_unlocked');
+      leaseEl.style.color = leaseStatus === 'LOCKED' ? 'var(--c-red)' : 'var(--c-green)';
+
+      const srcText = state.dirHandle 
+        ? `${t('status_src_dir_prefix')}${state.dirHandle.name} (${t('mode_inplace_write')})` 
+        : `${t('status_src_embedded')} (${t('mode_readonly_snapshot')})`;
+      document.getElementById('text-source').innerText = srcText;
+      const dot = document.getElementById('dot-source');
+      dot.className = state.dirHandle ? 'indicator-dot dot-green' : 'indicator-dot dot-amber';
+
+      renderBreadcrumb();
+    }
+
+    function renderBreadcrumb(activeTab) {
+      const tab = activeTab || state.currentTab || 'view-kanban';
+      let fileName = 'todo.json';
+      if (tab === 'view-kanban') fileName = 'todo.json';
+      else if (tab === 'view-topology') fileName = 'sessions.json';
+      else if (tab === 'view-policy') fileName = 'policy.json';
+      else if (tab === 'view-raw') fileName = `${state.currentRaw || 'sessions'}.json`;
+
+      const fileEl = document.getElementById('breadcrumb-file');
+      if (fileEl) fileEl.innerText = fileName;
+
+      const badgeEl = document.getElementById('breadcrumb-mode-badge');
+      if (badgeEl) {
+        if (state.dirHandle) {
+          badgeEl.className = 'bc-mode-badge mode-disk';
+          badgeEl.innerText = `[${t('mode_inplace_write')}]`;
+        } else {
+          badgeEl.className = 'bc-mode-badge mode-embedded';
+          badgeEl.innerText = `[${t('mode_readonly_snapshot')}]`;
+        }
+      }
+    }
+
+    // ==========================================
+    // 厂商官方标准矢量 SVG Logo 清单 (Vendor Official Logos)
+    // ==========================================
+    const VENDOR_LOGOS = {
+      antigravity: {
+        name: 'Antigravity',
+        vendor: 'Google',
+        svg: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"/></svg>'
+      },
+      zcode: {
+        name: 'ZCode',
+        vendor: 'Z.ai / GLM',
+        svg: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12.606 1.806l-1.677 2.388c-0.258 0.374-0.697 0.606-1.161 0.606h-9.162V1.794C0.594 1.806 12.606 1.806 12.606 1.806zM24 1.806L9.6 22.206 0 22.206 14.4 1.806zM11.394 22.206l1.69-2.4c0.258-0.374 0.697-0.606 1.161-0.606h9.149v3.006H11.394z"/></svg>'
+      },
+      codex: {
+        name: 'Codex',
+        vendor: 'OpenAI',
+        svg: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>'
+      },
+      claude: {
+        name: 'Claude',
+        vendor: 'Anthropic',
+        svg: '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="m4.7144 15.9555 4.7174-2.6471.079-.2307-.079-.1275h-.2307l-.7893-.0486-2.6956-.0729-2.3375-.0971-2.2646-.1214-.5707-.1215-.5343-.7042.0546-.3522.4797-.3218.686.0608 1.5179.1032 2.2767.1578 1.6514.0972 2.4468.255h.3886l.0546-.1579-.1336-.0971-.1032-.0972L6.973 9.8356l-2.55-1.6879-1.3356-.9714-.7225-.4918-.3643-.4614-.1578-1.0078.6557-.7225.8803.0607.2246.0607.8925.686 1.9064 1.4754 2.4893 1.8336.3643.3035.1457-.1032.0182-.0728-.164-.2733-1.3539-2.4467-1.445-2.4893-.6435-1.032-.17-.6194c-.0607-.255-.1032-.4674-.1032-.7285L6.287.1335 6.6997 0l.9957.1336.419.3642.6192 1.4147 1.0018 2.2282 1.5543 3.0296.4553.8985.2429.8318.091.255h.1579v-.1457l.1275-1.706.2368-2.0947.2307-2.6957.0789-.7589.3764-.9107.7468-.4918.5828.2793.4797.686-.0668.4433-.2853 1.8517-.5586 2.9021-.3643 1.9429h.2125l.2429-.2429.9835-1.3053 1.6514-2.0643.7286-.8196.85-.9046.5464-.4311h1.0321l.759 1.1293-.34 1.1657-1.0625 1.3478-.8804 1.1414-1.2628 1.7-.7893 1.36.0729.1093.1882-.0183 2.8535-.607 1.5421-.2794 1.8396-.3157.8318.3886.091.3946-.3278.8075-1.967.4857-2.3072.4614-3.4364.8136-.0425.0304.0486.0607 1.5482.1457.6618.0364h1.621l3.0175.2247.7892.522.4736.6376-.079.4857-1.2142.6193-1.6393-.3886-3.825-.9107-1.3113-.3279h-.1822v.1093l1.0929 1.0686 2.0035 1.8092 2.5075 2.3314.1275.5768-.3218.4554-.34-.0486-2.2039-1.6575-.85-.7468-1.9246-1.621h-.1275v.17l.4432.6496 2.3436 3.5214.1214 1.0807-.17.3521-.6071.2125-.6679-.1214-1.3721-1.9246L14.38 17.959l-1.1414-1.9428-.1397.079-.674 7.2552-.3156.3703-.7286.2793-.6071-.4614-.3218-.7468.3218-1.4753.3886-1.9246.3157-1.53.2853-1.9004.17-.6314-.0121-.0425-.1397.0182-1.4328 1.9672-2.1796 2.9446-1.7243 1.8456-.4128.164-.7164-.3704.0667-.6618.4008-.5889 2.386-3.0357 1.4389-1.882.929-1.0868-.0062-.1579h-.0546l-6.3385 4.1164-1.1293.1457-.4857-.4554.0608-.7467.2307-.2429 1.9064-1.3114Z"/></svg>'
+      }
+    };
+
+    function renderTopology() {
+      const pillsContainer = document.getElementById('vendor-pills');
+      pillsContainer.innerHTML = '';
+      const vendors = Object.keys(state.sessions.vendors || {});
+      if (!vendors.includes(state.currentVendor)) {
+        state.currentVendor = vendors[0] || 'antigravity';
+      }
+
+      vendors.forEach(v => {
+        const btn = document.createElement('button');
+        btn.className = `vendor-btn ${v === state.currentVendor ? 'active' : ''}`;
+        const info = VENDOR_LOGOS[v] || { name: v.toUpperCase(), svg: '', vendor: '' };
+        btn.innerHTML = `${info.svg}<span>${info.name}</span>`;
+        btn.title = `${info.name} (${info.vendor || 'Vendor'})`;
+        btn.onclick = () => {
+          state.currentVendor = v;
+          renderTopology();
+        };
+        pillsContainer.appendChild(btn);
+      });
+
+      const grid = document.getElementById('topology-grid');
+      grid.innerHTML = '';
+      const vData = (state.sessions.vendors || {})[state.currentVendor];
+      if (!vData) return;
+
+      const mainId = vData.main_thread_id;
+      const modules = vData.modules || {};
+
+      // 1. 主会话中枢
+      const mainCard = document.createElement('div');
+      mainCard.className = 'card main-card';
+      mainCard.innerHTML = `
+        <div class="card-head">
+          <span class="card-title">${t('topology_main_title')}</span>
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <span class="session-status-badge status-active">
+              <span class="pulse-dot"></span>
+              <span>ACTIVE</span>
+            </span>
+            <span class="badge badge-blue">${t('topology_main_badge')}</span>
+          </div>
+        </div>
+        <div class="kv-table">
+          <div class="kv-row">
+            <span class="kv-key">${t('topology_key_session')}</span>
+            <span class="kv-val">${mainId || 'none'}</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-key">${t('topology_key_memory')}</span>
+            <span class="kv-val">docs/MEMORY.md</span>
+          </div>
+        </div>
+        <div style="margin-top: 6px;">
+          <button class="btn" onclick="openSession('${mainId}', '${state.currentVendor}')" style="padding: 6px 12px; font-size: 13px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>
+            </svg>
+            <span>${t('topology_btn_open')}</span>
+          </button>
+        </div>
+      `;
+      grid.appendChild(mainCard);
+
+      // 2. 专题模块
+      Object.entries(modules).forEach(([mKey, item]) => {
+        if (mKey === 'main') return;
+
+        let healthClass = 'status-idle';
+        let healthLabel = t('health_status_idle');
+        const isUnbound = !item.session_id || item.session_id === 'unbound';
+
+        if (isUnbound) {
+          healthClass = 'status-unbound';
+          healthLabel = t('health_status_unbound');
+        } else {
+          // 检查 todo.json 中是否有属于该专题且处于 in_progress 的任务
+          const hasRunningTask = (state.todo.items || []).some(tk => {
+            if (tk.status !== 'in_progress') return false;
+            const text = `${tk.title || ''} ${tk.objective || ''} ${(tk.tags || []).join(' ')}`.toLowerCase();
+            return text.includes(mKey.toLowerCase()) || (tk.module_key && tk.module_key === mKey);
+          });
+          if (hasRunningTask) {
+            healthClass = 'status-running';
+            healthLabel = t('health_status_running');
+          }
+        }
+
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <div class="card-head">
+            <span class="card-title">${item.title || mKey}</span>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span class="session-status-badge ${healthClass}">
+                <span class="pulse-dot"></span>
+                <span>${healthLabel}</span>
+              </span>
+              <span class="badge ${item.resumable !== false ? 'badge-green' : ''}">${t('topology_topic_badge')}</span>
+            </div>
+          </div>
+          <div class="kv-table">
+            <div class="kv-row">
+              <span class="kv-key">key</span>
+              <span class="kv-val">${mKey}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">${t('topology_key_session')}</span>
+              <span class="kv-val">${item.session_id || 'unbound'}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">${t('topology_key_memory')}</span>
+              <span class="kv-val">${item.memory_doc || (item.memory_docs && item.memory_docs[0]) || 'none'}</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-key">${t('topology_key_resumable')}</span>
+              <span class="kv-val" style="color: ${item.resumable !== false ? 'var(--c-green)' : 'var(--text-muted)'};">
+                ${item.resumable !== false ? t('yes') : t('no')}
+              </span>
+            </div>
+          </div>
+          <div style="margin-top: 6px; display: flex; gap: 8px;">
+            <button class="btn" onclick="openSession('${item.session_id}', '${state.currentVendor}')" style="padding: 6px 12px; font-size: 13px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>
+              </svg>
+              <span>${t('topology_btn_open')}</span>
+            </button>
+            <button class="btn" onclick="navigator.clipboard.writeText('${item.session_id}'); showToast(t('toast_copied_link'));" style="padding: 6px 12px; font-size: 13px;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              <span>${t('topology_btn_copy')}</span>
+            </button>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    // 智能唤起各厂商桌面应用或复制会话 ID 优雅降级
+    window.openSession = function(sessionId, vendor) {
+      if (!sessionId || sessionId === 'unbound' || sessionId === 'none') {
+        showToast(state.lang === 'zh' ? '会话未绑定，无法打开' : 'Session is unbound');
+        return;
+      }
+
+      // 1. 优先复制到剪贴板，作为可靠保底
+      try {
+        navigator.clipboard.writeText(sessionId);
+      } catch (e) {}
+
+      // 2. 根据 vendor 组装对应的桌面客户端标准 URL Scheme 协议
+      const v = (vendor || state.currentVendor || 'antigravity').toLowerCase();
+      let schemeUrl = `antigravity://conversation/${sessionId}`;
+      if (v === 'zcode') {
+        schemeUrl = `zcode://open?session=${sessionId}`;
+      } else if (v === 'codex') {
+        schemeUrl = `vscode://antigravity.open?session=${sessionId}`;
+      } else if (v === 'claude') {
+        schemeUrl = `claude://open?session=${sessionId}`;
+      }
+
+      // 3. 尝试唤起客户端 (使用不可见 iframe 避免主页面跳转拦截)
+      try {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = schemeUrl;
+        document.body.appendChild(iframe);
+        setTimeout(() => {
+          try { document.body.removeChild(iframe); } catch (e) {}
+        }, 2000);
+      } catch (err) {
+        window.location.href = schemeUrl;
+      }
+
+      // 4. 超时探测与温馨降级提示
+      setTimeout(() => {
+        showToast(state.lang === 'zh' 
+          ? `已尝试唤起 [${v.toUpperCase()}] 客户端！(会话 ID 已复制至剪贴板)` 
+          : `Attempted to launch [${v.toUpperCase()}]! (Session ID copied to clipboard)`);
+      }, 300);
+    };
+
+    function checkTopicHealth() {
+      renderTopology();
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      const healthEl = document.getElementById('text-health-time');
+      if (healthEl) healthEl.innerText = `HEALTH: ${timeStr} (5s)`;
+    }
+
+    // HTML 转义辅助函数
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // 渲染看板与可实时行内编辑 (标题/描述/负责人/复杂度/模式，双保险焦点保护)
+    function renderKanban() {
+      const cols = {
+        pending: document.getElementById('col-pending'),
+        in_progress: document.getElementById('col-in_progress'),
+        dispatched: document.getElementById('col-dispatched'),
+        done: document.getElementById('col-done')
+      };
+      Object.values(cols).forEach(c => c.innerHTML = '');
+      const counts = { pending: 0, in_progress: 0, dispatched: 0, done: 0 };
+
+      // 焦点保护：记录当前活动焦点所在的任务与字段，以及输入框的光标选区
+      const activeEl = document.activeElement;
+      const focusedId = activeEl && activeEl.dataset ? activeEl.dataset.id : null;
+      const focusedField = activeEl && activeEl.dataset ? activeEl.dataset.field : null;
+      let selectionStart = null;
+      let selectionEnd = null;
+      if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+        try {
+          selectionStart = activeEl.selectionStart;
+          selectionEnd = activeEl.selectionEnd;
+        } catch (e) {}
+      }
+
+      (state.todo.items || []).forEach(task => {
+        const status = task.status || 'pending';
+        if (counts[status] !== undefined) counts[status]++;
+
+        const card = document.createElement('div');
+        card.className = 'task-card';
+        card.draggable = true;
+        card.setAttribute('data-id', task.id);
+
+        // 原生 HTML5 拖拽事件
+        card.ondragstart = (e) => {
+          e.dataTransfer.setData('text/plain', task.id);
+          e.dataTransfer.effectAllowed = 'move';
+          card.classList.add('dragging');
+        };
+
+        card.ondragend = () => {
+          card.classList.remove('dragging');
+          document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
+        };
+
+        // 行内多字段实时编辑组件 (标题 / 描述 / 负责人 / 复杂度下拉 / 模式下拉)
+        const complexityVal = Number(task.complexity) || 1;
+        const modeVal = task.verification_mode || 'unit_test';
+        const assigneeVal = task.assignee || '';
+
+        card.innerHTML = `
+          <div>
+            <input class="task-edit-title" value="${escapeHtml(task.title || '')}" placeholder="${t('task_placeholder_title')}" data-id="${task.id}" data-field="title" draggable="false" />
+            <textarea class="task-edit-desc" placeholder="${t('task_placeholder_desc')}" data-id="${task.id}" data-field="objective" draggable="false">${escapeHtml(task.objective || '')}</textarea>
+          </div>
+
+          <div class="task-assignee-row" title="${t('task_assignee_title')}">
+            <svg class="task-field-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <input class="task-edit-assignee" value="${escapeHtml(assigneeVal)}" placeholder="${t('task_placeholder_assignee')}" data-id="${task.id}" data-field="assignee" draggable="false" />
+          </div>
+
+          <div class="task-meta-bar">
+            <div class="task-tags">
+              <select class="task-select task-select-complexity" data-id="${task.id}" data-field="complexity" title="${t('task_cycle_complexity')}" draggable="false">
+                <option value="1" ${complexityVal === 1 ? 'selected' : ''}>L1</option>
+                <option value="2" ${complexityVal === 2 ? 'selected' : ''}>L2</option>
+                <option value="3" ${complexityVal === 3 ? 'selected' : ''}>L3</option>
+              </select>
+              <select class="task-select task-select-mode" data-id="${task.id}" data-field="verification_mode" title="${t('task_cycle_mode')}" draggable="false">
+                <option value="unit_test" ${modeVal === 'unit_test' ? 'selected' : ''}>unit_test</option>
+                <option value="ui_reload" ${modeVal === 'ui_reload' ? 'selected' : ''}>ui_reload</option>
+                <option value="hybrid" ${modeVal === 'hybrid' ? 'selected' : ''}>hybrid</option>
+              </select>
+            </div>
+
+            <div class="task-ctrls">
+              <!-- 推进状态按钮 (触发二次确认弹窗防误操作) -->
+              ${status !== 'pending' ? `
+                <button class="icon-btn" title="${t('col_pending')}" onclick="requestMoveTask('${task.id}', 'pending')" style="color: var(--c-orange);">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </button>` : ''}
+              ${status !== 'in_progress' ? `
+                <button class="icon-btn" title="${t('col_in_progress')}" onclick="requestMoveTask('${task.id}', 'in_progress')" style="color: var(--c-blue);">
+                  <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </button>` : ''}
+              ${status !== 'dispatched' ? `
+                <button class="icon-btn" title="${t('col_dispatched')}" onclick="requestMoveTask('${task.id}', 'dispatched')" style="color: var(--c-red);">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                </button>` : ''}
+              ${status !== 'done' ? `
+                <button class="icon-btn" title="${t('col_done')}" onclick="requestMoveTask('${task.id}', 'done')" style="color: var(--c-green);">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polyline points="20 6 9 17 4 12"/></svg>
+                </button>` : ''}
+              <!-- 删除按钮 (触发二次确认磨砂弹窗，防误删) -->
+              <button class="icon-btn btn-del" title="${t('task_del_title')}" onclick="requestDeleteTask('${task.id}')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+
+        // 绑定多字段行内实时编辑事件 (输入时仅更新对象与静默写盘，不重绘 DOM，保证焦点 100% 稳定不丢)
+        const inputs = card.querySelectorAll('input, textarea, select');
+        inputs.forEach(input => {
+          input.onmousedown = (e) => e.stopPropagation();
+          const field = input.getAttribute('data-field');
+          
+          const handleUpdate = (e) => {
+            let val = e.target.value;
+            if (field === 'complexity') val = Number(val) || 1;
+            task[field] = val;
+            if (state.currentTab === 'view-raw' && state.currentRaw === 'todo') updateRawEditor();
+            persistFile('todo.json', state.todo, 150);
+          };
+
+          input.oninput = handleUpdate;
+          input.onchange = handleUpdate;
+        });
+
+        if (cols[status]) cols[status].appendChild(card);
+      });
+
+      document.getElementById('count-pending').innerText = counts.pending;
+      document.getElementById('count-in_progress').innerText = counts.in_progress;
+      document.getElementById('count-dispatched').innerText = counts.dispatched;
+      document.getElementById('count-done').innerText = counts.done;
+
+      // 焦点与选区无缝恢复 (重绘完成后恢复活动焦点)
+      if (focusedId && focusedField) {
+        const targetInput = document.querySelector(`[data-id="${focusedId}"][data-field="${focusedField}"]`);
+        if (targetInput) {
+          targetInput.focus();
+          if (selectionStart !== null && selectionEnd !== null && (targetInput.tagName === 'INPUT' || targetInput.tagName === 'TEXTAREA')) {
+            try {
+              targetInput.setSelectionRange(selectionStart, selectionEnd);
+            } catch (e) {}
+          }
+        }
+      }
+    }
+
+    // ==========================================
+    // 状态流转二次确认弹窗控制
+    // ==========================================
+    let pendingMove = null;
+
+    window.requestMoveTask = function(taskId, targetStatus) {
+      const item = (state.todo.items || []).find(t => t.id === taskId);
+      if (!item || item.status === targetStatus) return;
+
+      pendingMove = { taskId, targetStatus };
+
+      const titleEl = document.getElementById('modal-task-name');
+      if (titleEl) titleEl.innerText = item.title || item.id;
+
+      const fromEl = document.getElementById('modal-from-status');
+      if (fromEl) {
+        fromEl.className = `flow-pill flow-pill-${item.status}`;
+        fromEl.innerText = t(`col_${item.status}`);
+      }
+
+      const toEl = document.getElementById('modal-to-status');
+      if (toEl) {
+        toEl.className = `flow-pill flow-pill-${targetStatus}`;
+        toEl.innerText = t(`col_${targetStatus}`);
+      }
+
+      const modalEl = document.getElementById('modal-confirm');
+      if (modalEl) modalEl.style.display = 'flex';
+    };
+
+    function closeModalConfirm() {
+      const modalEl = document.getElementById('modal-confirm');
+      if (modalEl) modalEl.style.display = 'none';
+      pendingMove = null;
+    }
+
+    function confirmMoveTask() {
+      if (!pendingMove) return;
+      const { taskId, targetStatus } = pendingMove;
+      closeModalConfirm();
+      executeMoveTask(taskId, targetStatus);
+    }
+
+    function executeMoveTask(taskId, targetStatus) {
+      const item = (state.todo.items || []).find(t => t.id === taskId);
+      if (item) {
+        item.status = targetStatus;
+        renderKanban();
+        updateRawEditor();
+        persistFile('todo.json', state.todo);
+        showToast(`${t('toast_task_moved')}${t(`col_${targetStatus}`)}`);
+      }
+    }
+
+    // ==========================================
+    // 删除任务二次确认磨砂弹窗控制 (防误操作)
+    // ==========================================
+    let pendingDelete = null;
+
+    window.requestDeleteTask = function(taskId) {
+      const item = (state.todo.items || []).find(t => t.id === taskId);
+      if (!item) return;
+
+      pendingDelete = taskId;
+
+      const titleEl = document.getElementById('modal-del-task-name');
+      if (titleEl) titleEl.innerText = item.title || item.id;
+
+      const modalEl = document.getElementById('modal-delete');
+      if (modalEl) modalEl.style.display = 'flex';
+    };
+
+    function closeModalDelete() {
+      const modalEl = document.getElementById('modal-delete');
+      if (modalEl) modalEl.style.display = 'none';
+      pendingDelete = null;
+    }
+
+    function confirmDeleteTask() {
+      if (!pendingDelete) return;
+      const taskId = pendingDelete;
+      closeModalDelete();
+      executeDeleteTask(taskId);
+    }
+
+    function executeDeleteTask(taskId) {
+      const idx = (state.todo.items || []).findIndex(t => t.id === taskId);
+      if (idx !== -1) {
+        state.todo.items.splice(idx, 1);
+        renderKanban();
+        updateRawEditor();
+        persistFile('todo.json', state.todo);
+        showToast(t('toast_task_deleted'));
+      }
+    }
+
+    function renderPolicy() {
+      document.getElementById('policy-vendor').value = state.policy.active_vendor || 'antigravity';
+      document.getElementById('policy-lease-min').value = state.policy.lease_minutes || 25;
+      document.getElementById('policy-allow-push').checked = Boolean(state.policy.allow_remote_push);
+
+      document.getElementById('lease-holder').innerText = state.lease.holder || 'none';
+      document.getElementById('lease-acquired').innerText = state.lease.acquired_at || 'none';
+      document.getElementById('lease-expires').innerText = state.lease.expires_at || 'none';
+      
+      const badge = document.getElementById('lease-badge');
+      const isLocked = state.lease.status === 'LOCKED';
+      badge.innerText = isLocked ? t('lease_locked') : t('lease_unlocked');
+      badge.className = `badge ${isLocked ? 'badge-red' : 'badge-green'}`;
+      
+      document.getElementById('btn-toggle-lease-text').innerText = isLocked ? t('lease_btn_unlock') : t('lease_btn_lock');
+      document.getElementById('btn-toggle-lease').className = `btn ${isLocked ? 'btn-red' : 'btn-blue'}`;
+    }
+
+    function updateRawEditor() {
+      const editor = document.getElementById('raw-editor');
+      if (state.currentRaw === 'sessions') {
+        editor.value = JSON.stringify(state.sessions, null, 2);
+      } else if (state.currentRaw === 'todo') {
+        editor.value = JSON.stringify(state.todo, null, 2);
+      } else if (state.currentRaw === 'policy') {
+        editor.value = JSON.stringify(state.policy, null, 2);
+      }
+    }
+
+    // ==========================================
+    // 5. 原生 File System Access API 读写、IndexedDB 缓存与 0.2s 极速轮询
+    // ==========================================
+    const writeDebounceTimers = {};
+    const lastSeenDiskTexts = {
+      'todo.json': '',
+      'sessions.json': '',
+      'policy.json': '',
+      'lease.json': ''
+    };
+    let isPolling = false;
+
+    // 顶部标签栏定时任务与同步时间戳动态更新
+    function updateSyncTimestamp(src = 'DISK') {
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      const syncTextEl = document.getElementById('tab-sync-text');
+      const dotEl = document.getElementById('dot-sync-badge');
+      if (syncTextEl) syncTextEl.innerText = `${src}: ${timeStr}`;
+      if (dotEl) {
+        dotEl.className = 'pulse-dot green';
+      }
+    }
+
+    function updateSyncIndicator() {
+      const syncEl = document.getElementById('sync-indicator');
+      const dotEl = document.getElementById('dot-sync');
+      const textEl = document.getElementById('text-sync');
+      if (!syncEl || !dotEl || !textEl) return;
+
+      if (state.dirHandle) {
+        syncEl.classList.add('sync-live');
+        dotEl.className = 'indicator-dot dot-green';
+        textEl.innerText = t('sync_live');
+      } else {
+        syncEl.classList.remove('sync-live');
+        dotEl.className = 'indicator-dot dot-amber';
+        textEl.innerText = t('sync_mem');
+      }
+    }
+
+    // ==========================================
+    // 5.1 原生 IndexedDB 持久化缓存 DirectoryHandle
+    // ==========================================
+    const IDB_NAME = 'task_loop_db';
+    const IDB_STORE = 'handles';
+    const IDB_KEY = 'dir_handle';
+
+    function openIdb() {
+      return new Promise((resolve) => {
+        if (!window.indexedDB) return resolve(null);
+        try {
+          const req = indexedDB.open(IDB_NAME, 1);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(IDB_STORE)) {
+              db.createObjectStore(IDB_STORE);
+            }
+          };
+          req.onsuccess = (e) => resolve(e.target.result);
+          req.onerror = () => resolve(null);
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    }
+
+    async function storeDirHandle(handle) {
+      const db = await openIdb();
+      if (!db) return false;
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put(handle, IDB_KEY);
+          tx.oncomplete = () => resolve(true);
+          tx.onerror = () => resolve(false);
+        } catch (e) {
+          resolve(false);
+        }
+      });
+    }
+
+    async function getStoredDirHandle() {
+      const db = await openIdb();
+      if (!db) return null;
+      return new Promise((resolve) => {
+        try {
+          const tx = db.transaction(IDB_STORE, 'readonly');
+          const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    }
+
+    async function clearStoredDirHandle() {
+      const db = await openIdb();
+      if (!db) return;
+      try {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).delete(IDB_KEY);
+      } catch (e) {}
+    }
+
+    // ==========================================
+    // 5.2 自动探测并拉取最新数据 (HTTP / Live Server 模式)
+    // ==========================================
+    async function autoFetchFromLocal() {
+      if (window.location.protocol === 'file:') return false;
+      try {
+        const ts = Date.now();
+        const [sessRes, todoRes, policyRes, leaseRes] = await Promise.all([
+          fetch(`../.agents/task-loop/sessions.json?t=${ts}`),
+          fetch(`../.agents/task-loop/todo.json?t=${ts}`),
+          fetch(`../.agents/task-loop/policy.json?t=${ts}`),
+          fetch(`../.agents/task-loop/lease.json?t=${ts}`)
+        ]);
+
+        if (sessRes.ok && todoRes.ok) {
+          state.sessions = await sessRes.json();
+          state.todo = await todoRes.json();
+          if (policyRes.ok) state.policy = await policyRes.json();
+          if (leaseRes.ok) state.lease = await leaseRes.json();
+          renderAll();
+          updateSyncTimestamp('FETCH');
+          return true;
+        }
+      } catch (e) {
+        // fetch 失败静默降级
+      }
+      return false;
+    }
+
+    async function persistFile(fileName, data, debounceMs = 0) {
+      if (!state.dirHandle) return;
+
+      const doWrite = async () => {
+        try {
+          const fh = await state.dirHandle.getFileHandle(fileName, { create: true });
+          const writable = await fh.createWritable();
+          const jsonText = JSON.stringify(data, null, 2);
+          await writable.write(jsonText);
+          await writable.close();
+          lastSeenDiskTexts[fileName] = jsonText;
+          updateSyncIndicator();
+          updateSyncTimestamp('WRITE');
+        } catch (err) {
+          console.warn(`[Auto-Sync] Write ${fileName} failed:`, err);
+        }
+      };
+
+      if (debounceMs > 0) {
+        if (writeDebounceTimers[fileName]) clearTimeout(writeDebounceTimers[fileName]);
+        writeDebounceTimers[fileName] = setTimeout(doWrite, debounceMs);
+      } else {
+        await doWrite();
+      }
+    }
+
+    async function pollFromDisk() {
+      if (!state.dirHandle || isPolling) return;
+      isPolling = true;
+
+      try {
+        let changed = false;
+
+        // 1. todo.json
+        try {
+          const fh = await state.dirHandle.getFileHandle('todo.json');
+          const f = await fh.getFile();
+          const text = await f.text();
+          if (text && text !== lastSeenDiskTexts['todo.json']) {
+            lastSeenDiskTexts['todo.json'] = text;
+            state.todo = JSON.parse(text);
+            changed = true;
+
+            // 焦点输入保护：若用户正在编辑标题或说明输入框，暂缓 Kanban 重绘避免打断打字
+            const activeEl = document.activeElement;
+            const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT');
+            if (!isTyping) {
+              renderKanban();
+              if (state.currentTab === 'view-raw' && state.currentRaw === 'todo') updateRawEditor();
+            }
+          }
+        } catch (e) {}
+
+        // 2. sessions.json
+        try {
+          const fh = await state.dirHandle.getFileHandle('sessions.json');
+          const f = await fh.getFile();
+          const text = await f.text();
+          if (text && text !== lastSeenDiskTexts['sessions.json']) {
+            lastSeenDiskTexts['sessions.json'] = text;
+            state.sessions = JSON.parse(text);
+            changed = true;
+            renderTopology();
+            if (state.currentTab === 'view-raw' && state.currentRaw === 'sessions') updateRawEditor();
+          }
+        } catch (e) {}
+
+        // 3. policy.json
+        try {
+          const fh = await state.dirHandle.getFileHandle('policy.json');
+          const f = await fh.getFile();
+          const text = await f.text();
+          if (text && text !== lastSeenDiskTexts['policy.json']) {
+            lastSeenDiskTexts['policy.json'] = text;
+            state.policy = JSON.parse(text);
+            changed = true;
+            renderPolicy();
+            renderStatusBar();
+            if (state.currentTab === 'view-raw' && state.currentRaw === 'policy') updateRawEditor();
+          }
+        } catch (e) {}
+
+        // 4. lease.json
+        try {
+          const fh = await state.dirHandle.getFileHandle('lease.json');
+          const f = await fh.getFile();
+          const text = await f.text();
+          if (text && text !== lastSeenDiskTexts['lease.json']) {
+            lastSeenDiskTexts['lease.json'] = text;
+            state.lease = JSON.parse(text);
+            changed = true;
+            renderStatusBar();
+            renderPolicy();
+          }
+        } catch (e) {}
+
+        if (changed) {
+          updateSyncTimestamp('POLL');
+        }
+      } catch (err) {
+      } finally {
+        isPolling = false;
+      }
+    }
+
+    async function selectDirectory() {
+      try {
+        if (!('showDirectoryPicker' in window)) {
+          alert(state.lang === 'zh' ? '当前浏览器环境不支持 File System Access API，请使用最新版 Chrome / Edge！' : 'Browser environment does not support File System Access API. Please use Chrome / Edge!');
+          return;
+        }
+
+        const dirHandle = await window.showDirectoryPicker();
+        await loadFromDirectory(dirHandle);
+        await storeDirHandle(dirHandle);
+        updateSyncTimestamp('ATTACH');
+        showToast(`${t('toast_dir_attached')}${dirHandle.name}`);
+        renderAll();
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          showToast(`${t('toast_dir_error')}${err.message}`);
+        }
+      }
+    }
+
+    async function loadFromDirectory(dirHandle) {
+      let targetDir = dirHandle;
+      try {
+        const agents = await dirHandle.getDirectoryHandle('.agents');
+        targetDir = await agents.getDirectoryHandle('task-loop');
+      } catch (e) {
+        // 直接选中的是 task-loop 目录
+      }
+      state.dirHandle = targetDir;
+
+      // sessions.json
+      try {
+        const fh = await targetDir.getFileHandle('sessions.json');
+        const f = await fh.getFile();
+        const text = await f.text();
+        state.sessions = JSON.parse(text);
+        lastSeenDiskTexts['sessions.json'] = text;
+      } catch (e) {}
+
+      // todo.json
+      try {
+        const fh = await targetDir.getFileHandle('todo.json');
+        const f = await fh.getFile();
+        const text = await f.text();
+        state.todo = JSON.parse(text);
+        lastSeenDiskTexts['todo.json'] = text;
+      } catch (e) {}
+
+      // policy.json
+      try {
+        const fh = await targetDir.getFileHandle('policy.json');
+        const f = await fh.getFile();
+        const text = await f.text();
+        state.policy = JSON.parse(text);
+        lastSeenDiskTexts['policy.json'] = text;
+      } catch (e) {}
+
+      // lease.json
+      try {
+        const fh = await targetDir.getFileHandle('lease.json');
+        const f = await fh.getFile();
+        const text = await f.text();
+        state.lease = JSON.parse(text);
+        lastSeenDiskTexts['lease.json'] = text;
+      } catch (e) {}
+
+      updateSyncIndicator();
+    }
+
+    // ==========================================
+    // 6. 事件绑定与初始化
+    // ==========================================
+    function setupEvents() {
+      // 语言切换
+      document.getElementById('btn-toggle-lang').onclick = toggleLanguage;
+
+      document.getElementById('btn-open-dir').onclick = selectDirectory;
+      
+      document.getElementById('btn-reset-data').onclick = () => {
+        state.sessions = JSON.parse(JSON.stringify(DEFAULT_SESSIONS));
+        state.todo = JSON.parse(JSON.stringify(DEFAULT_TODO));
+        state.policy = JSON.parse(JSON.stringify(DEFAULT_POLICY));
+        state.lease = JSON.parse(JSON.stringify(DEFAULT_LEASE));
+        state.dirHandle = null;
+        clearStoredDirHandle();
+        updateSyncIndicator();
+        updateSyncTimestamp('MEM');
+        renderAll();
+        showToast(t('toast_reset'));
+      };
+
+      // 拓扑健康检测手动触发
+      const btnHealth = document.getElementById('btn-health-check');
+      if (btnHealth) {
+        btnHealth.onclick = () => {
+          checkTopicHealth();
+          showToast(t('toast_health_checked'));
+        };
+      }
+
+      // 二次确认流转弹窗事件
+      const btnConfirm = document.getElementById('btn-modal-confirm');
+      if (btnConfirm) btnConfirm.onclick = confirmMoveTask;
+      const btnCancel = document.getElementById('btn-modal-cancel');
+      if (btnCancel) btnCancel.onclick = closeModalConfirm;
+      const btnClose = document.getElementById('btn-modal-close');
+      if (btnClose) btnClose.onclick = closeModalConfirm;
+      const modalMask = document.getElementById('modal-confirm');
+      if (modalMask) {
+        modalMask.onclick = (e) => {
+          if (e.target.id === 'modal-confirm') closeModalConfirm();
+        };
+      }
+
+      // 二次确认删除弹窗事件 (防误删)
+      const btnDelConfirm = document.getElementById('btn-modal-del-confirm');
+      if (btnDelConfirm) btnDelConfirm.onclick = confirmDeleteTask;
+      const btnDelCancel = document.getElementById('btn-modal-del-cancel');
+      if (btnDelCancel) btnDelCancel.onclick = closeModalDelete;
+      const btnDelClose = document.getElementById('btn-modal-del-close');
+      if (btnDelClose) btnDelClose.onclick = closeModalDelete;
+      const modalDelMask = document.getElementById('modal-delete');
+      if (modalDelMask) {
+        modalDelMask.onclick = (e) => {
+          if (e.target.id === 'modal-delete') closeModalDelete();
+        };
+      }
+
+      // 全局弹窗 Esc / Enter 快捷键响应
+      window.addEventListener('keydown', (e) => {
+        if (pendingDelete) {
+          if (e.key === 'Escape') closeModalDelete();
+          else if (e.key === 'Enter') confirmDeleteTask();
+          return;
+        }
+        if (pendingMove) {
+          if (e.key === 'Escape') closeModalConfirm();
+          else if (e.key === 'Enter') confirmMoveTask();
+          return;
+        }
+      });
+
+      // 标签导航
+      document.querySelectorAll('.tab-item').forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll('.tab-item').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.view-panel').forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          const target = btn.getAttribute('data-tab');
+          state.currentTab = target;
+          document.getElementById(target).classList.add('active');
+          if (target === 'view-raw') updateRawEditor();
+          renderBreadcrumb();
+        };
+      });
+
+      // 新建任务 (带完整多字段，自动即刻写盘)
+      document.getElementById('btn-add-task').onclick = () => {
+        const id = 'task-' + Math.floor(Math.random() * 900 + 100);
+        state.todo.items.unshift({
+          id: id,
+          title: state.lang === 'zh' ? '新任务' : 'New Task',
+          objective: state.lang === 'zh' ? '说明与验收要求...' : 'Description...',
+          assignee: 'main',
+          status: 'pending',
+          complexity: 1,
+          verification_mode: 'unit_test',
+          created_at: new Date().toISOString()
+        });
+        renderKanban();
+        updateRawEditor();
+        persistFile('todo.json', state.todo);
+        showToast(t('toast_task_created'));
+      };
+
+      // 看板列原生 HTML5 Drag & Drop 事件 (释放时触发二次确认弹窗防误操作)
+      document.querySelectorAll('.kanban-col').forEach(col => {
+        const targetStatus = col.getAttribute('data-status');
+
+        col.ondragover = (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          if (!col.classList.contains('drag-over')) {
+            col.classList.add('drag-over');
+          }
+        };
+
+        col.ondragenter = (e) => {
+          e.preventDefault();
+          col.classList.add('drag-over');
+        };
+
+        col.ondragleave = (e) => {
+          // 仅当鼠标真正移出 col 元素外部时才移除高亮
+          if (!col.contains(e.relatedTarget)) {
+            col.classList.remove('drag-over');
+          }
+        };
+
+        col.ondrop = (e) => {
+          e.preventDefault();
+          col.classList.remove('drag-over');
+          const taskId = e.dataTransfer.getData('text/plain');
+          if (!taskId) return;
+          const item = (state.todo.items || []).find(t => t.id === taskId);
+          if (item && item.status !== targetStatus) {
+            window.requestMoveTask(taskId, targetStatus);
+          }
+        };
+      });
+
+      // 策略字段实时输入 (自动即刻写盘)
+      document.getElementById('policy-vendor').onchange = (e) => {
+        state.policy.active_vendor = e.target.value;
+        renderStatusBar();
+        updateRawEditor();
+        persistFile('policy.json', state.policy);
+      };
+      document.getElementById('policy-lease-min').oninput = (e) => {
+        state.policy.lease_minutes = parseInt(e.target.value, 10) || 25;
+        updateRawEditor();
+        persistFile('policy.json', state.policy, 300);
+      };
+      document.getElementById('policy-allow-push').onchange = (e) => {
+        state.policy.allow_remote_push = e.target.checked;
+        updateRawEditor();
+        persistFile('policy.json', state.policy);
+      };
+
+      // 租约锁切换 (自动即刻写盘)
+      document.getElementById('btn-toggle-lease').onclick = () => {
+        if (state.lease.status === 'LOCKED') {
+          state.lease = { holder: null, acquired_at: null, expires_at: null, status: 'UNLOCKED' };
+        } else {
+          const now = new Date();
+          const exp = new Date(now.getTime() + (state.policy.lease_minutes || 25) * 60000);
+          state.lease = {
+            holder: 'simulated_main_orchestrator',
+            acquired_at: now.toISOString(),
+            expires_at: exp.toISOString(),
+            status: 'LOCKED'
+          };
+        }
+        renderStatusBar();
+        renderPolicy();
+        persistFile('lease.json', state.lease);
+        showToast(`LEASE -> ${state.lease.status}`);
+      };
+
+      // Raw 选项卡
+      document.querySelectorAll('.raw-switch').forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll('.raw-switch').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          state.currentRaw = btn.getAttribute('data-file');
+          updateRawEditor();
+          renderBreadcrumb();
+        };
+      });
+
+      // 应用 Raw JSON (自动即刻写盘)
+      document.getElementById('btn-apply-raw').onclick = () => {
+        try {
+          const val = JSON.parse(document.getElementById('raw-editor').value);
+          if (state.currentRaw === 'sessions') {
+            state.sessions = val;
+            persistFile('sessions.json', state.sessions);
+          } else if (state.currentRaw === 'todo') {
+            state.todo = val;
+            persistFile('todo.json', state.todo);
+          } else if (state.currentRaw === 'policy') {
+            state.policy = val;
+            persistFile('policy.json', state.policy);
+          }
+          renderAll();
+          showToast(`${t('toast_raw_applied')}${state.currentRaw}.json`);
+        } catch (err) {
+          alert('INVALID JSON: ' + err.message);
+        }
+      };
+
+      // 启动极速 0.2s 轮询与 5s 周期健康检测定时器
+      setInterval(pollFromDisk, 200);
+      setInterval(checkTopicHealth, 5000);
+    }
+
+    // 专题健康检测与顶部标签栏状态更新
+    function checkTopicHealth() {
+      renderTopology();
+      const now = new Date();
+      const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      const tabHealthEl = document.getElementById('tab-health-text');
+      if (tabHealthEl) tabHealthEl.innerText = `HEALTH: ${timeStr}`;
+    }
+
+    function renderAll() {
+      applyI18n();
+      renderStatusBar();
+      renderBreadcrumb();
+      renderTopology();
+      renderKanban();
+      renderPolicy();
+      updateRawEditor();
+      updateSyncIndicator();
+    }
+
+    // 启动时自动恢复 IndexedDB 关联目录或从本地 Web 服务器拉取最新数据
+    async function initAutoConnect() {
+      // 1. 优先尝试从 IndexedDB 恢复上一次关联的本地目录句柄
+      const cachedHandle = await getStoredDirHandle();
+      if (cachedHandle) {
+        try {
+          let perm = await cachedHandle.queryPermission({ mode: 'readwrite' });
+          if (perm !== 'granted') {
+            perm = await cachedHandle.requestPermission({ mode: 'readwrite' });
+          }
+          if (perm === 'granted') {
+            await loadFromDirectory(cachedHandle);
+            renderAll();
+            updateSyncTimestamp('RESTORE');
+            showToast(`${t('toast_dir_attached')}${cachedHandle.name || 'task-loop'}`);
+            return;
+          }
+        } catch (e) {
+          console.warn('[Auto-Connect] Restore DirectoryHandle failed:', e);
+        }
+      }
+
+      // 2. 尝试从本地 Web 服务器 Fetch 自动同步 (Live Server / HTTP 模式)
+      const fetched = await autoFetchFromLocal();
+      if (fetched) {
+        showToast(state.lang === 'zh' ? '已自动拉取本地最新状态文件' : 'Auto-fetched local status files');
+      }
+    }
+
+    setupEvents();
+    renderAll();
+    checkTopicHealth();
+    initAutoConnect();
+  </script>
+</body>
+</html>
