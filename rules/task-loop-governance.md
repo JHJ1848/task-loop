@@ -99,3 +99,47 @@
 * **定时器生命周期与冲突管理**:
   - 严禁在未清理旧定时器的情况下挂载带有相同条件的定时器；
   - 挂载新一轮 30s 进度监测器或新阶段定时器前，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器，杜绝 `conflicting early termination condition`。
+
+---
+
+## 7. 强制原生问答交互与杜绝纯文本提问红线 (Mandatory Native Question & Anti-Plaintext Prompt Law)
+
+为了消除智能体以纯文本长句提问并强迫用户手动打字确认的不良交互惯性，全量智能体（主会话、专题会话与即时子代理）在关键决策门禁处**强制执行原生问答与选项交互**：
+
+* **核心红线 (Anti-Plaintext Prompt Law)**:
+  - 严禁在涉及人机决策、方案确认、白名单反向审批、专题会话创建与落盘等关键门禁节点输出“请回复‘确认落盘’/‘确认创建’/‘proceed’”等纯文本手打指令；
+  - 严禁通过脆弱的文本匹配作为自动化门禁放行条件；
+* **优先且强制调用宿主原生问答工具**:
+  - **Google Antigravity (AGY)**: 必须且强制调用原生 `ask_question` 工具：
+    * `questions` 数组包含单一职责问题，选项聚焦于用户直接响应动作；
+    * 推荐项必须置于第一项并前缀 `(Recommended)`；
+    * 选项文本必须以**用户响应的第一人称视角**表述（如“立即落盘配置并执行测试”），严禁描述 Agent 自身行为；
+    * 严禁在 options 数组中手动添加 "Other" 或 "其他"（系统原生内置 write-in 文本框）；
+  - **OpenAI Codex**: 优先调用宿主暴露的交互选择原语或 Desktop 组件；在 CLI / Headless 模式下降级为紧凑编号选项 `[1] [2] [3]`，通过单按键捕获即时完成裁决，杜绝要求用户打全称；
+  - **Anthropic Claude Code**: 采用原生交互确认原语 (Confirm / AskUserPrompt) 或交互单选结构，实现终端箭头键切换与回车秒级确认；
+* **QuestionProvider 统一抽象模型**:
+  ```text
+  ask_user_choice(question, options, options_config: { recommendedIndex, is_multi_select }) -> QuestionResult
+  ```
+* **门禁节点强制应用场景清单**:
+  ```json
+  [
+    {
+      "gate_type": "1. 架构方案二选一裁决",
+      "enforcement": "当存在多种备选设计或破坏性重构方案时，必须调用 ask_question 由用户选择决策分支。"
+    },
+    {
+      "gate_type": "2. 白名单反向审批决策",
+      "enforcement": "主中枢接收到专题发起的 ALLOWLIST_EXPANSION_REQUEST 后，提请用户选择【批准扩展】或【驳回调整】。"
+    },
+    {
+      "gate_type": "3. 物理模块落盘与破坏性写操作",
+      "enforcement": "生成全新独立模块、覆盖核心规则或初始化状态机前，弹出交互选项确认。"
+    },
+    {
+      "gate_type": "4. 人机混合交付门禁核验",
+      "enforcement": "对含 UI/渲染/强交互项的任务交付，出具原生问答选项供用户进行真实视觉打标通过或驳回。"
+    }
+  ]
+  ```
+

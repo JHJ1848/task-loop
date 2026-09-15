@@ -1,27 +1,65 @@
-# [SDK Index] 跨 Agent 厂商会话控制 SDK 体系规范
+# [SDK Index] 跨厂商智能体控制 SDK 体系规范
 
-本文档定义了 `task-loop` 中跨厂商会话（Session / Subagent / Thread）操作的标准抽象接口，并汇聚了 Google Antigravity、OpenAI Codex 与 Anthropic Claude Code 三大厂商的原生 SDK 规范文档。
+本文档定义了 `task-loop` 中跨厂商智能体（Google Antigravity、OpenAI Codex 与 Anthropic Claude Code）的核心解耦架构规范，涵盖 **Hook 拦截与上下文注入**、**Session 会话调度与状态持久化** 以及 **Question 原生问答与选项交互** 三大核心支柱。
 
 ---
 
-## 一、通用会话控制抽象层 (Unified Session Control Interface)
+## 一、三大跨厂商解耦支柱架构 (Three Architectural Pillars)
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                 SessionProvider 统一抽象接口                 │
-├─────────────────────────────────────────────────────────────┤
-│ • get_current_session_id() -> conversation_id / session_id  │
-│ • scan_project_sessions(project_root) -> SessionMetadata[]  │
-│ • spawn(role, prompt, workspace, model) -> conversation_id  │
-│ • send(conversation_id, message_payload) -> void            │
-│ • manage(action: 'list'|'kill'|'status', conversation_ids)  │
-│ • await_reply() -> Reactive Wakeup / Event Callback         │
-└─────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                   task-loop 跨厂商智能体解耦体系架构                   │
+├──────────────────┬──────────────────────┬──────────────────────────────┤
+│ 1. Hook 体系     │ 2. Session 体系      │ 3. Question 体系             │
+│ (references/sdk/ │ (references/sdk/     │ (references/sdk/             │
+│  hook.md)        │  session.md)         │  question.md)                │
+├──────────────────┼──────────────────────┼──────────────────────────────┤
+│ • PreInvocation  │ • get_current_id()   │ • ask_user_choice()          │
+│   瞬态上下文注入 │ • scan_sessions()    │ • confirm_action()           │
+│ • PreToolUse     │ • spawn() / send()   │ • 杜绝纯文本手打选项红线     │
+│   白名单物理门禁 │ • manage()           │ • 原生交互模态与单键降级     │
+│ • 零污染项目规则 │ • Schema v4 分区状态 │ • 决策推演与门禁审批统一     │
+└──────────────────┴──────────────────────┴──────────────────────────────┘
+```
+
+```json
+[
+  {
+    "pillar": "Hook 生命周期与安全拦截",
+    "doc_path": "references/sdk/hook.md",
+    "core_features": [
+      "PreInvocation 会话感知与瞬态治理规则注入，实现零污染 AGENTS.md",
+      "PreToolUse 工具调用前 Allowlist 物理白名单硬门禁拦截",
+      "ALLOWLIST_EXPANSION_REQUEST 反向审批双向闭环机制",
+      "Node.js (18+) 与 Python (3.8+) 双轨标准库零依赖实现"
+    ]
+  },
+  {
+    "pillar": "SessionProvider 会话调度与持久化",
+    "doc_path": "references/sdk/session.md",
+    "core_features": [
+      "六大标准原语: get_current_session_id, scan, spawn, send, manage, await_reply",
+      "Schema v4 顶层厂商独立分区持久化与物理镜像文件 (sessions.<vendor>.json)",
+      "粘性绑定保护 (Sticky Binding Lock) 机制",
+      "双阶梯看门狗: 30s 响应探针循环与 120s 偏差巡检门禁"
+    ]
+  },
+  {
+    "pillar": "QuestionProvider 原生问答与选项交互",
+    "doc_path": "references/sdk/question.md",
+    "core_features": [
+      "彻底杜绝纯文本提问 ('请回复确认落盘') 不良惯性与脆弱交互",
+      "优先且强制调用宿主原生问答组件 (AGY ask_question / Codex Desktop 选项 / Claude Confirm)",
+      "推荐项标注 (Recommended) 与用户第一人称响应视角规范",
+      "Node.js 与 Python 双轨交互单键降级保障"
+    ]
+  }
+]
 ```
 
 ---
 
-## 二、厂商 SDK 规范索引 (Vendor SDK Documentation)
+## 二、聚焦三大厂商 SDK 深度对接规范 (Three Focus Vendors)
 
 ```json
 [
@@ -31,43 +69,24 @@
     "official_docs_path": "references/sdk/antigravity-official-docs.md",
     "status": "主力支持 (Primary Native)",
     "capabilities": [
-      "上下文注入 (Conversation ID)",
-      "原生子代理拉起 (invoke_subagent)",
-      "动态模板声明 (define_subagent)",
-      "智能体间通信 (send_message)",
-      "系统级独立会话新建与通信 (agentapi CLI: new-conversation / send-message)",
-      "常驻后台守护与定时调度 (Sidecars: ~/.gemini/config/sidecars/)",
-      "状态监控与熔断 (manage_subagents)",
-      "零 Token 响应式事件驱动 (Reactive Wakeup)",
-      "官方 Python SDK (pip install google-antigravity)"
-    ]
-  },
-  {
-    "vendor": "ZCode (Z.ai)",
-    "doc_path": "references/sdk/zcode.md",
-    "status": "原生适配 (Single-Trunk 主力支持)",
-    "capabilities": [
-      "七事件 Hook 管道 (SessionStart/UserPromptSubmit 瞬态注入, PreToolUse 白名单硬门禁)",
-      "Claude Code 兼容双命名 stdin/stdout 协议",
-      "会话反向内省双通道 (db.sqlite 只读读库 + rollout JSONL 行扫描)",
-      "原生 Agent(Task) 子代理同步编排 (进程内 spawn)",
-      "无头 CLI 会话拉起与续接 (zcode --cwd -p / --resume, 封装于 spawn_zcode_session Provider, 支持 login-api-key)",
-      "独立快照导出与安装 (scripts/install_zcode_plugin.js / .py)",
-      "本地插件市场自动生成 (marketplace.json / EXPORT-INFO.md)",
-      "单主干 master 统一维护与多厂商分区持久化"
+      "原生问答交互: ask_question 交互式模态弹窗与选项",
+      "生命周期 Hook: PreInvocation 动态注入, PreToolUse 物理拦截",
+      "原生子代理拉起: invoke_subagent / define_subagent",
+      "跨会话通信: send_message 原生工具与 agentapi CLI 管道",
+      "后台守护与事件唤醒: Reactive Wakeup 零 Token 挂起机制",
+      "官方 Python SDK 与 Node.js 原生标准库双轨对接"
     ]
   },
   {
     "vendor": "OpenAI Codex",
-      "doc_path": "references/sdk/codex.md",
-      "guide": "Codex 会话说明书（随插件安装）",
+    "doc_path": "references/sdk/codex.md",
     "status": "稳定降级适配 (Stable Degradation Adapter)",
     "capabilities": [
-      "运行时适配 (CODEX_THREAD_ID / CODEX_SESSION_ID)",
-      "Desktop 工具仅在当前运行时明确暴露时可用",
-      "CLI 派单 (codex queue --thread <id> --message <text>)；显式选择时才使用 codex exec resume",
-      "官方 TypeScript / Python SDK",
-      "MCP mcp-server 已弃用；App Server 仅实验性入口，不纳入稳定自动派单"
+      "交互选择组件与 CLI 单字符快速按键选项降级",
+      "环境变量注入: CODEX_THREAD_ID / CODEX_SESSION_ID 读取",
+      "Desktop App Tools 探测与 CLI 消息队列 (codex queue)",
+      "创建期专属模型与推理深度策略 (Main: Astra, Topic: Terra, Subagent: Luna)",
+      "状态持久化: vendors.codex 专属隔离分区"
     ]
   },
   {
@@ -75,12 +94,11 @@
     "doc_path": "references/sdk/claude.md",
     "status": "预留适配 (Standard Adapter)",
     "capabilities": [
-      "Hooks 事件管道注入 (.session_id)",
-      "活动会话查询 (claude agents --json)",
-      "无头模式批处理 (claude -p --output-format json)",
-      "会话分叉与续接 (--resume, --fork-session)",
-      "流式双向管道 (stream-json)",
-      "官方 Agent SDK (claude-agent-sdk)"
+      "终端原生交互确认原语 (Confirm / Select)",
+      "Hooks 管道: stdin JSON 提取 .session_id 与 Exit Code 2 拦截",
+      "活动会话查询: claude agents --json",
+      "无头模式派发: claude -p --output-format json",
+      "会话分叉与续接 (--resume, --fork-session)"
     ]
   }
 ]
@@ -88,29 +106,42 @@
 
 ---
 
-## 三、官方权威参考源与文档归档
+## 三、双轨运行时优先策略 (Dual-Runtime Policy)
+
+1. **Node.js (18+) Primary 黄金事实源**：核心工作流工具、会话调度与 Hook 脚本强制优先使用 Node.js 执行，全量采用原生内置模块构建，零 npm 依赖；
+2. **Python (3.8+) 标准库等价薄适配**：同步维护零 pip 依赖的标准库 Python 实现，作为跨平台兼容与无 Node 环境下的高兼容兜底备选；
+3. **双向契约对拍**：通过 `test_contract_parity.test.js` 严格核验状态机、Hook 逻辑与会话探针跨运行时等价性。
+
+---
+
+## 四、权威参考源与文档归档
 
 ```json
 [
   {
-    "name": "Google Antigravity SDK 官方源码仓库",
-    "url": "https://github.com/google-antigravity/antigravity-sdk-python.git",
-    "type": "Git Repository"
+    "name": "Hook 生命周期规范",
+    "doc_path": "references/sdk/hook.md",
+    "type": "Architecture Specification"
   },
   {
-    "name": "Google Antigravity 官方在线 SDK 文档",
-    "url": "https://antigravity.google/docs/sdk/overview",
-    "type": "Online Documentation"
+    "name": "SessionProvider 规范",
+    "doc_path": "references/sdk/session.md",
+    "type": "Architecture Specification"
   },
   {
-    "name": "Google Antigravity 官方 Sidecars 文档",
-    "url": "https://antigravity.google/docs/sidecars/",
-    "type": "Online Documentation"
+    "name": "QuestionProvider 规范",
+    "doc_path": "references/sdk/question.md",
+    "type": "Architecture Specification"
   },
   {
     "name": "Antigravity SDK 官方文档精简归档",
     "doc_path": "references/sdk/antigravity-official-docs.md",
     "type": "Local Markdown Archive"
+  },
+  {
+    "name": "Google Antigravity SDK 官方源码仓库",
+    "url": "https://github.com/google-antigravity/antigravity-sdk-python.git",
+    "type": "Git Repository"
   }
 ]
 ```

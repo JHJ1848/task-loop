@@ -339,8 +339,8 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
             lines.append("- [Plugin: task-loop | 子代理专题规则]:")
             lines.append("  1. 职责范围: 负责 AGY 原生子代理编排原语 (invoke/define/manage) 治理与 Workspace 隔离模式;")
             lines.append("  2. 定位与边界: 子代理 (subagents / workers) 仅为专题会话内部按需临时拉起的轻量隔离沙箱，任务完成后即销毁；主会话禁止派遣 Worker 子代理，仅可派遣 reviewer / explorer;")
-            lines.append("  3. 原生兜底工作流: 简单任务直接就地改动闭环；复杂未知任务开启 explore + worker + viewer 三角色子代理协作 (各类型建议不超过3个);")
-            lines.append("  4. 短路迭代与异常中断: 审查未通过直接让 worker 改动 (避免二次长链路重新 explore); worker 中途发现意外/异常须立即停止并反馈专题会话统筹 (参考 references/default-fallback-workflow.md);")
+            lines.append("  3. 智能派遣门槛与防干等: 严禁单子代理串行干等反模式！必须满足并发度 >= 2 (多分支并发加速) 或存在 Workspace='branch' 物理强隔离沙箱需求时才允许派遣子代理，单线任务一律由专题自身直接执行 (参考 references/default-fallback-workflow.md);")
+            lines.append("  4. 短路迭代与异常中断: 审查未通过直接让 worker 改动 (避免二次长链路重新 explore); worker 中途发现意外/异常须立即停止并反馈专题会话统筹;")
             lines.append("  5. 协作与生命周期: 严格遵循响应式唤醒 (Reactive Wakeup，严禁轮询) 与瞬态代理 vs 持久物理实体会话边界，维护 docs/memory/subagent.md。")
     elif details.get("module_key") == "hook":
         hook_rules = plugin_rules.get("hook")
@@ -358,7 +358,7 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
             lines.append("- [Plugin: task-loop | 专题会话约束规则]:")
             lines.append("  1. 物理实体与领域深耕: 作为长期常驻 IDE 侧边栏的物理会话实体，持续沉淀领域上下文并最大化大模型 KV Cache 命中率;")
             lines.append("  2. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;")
-            lines.append("  3. 专题内子代理协同: 专题会话承接任务后，可按需在专题内拉起子代理 (subagents) 进行多任务拆解协同或直接落地实施;")
+            lines.append("  3. 专题内子代理协同门槛: 仅在满足并发度 >= 2 (多分支并发加速) 或物理强隔离沙箱时才允许拉起子代理，严禁单子代理串行让专题干等，单线任务一律由专题自身直接实施闭环;")
             lines.append("  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (稳定计算单测 Exit Code 0 vs 交互界面构建自测+刷新指引) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。")
 
     # 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效，且目标主会话不能为自身，杜绝自发自收死循环)

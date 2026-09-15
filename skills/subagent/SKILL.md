@@ -73,6 +73,11 @@ description: "[task-loop] Google Antigravity native subagent orchestration and d
     "gotcha_id": "Gotcha 8",
     "title": "持久专题 vs 瞬态子代理",
     "rule": "需要跨多轮会话累积记忆的专题必须使用 agentapi new-conversation 创建，严禁误用 invoke_subagent。"
+  },
+  {
+    "gotcha_id": "Gotcha 10",
+    "title": "严禁单子代理干等与并发度门槛",
+    "rule": "严禁派发单个 subagent 让父会话干等；必须满足并发度 >= 2（多分支并发加速）或存在 Workspace='branch' 物理强隔离沙箱需求时才允许派发子代理，单线任务一律由专题自身直接执行。"
   }
 ]
 ```
