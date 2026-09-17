@@ -16,6 +16,23 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const VENDOR_ALIASES = {
+  agy: 'antigravity',
+  antigravity: 'antigravity',
+  zcode: 'zcode',
+  'z-code': 'zcode',
+  codex: 'codex',
+  claude: 'claude',
+  'claude-code': 'claude',
+  claudecode: 'claude'
+};
+
+function normalizeVendor(name) {
+  if (!name) return null;
+  const key = String(name).trim().toLowerCase();
+  return VENDOR_ALIASES[key] || (/^[a-z][a-z0-9_-]{0,31}$/.test(key) ? key : null);
+}
+
 function normalizePath(p) {
   if (!p) return '';
   return p.replace(/\\/g, '/');
@@ -30,9 +47,10 @@ function resolveWorkspaceRoot(workspacePaths) {
 
 function findSessionsRegistry(wsRoot, targetVendor) {
   const candidates = [];
+  const vendor = normalizeVendor(targetVendor);
   if (wsRoot) {
-    if (targetVendor) {
-      candidates.push(path.join(wsRoot, '.agents', 'task-loop', `sessions.${targetVendor}.json`));
+    if (vendor) {
+      candidates.push(path.join(wsRoot, '.agents', 'task-loop', `sessions.${vendor}.json`));
     }
     candidates.push(
       path.join(wsRoot, '.agents', 'task-loop', 'sessions.json'),
@@ -40,8 +58,8 @@ function findSessionsRegistry(wsRoot, targetVendor) {
     );
   }
   if (process.cwd() && process.cwd() !== wsRoot) {
-    if (targetVendor) {
-      candidates.push(path.join(process.cwd(), '.agents', 'task-loop', `sessions.${targetVendor}.json`));
+    if (vendor) {
+      candidates.push(path.join(process.cwd(), '.agents', 'task-loop', `sessions.${vendor}.json`));
     }
     candidates.push(
       path.join(process.cwd(), '.agents', 'task-loop', 'sessions.json'),
@@ -62,11 +80,17 @@ function findSessionsRegistry(wsRoot, targetVendor) {
 }
 
 function findPromptTemplates(wsRoot) {
-  const tplPath = path.join(wsRoot, '.agents', 'task-loop', 'prompt-templates.json');
-  if (fs.existsSync(tplPath)) {
-    try {
-      return JSON.parse(fs.readFileSync(tplPath, 'utf8'));
-    } catch {}
+  const roots = [wsRoot];
+  if (process.cwd() && process.cwd() !== wsRoot) {
+    roots.push(process.cwd());
+  }
+  for (const root of roots) {
+    const tplPath = path.join(root, 'templates', 'prompt_templates.json');
+    if (fs.existsSync(tplPath)) {
+      try {
+        return JSON.parse(fs.readFileSync(tplPath, 'utf8'));
+      } catch {}
+    }
   }
   return null;
 }
@@ -162,21 +186,21 @@ function matchInVendorData(conversationId, data) {
 }
 
 function detectVendorFromSessionId(sessionId, fallbackVendor) {
-  if (!sessionId || typeof sessionId !== 'string') return fallbackVendor || null;
-  if (sessionId.startsWith('sess_')) return 'zcode';
-  // UUID is shared by multiple hosts; only an explicit host signal may classify it.
-  return fallbackVendor || null;
+  // Session ID shapes are shared or vendor-specific aliases owned by an explicit adapter.
+  // The generic AGY hook must never infer ZCode from sess_* or CLAUDE_SESSION_ID.
+  return normalizeVendor(fallbackVendor);
 }
 
 function resolveTargetVendor(payload, conversationId) {
-  if (payload && payload.vendor) return String(payload.vendor).toLowerCase();
+  if (payload && payload.vendor) return normalizeVendor(payload.vendor);
   if (process.env.CODEX_THREAD_ID && (!conversationId || process.env.CODEX_THREAD_ID === conversationId)) return 'codex';
   if (process.env.CODEX_SESSION_ID && (!conversationId || process.env.CODEX_SESSION_ID === conversationId)) return 'codex';
   if (process.env.ZCODE_SESSION_ID && (!conversationId || process.env.ZCODE_SESSION_ID === conversationId)) return 'zcode';
   if (process.env.ANTIGRAVITY_CONVERSATION_ID && (!conversationId || process.env.ANTIGRAVITY_CONVERSATION_ID === conversationId)) return 'antigravity';
-  const inferred = detectVendorFromSessionId(conversationId);
-  if (inferred) return inferred;
-  return typeof conversationId === 'string' && !/^[0-9a-f-]{36}$/i.test(conversationId) ? 'antigravity' : null;
+  if (typeof conversationId === 'string' && /^sess_/i.test(conversationId)) return null;
+  return typeof conversationId === 'string' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)
+    ? 'antigravity'
+    : null;
 }
 
 function checkAndAcquireDedupeLock(conversationId) {
@@ -239,7 +263,7 @@ function getSessionDetails(conversationId, sessionData, targetVendor) {
     };
   }
 
-  const effectiveVendor = targetVendor ? String(targetVendor).toLowerCase() : detectVendorFromSessionId(conversationId);
+  const effectiveVendor = normalizeVendor(targetVendor) || detectVendorFromSessionId(conversationId);
 
   if (effectiveVendor === 'codex') {
     return {
@@ -257,13 +281,14 @@ function getSessionDetails(conversationId, sessionData, targetVendor) {
 
   // 1. 如果包含 vendors 分区 (Schema v4 / v3)
   if (sessionData.vendors && typeof sessionData.vendors === 'object') {
-    if (sessionData.vendors[effectiveVendor]) {
-      const vDetails = matchInVendorData(conversationId, sessionData.vendors[effectiveVendor]);
+    const vendorData = effectiveVendor ? sessionData.vendors[effectiveVendor] : null;
+    if (vendorData) {
+      const vDetails = matchInVendorData(conversationId, vendorData);
       if (!vDetails.is_unregistered) {
         return vDetails;
       }
     }
-    return matchInVendorData(conversationId, sessionData.vendors[effectiveVendor]);
+    return matchInVendorData(conversationId, vendorData);
   }
 
   // 2. 顶层单厂商匹配 (Schema v2 或当前 vendor 顶层数据)
@@ -275,17 +300,12 @@ function getSessionDetails(conversationId, sessionData, targetVendor) {
  */
 function extractMainThreadId(sessionData, targetVendor) {
   if (!sessionData) return null;
-  const effectiveVendor = targetVendor || null;
-  if (sessionData.vendors && sessionData.vendors[effectiveVendor] && sessionData.vendors[effectiveVendor].main_thread_id) {
-    return sessionData.vendors[effectiveVendor].main_thread_id;
-  }
-  if (sessionData.main_thread_id) return sessionData.main_thread_id;
   if (sessionData.vendors && typeof sessionData.vendors === 'object') {
-    for (const v of Object.values(sessionData.vendors)) {
-      if (v && v.main_thread_id) return v.main_thread_id;
-    }
+    const effectiveVendor = normalizeVendor(targetVendor);
+    const vendorData = effectiveVendor ? sessionData.vendors[effectiveVendor] : null;
+    return vendorData && vendorData.main_thread_id ? vendorData.main_thread_id : null;
   }
-  return null;
+  return sessionData.main_thread_id || null;
 }
 
 /**

@@ -32,6 +32,38 @@ def normalize_path(p):
     return norm
 
 
+def is_path_inside(candidate, parent):
+    if not candidate or not parent:
+        return False
+    try:
+        candidate_abs = os.path.abspath(candidate)
+        parent_abs = os.path.abspath(parent)
+        return os.path.commonpath([candidate_abs, parent_abs]) == parent_abs
+    except (OSError, ValueError):
+        return False
+
+
+VENDOR_ALIASES = {
+    "agy": "antigravity",
+    "antigravity": "antigravity",
+    "zcode": "zcode",
+    "z-code": "zcode",
+    "codex": "codex",
+    "claude": "claude",
+    "claude-code": "claude",
+    "claudecode": "claude",
+}
+
+
+def normalize_vendor(name):
+    if not name:
+        return None
+    key = str(name).strip().lower()
+    if key in VENDOR_ALIASES:
+        return VENDOR_ALIASES[key]
+    return key if re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", key) else None
+
+
 def resolve_workspace_root(workspace_paths):
     if workspace_paths and isinstance(workspace_paths, list) and len(workspace_paths) > 0:
         return workspace_paths[0]
@@ -119,14 +151,14 @@ def find_allowlist_for_session(ws_root, conversation_id):
 
 def is_exempt_path(norm_target, norm_ws_root):
     # Inside the workspace, only specific subdirectories are exempt
-    if norm_ws_root and norm_target.startswith(norm_ws_root):
+    if norm_ws_root and is_path_inside(norm_target, norm_ws_root):
         ws_exempt_prefixes = [
             normalize_path(os.path.join(norm_ws_root, "docs")),
             normalize_path(os.path.join(norm_ws_root, "scratch")),
             normalize_path(os.path.join(norm_ws_root, ".agents", "task-loop")),
         ]
         for p in ws_exempt_prefixes:
-            if norm_target.startswith(p):
+            if is_path_inside(norm_target, p):
                 return True
         return False
 
@@ -137,7 +169,7 @@ def is_exempt_path(norm_target, norm_ws_root):
         normalize_path(os.path.join(os.path.expanduser("~"), "Desktop")),
     ]
     for p in outside_exempt_prefixes:
-        if norm_target.startswith(p):
+        if is_path_inside(norm_target, p):
             return True
     return False
 
@@ -160,20 +192,24 @@ def is_path_allowed(target_file, allowlist, ws_root):
             clean_entry = clean_entry[:-2]
 
         abs_entry = normalize_path(clean_entry if os.path.isabs(clean_entry) else os.path.join(ws_root, clean_entry))
-        if norm_target == abs_entry:
-            return True
-        prefix = abs_entry if abs_entry.endswith("/") else abs_entry + "/"
-        if norm_target.startswith(prefix):
+        if is_path_inside(norm_target, abs_entry):
             return True
     return False
 
 
-def find_sessions_registry(ws_root):
-    candidates = [
+def find_sessions_registry(ws_root, target_vendor=None):
+    candidates = []
+    vendor = normalize_vendor(target_vendor)
+    if vendor:
+        candidates.append(os.path.join(ws_root, ".agents", "task-loop", f"sessions.{vendor}.json"))
+    candidates.extend([
         os.path.join(ws_root, ".agents", "task-loop", "sessions.json"),
         os.path.join(ws_root, ".agents", "sessions.json"),
-        os.path.join(os.getcwd(), ".agents", "task-loop", "sessions.json")
-    ]
+    ])
+    if os.getcwd() and os.getcwd() != ws_root:
+        if vendor:
+            candidates.append(os.path.join(os.getcwd(), ".agents", "task-loop", f"sessions.{vendor}.json"))
+        candidates.append(os.path.join(os.getcwd(), ".agents", "task-loop", "sessions.json"))
     for c in candidates:
         if os.path.exists(c):
             try:
@@ -196,7 +232,7 @@ def is_governance_or_state_file(norm_target, norm_ws_root):
         normalize_path(os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain"))
     ]
     for p in allowed_prefixes:
-        if norm_target.startswith(p):
+        if is_path_inside(norm_target, p):
             return True
 
     allowed_exact = [
@@ -230,17 +266,17 @@ def check_is_main_session(session_data, conversation_id, vendor):
 
 def detect_vendor(conversation_id, explicit_vendor=None):
     if explicit_vendor:
-        return str(explicit_vendor).lower()
+        return normalize_vendor(explicit_vendor)
     if os.environ.get("CODEX_THREAD_ID") and (not conversation_id or os.environ.get("CODEX_THREAD_ID") == conversation_id):
         return "codex"
     if os.environ.get("CODEX_SESSION_ID") and (not conversation_id or os.environ.get("CODEX_SESSION_ID") == conversation_id):
         return "codex"
     if os.environ.get("ZCODE_SESSION_ID") and (not conversation_id or os.environ.get("ZCODE_SESSION_ID") == conversation_id):
         return "zcode"
-    if isinstance(conversation_id, str) and re.fullmatch(r"[0-9a-f-]{36}", conversation_id, re.IGNORECASE):
-        return None
     if conversation_id and os.environ.get("ANTIGRAVITY_CONVERSATION_ID") == conversation_id:
         return "antigravity"
+    if isinstance(conversation_id, str) and re.fullmatch(r"[0-9a-f-]{36}", conversation_id, re.IGNORECASE):
+        return None
     if isinstance(conversation_id, str) and re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", conversation_id, re.IGNORECASE):
         return "antigravity"
     return None
@@ -281,8 +317,8 @@ def process_payload(payload):
         ws_root = resolve_workspace_root(payload.get("workspacePaths"))
         conversation_id = payload.get("conversationId") or payload.get("conversation_id") or payload.get("sessionId") or payload.get("session_id")
         # 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
-        session_data = find_sessions_registry(ws_root)
         vendor = detect_vendor(conversation_id, payload.get("vendor"))
+        session_data = find_sessions_registry(ws_root, vendor)
         if not payload.get("vendor") and not vendor and conversation_id and is_registered_for_vendor(session_data, conversation_id, "antigravity"):
             vendor = "antigravity"
         if vendor == "codex":

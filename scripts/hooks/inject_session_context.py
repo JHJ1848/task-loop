@@ -16,6 +16,7 @@ Output: stdout JSON ({ injectSteps: [{ ephemeralMessage: "..." }] })
 import os
 import sys
 import json
+import re
 
 if sys.platform == "win32":
     try:
@@ -23,6 +24,27 @@ if sys.platform == "win32":
         sys.stdin.reconfigure(encoding="utf-8")
     except Exception:
         pass
+
+
+VENDOR_ALIASES = {
+    "agy": "antigravity",
+    "antigravity": "antigravity",
+    "zcode": "zcode",
+    "z-code": "zcode",
+    "codex": "codex",
+    "claude": "claude",
+    "claude-code": "claude",
+    "claudecode": "claude",
+}
+
+
+def normalize_vendor(name):
+    if not name:
+        return None
+    key = str(name).strip().lower()
+    if key in VENDOR_ALIASES:
+        return VENDOR_ALIASES[key]
+    return key if re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", key) else None
 
 
 def normalize_path(p):
@@ -39,16 +61,17 @@ def resolve_workspace_root(workspace_paths):
 
 def find_sessions_registry(ws_root, target_vendor=None):
     candidates = []
+    vendor = normalize_vendor(target_vendor)
     if ws_root:
-        if target_vendor:
-            candidates.append(os.path.join(ws_root, ".agents", "task-loop", f"sessions.{target_vendor}.json"))
+        if vendor:
+            candidates.append(os.path.join(ws_root, ".agents", "task-loop", f"sessions.{vendor}.json"))
         candidates.extend([
             os.path.join(ws_root, ".agents", "task-loop", "sessions.json"),
             os.path.join(ws_root, ".agents", "sessions.json")
         ])
     if os.getcwd() and os.getcwd() != ws_root:
-        if target_vendor:
-            candidates.append(os.path.join(os.getcwd(), ".agents", "task-loop", f"sessions.{target_vendor}.json"))
+        if vendor:
+            candidates.append(os.path.join(os.getcwd(), ".agents", "task-loop", f"sessions.{vendor}.json"))
         candidates.extend([
             os.path.join(os.getcwd(), ".agents", "task-loop", "sessions.json"),
             os.path.join(os.getcwd(), ".agents", "sessions.json")
@@ -64,13 +87,17 @@ def find_sessions_registry(ws_root, target_vendor=None):
 
 
 def find_prompt_templates(ws_root):
-    tpl_path = os.path.join(ws_root, ".agents", "task-loop", "prompt-templates.json")
-    if os.path.exists(tpl_path):
-        try:
-            with open(tpl_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
+    roots = [ws_root]
+    if os.getcwd() and os.getcwd() != ws_root:
+        roots.append(os.getcwd())
+    for root in roots:
+        tpl_path = os.path.join(root, "templates", "prompt_templates.json")
+        if os.path.exists(tpl_path):
+            try:
+                with open(tpl_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
     return None
 
 
@@ -169,17 +196,14 @@ def match_in_vendor_data(conversation_id, data):
 
 
 def detect_vendor_from_session_id(session_id: str, fallback_vendor: str = None) -> str:
-    if not session_id or not isinstance(session_id, str):
-        return fallback_vendor
-    if session_id.startswith("sess_"):
-        return "zcode"
-    # UUID is shared by multiple hosts; only an explicit host signal may classify it.
-    return fallback_vendor
+    # Session ID shapes are shared or vendor-specific aliases owned by an explicit adapter.
+    # The generic AGY hook must never infer ZCode from sess_* or CLAUDE_SESSION_ID.
+    return normalize_vendor(fallback_vendor)
 
 
 def resolve_target_vendor(payload, conversation_id):
     if payload.get("vendor"):
-        return str(payload["vendor"]).lower()
+        return normalize_vendor(payload["vendor"])
     if os.environ.get("CODEX_THREAD_ID") and (not conversation_id or os.environ.get("CODEX_THREAD_ID") == conversation_id):
         return "codex"
     if os.environ.get("CODEX_SESSION_ID") and (not conversation_id or os.environ.get("CODEX_SESSION_ID") == conversation_id):
@@ -188,10 +212,13 @@ def resolve_target_vendor(payload, conversation_id):
         return "zcode"
     if os.environ.get("ANTIGRAVITY_CONVERSATION_ID") and (not conversation_id or os.environ.get("ANTIGRAVITY_CONVERSATION_ID") == conversation_id):
         return "antigravity"
-    inferred = detect_vendor_from_session_id(conversation_id)
-    if inferred:
-        return inferred
-    return "antigravity" if isinstance(conversation_id, str) and not re.fullmatch(r"[0-9a-f-]{36}", conversation_id, re.IGNORECASE) else None
+    if isinstance(conversation_id, str) and conversation_id.lower().startswith("sess_"):
+        return None
+    return "antigravity" if isinstance(conversation_id, str) and not re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+        conversation_id,
+        re.IGNORECASE,
+    ) else None
 
 
 def check_and_acquire_dedupe_lock(conversation_id: str) -> bool:
@@ -253,7 +280,7 @@ def get_session_details(conversation_id, session_data, target_vendor=None):
             "memory_docs": []
         }
 
-    effective_vendor = str(target_vendor).lower() if target_vendor else detect_vendor_from_session_id(conversation_id)
+    effective_vendor = normalize_vendor(target_vendor) or detect_vendor_from_session_id(conversation_id)
 
     if effective_vendor == "codex":
         return {
@@ -270,12 +297,13 @@ def get_session_details(conversation_id, session_data, target_vendor=None):
 
     # 1. 如果包含 vendors 分区 (Schema v4 / v3)
     if isinstance(session_data.get("vendors"), dict):
-        if effective_vendor in session_data["vendors"]:
-            v_details = match_in_vendor_data(conversation_id, session_data["vendors"][effective_vendor])
+        vendor_data = session_data["vendors"].get(effective_vendor) if effective_vendor else None
+        if vendor_data:
+            v_details = match_in_vendor_data(conversation_id, vendor_data)
             if not v_details["is_unregistered"]:
                 return v_details
 
-        return match_in_vendor_data(conversation_id, session_data["vendors"].get(effective_vendor))
+        return match_in_vendor_data(conversation_id, vendor_data)
 
     # 2. 顶层单厂商匹配 (Schema v2 或当前 vendor 顶层数据)
     return match_in_vendor_data(conversation_id, session_data)
@@ -284,18 +312,11 @@ def get_session_details(conversation_id, session_data, target_vendor=None):
 def extract_main_thread_id(session_data, target_vendor=None):
     if not session_data or not isinstance(session_data, dict):
         return None
-    effective_vendor = target_vendor
-    if isinstance(session_data.get("vendors"), dict) and effective_vendor in session_data["vendors"]:
-        v = session_data["vendors"][effective_vendor]
-        if isinstance(v, dict) and v.get("main_thread_id"):
-            return v["main_thread_id"]
-    if session_data.get("main_thread_id"):
-        return session_data["main_thread_id"]
     if isinstance(session_data.get("vendors"), dict):
-        for v in session_data["vendors"].values():
-            if isinstance(v, dict) and v.get("main_thread_id"):
-                return v["main_thread_id"]
-    return None
+        effective_vendor = normalize_vendor(target_vendor)
+        vendor_data = session_data["vendors"].get(effective_vendor) if effective_vendor else None
+        return vendor_data.get("main_thread_id") if isinstance(vendor_data, dict) else None
+    return session_data.get("main_thread_id") or None
 
 
 def get_plugin_topic_rules(details, templates, main_thread_id=None):

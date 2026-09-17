@@ -19,6 +19,33 @@ function normalizePath(p) {
   return path.normalize(p).replace(/\\/g, '/').toLowerCase();
 }
 
+function isPathInside(candidate, parent) {
+  if (!candidate || !parent) return false;
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === '' || (
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+const VENDOR_ALIASES = {
+  agy: 'antigravity',
+  antigravity: 'antigravity',
+  zcode: 'zcode',
+  'z-code': 'zcode',
+  codex: 'codex',
+  claude: 'claude',
+  'claude-code': 'claude',
+  claudecode: 'claude'
+};
+
+function normalizeVendor(name) {
+  if (!name) return null;
+  const key = String(name).trim().toLowerCase();
+  return VENDOR_ALIASES[key] || (/^[a-z][a-z0-9_-]{0,31}$/.test(key) ? key : null);
+}
+
 function resolveWorkspaceRoot(workspacePaths) {
   if (Array.isArray(workspacePaths) && workspacePaths.length > 0) {
     return workspacePaths[0];
@@ -124,14 +151,14 @@ function findAllowlistForSession(wsRoot, conversationId) {
 
 function isExemptPath(normTarget, normWsRoot) {
   // Inside the workspace, only specific subdirectories are exempt
-  if (normWsRoot && normTarget.startsWith(normWsRoot)) {
+  if (normWsRoot && isPathInside(normTarget, normWsRoot)) {
     const wsExemptPrefixes = [
       normalizePath(path.join(normWsRoot, 'docs')),
       normalizePath(path.join(normWsRoot, 'scratch')),
       normalizePath(path.join(normWsRoot, '.agents', 'task-loop'))
     ];
     for (const p of wsExemptPrefixes) {
-      if (normTarget.startsWith(p)) return true;
+      if (isPathInside(normTarget, p)) return true;
     }
     return false;
   }
@@ -143,7 +170,7 @@ function isExemptPath(normTarget, normWsRoot) {
     normalizePath(path.join(os.homedir(), 'Desktop'))
   ];
   for (const p of outsideExemptPrefixes) {
-    if (normTarget.startsWith(p)) return true;
+    if (isPathInside(normTarget, p)) return true;
   }
   return false;
 }
@@ -165,22 +192,28 @@ function isPathAllowed(targetFile, allowlist, wsRoot) {
 
     const absEntry = normalizePath(path.isAbsolute(cleanEntry) ? cleanEntry : path.resolve(wsRoot, cleanEntry));
 
-    if (normTarget === absEntry) return true;
-
-    // 前缀匹配（目录）
-    const prefix = absEntry.endsWith('/') ? absEntry : absEntry + '/';
-    if (normTarget.startsWith(prefix)) return true;
+    if (isPathInside(normTarget, absEntry)) return true;
   }
 
   return false;
 }
 
-function findSessionsRegistry(wsRoot) {
-  const candidates = [
+function findSessionsRegistry(wsRoot, targetVendor) {
+  const candidates = [];
+  const vendor = normalizeVendor(targetVendor);
+  if (vendor) {
+    candidates.push(path.join(wsRoot, '.agents', 'task-loop', `sessions.${vendor}.json`));
+  }
+  candidates.push(
     path.join(wsRoot, '.agents', 'task-loop', 'sessions.json'),
-    path.join(wsRoot, '.agents', 'sessions.json'),
-    path.join(process.cwd(), '.agents', 'task-loop', 'sessions.json')
-  ];
+    path.join(wsRoot, '.agents', 'sessions.json')
+  );
+  if (process.cwd() && process.cwd() !== wsRoot) {
+    if (vendor) {
+      candidates.push(path.join(process.cwd(), '.agents', 'task-loop', `sessions.${vendor}.json`));
+    }
+    candidates.push(path.join(process.cwd(), '.agents', 'task-loop', 'sessions.json'));
+  }
   for (const c of candidates) {
     if (fs.existsSync(c)) {
       try {
@@ -206,7 +239,7 @@ function isGovernanceOrStateFile(normTarget, normWsRoot) {
   ];
 
   for (const p of allowedPrefixes) {
-    if (normTarget.startsWith(p)) return true;
+    if (isPathInside(normTarget, p)) return true;
   }
 
   const allowedExactFiles = [
@@ -238,12 +271,12 @@ function checkIsMainSession(sessionData, conversationId, vendor) {
 }
 
 function detectVendor(conversationId, explicitVendor) {
-  if (explicitVendor) return String(explicitVendor).toLowerCase();
+  if (explicitVendor) return normalizeVendor(explicitVendor);
   if (process.env.CODEX_THREAD_ID && (!conversationId || process.env.CODEX_THREAD_ID === conversationId)) return 'codex';
   if (process.env.CODEX_SESSION_ID && (!conversationId || process.env.CODEX_SESSION_ID === conversationId)) return 'codex';
   if (process.env.ZCODE_SESSION_ID && (!conversationId || process.env.ZCODE_SESSION_ID === conversationId)) return 'zcode';
-  if (typeof conversationId === 'string' && /^[0-9a-f-]{36}$/i.test(conversationId)) return null;
   if (conversationId && process.env.ANTIGRAVITY_CONVERSATION_ID === conversationId) return 'antigravity';
+  if (typeof conversationId === 'string' && /^[0-9a-f-]{36}$/i.test(conversationId)) return null;
   if (typeof conversationId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)) return 'antigravity';
   return null;
 }
@@ -286,8 +319,8 @@ function processPayload(payload) {
     const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
     const conversationId = payload.conversationId || payload.conversation_id || payload.sessionId || payload.session_id;
     // 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
-    const sessionData = findSessionsRegistry(wsRoot);
     let vendor = detectVendor(conversationId, payload.vendor);
+    const sessionData = findSessionsRegistry(wsRoot, vendor);
     if (!payload.vendor && !vendor && conversationId && isRegisteredForVendor(sessionData, conversationId, 'antigravity')) vendor = 'antigravity';
     if (vendor === 'codex') {
       return { decision: 'deny', reason: '[task-loop PreToolUse DENY] Codex automatic file interception is unsupported; use Skills, Provider, and pre-dispatch allowlist validation.' };
