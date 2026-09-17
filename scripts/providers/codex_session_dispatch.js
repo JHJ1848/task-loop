@@ -20,13 +20,20 @@ function parseArgs(argv) {
   return options;
 }
 
+function normalizeThreadId(options = {}) {
+  if (options.clientThreadId || options.client_thread_id || options.id_kind === 'clientThreadId') return null;
+  const value = options.threadId || options.thread || options.sessionId;
+  return value == null ? null : String(value).trim() || null;
+}
+
 function buildCommand(options, codexBin = process.env.CODEX_BIN || 'codex') {
-  if (!options.thread || !options.message) {
-    throw new Error('--thread and --message are required');
+  const thread = normalizeThreadId(options);
+  if (!thread || !options.message) {
+    throw new Error('formal Codex threadId and message are required; clientThreadId cannot be routed');
   }
   const args = options.mode === 'resume'
-    ? ['exec', 'resume', options.thread, '-']
-    : ['queue', '--thread', options.thread, '--message', options.message];
+    ? ['exec', 'resume', thread, '-']
+    : ['queue', '--thread', thread, '--message', options.message];
   if (options.model) args.push('--model', options.model);
   if (options.reasoning_effort) args.push('--config', `model_reasoning_effort="${options.reasoning_effort}"`);
   return { command: codexBin, args, input: options.mode === 'resume' ? options.message : undefined };
@@ -87,4 +94,4 @@ function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) process.exitCode = main();
 
-module.exports = { parseArgs, buildCommand, dispatch, main, runCodexCommand };
+module.exports = { parseArgs, normalizeThreadId, buildCommand, dispatch, main, runCodexCommand };

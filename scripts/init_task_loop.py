@@ -41,7 +41,15 @@ try:
 except ImportError:
     def scan_zcode_sessions(ws): return []
 
-from codex_model_policy import apply_initial_model_config
+from codex_model_policy import apply_initial_model_config, configured_model
+import task_loop_state as state_store
+from new_topic_session import spawn_root_conversation
+
+
+def is_reusable_session(vendor, session):
+    if not isinstance(session, dict) or not session.get("session_id") or session.get("resumable") is not True:
+        return False
+    return state_store.normalize_vendor(vendor) != "codex" or session.get("id_kind") == "threadId"
 
 
 def normalize_path(p):
@@ -65,15 +73,12 @@ def is_valid_module_key(key):
 
 def detect_current_vendor(env=None, current_session_id=None):
     env = env if env is not None else os.environ
-    if env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID"):
+    detected = state_store.normalize_vendor(state_store.detect_vendor(env))
+    if detected:
+        return detected
+    # sess_ 仅作为无宿主环境标记时的 ZCode 兼容线索，不能覆盖 Claude 标记。
+    if current_session_id and str(current_session_id).lower().startswith("sess_") and not env.get("CLAUDE_SESSION_ID"):
         return "zcode"
-    # 会话 ID 形状硬特征: sess_ 前缀为 ZCode 会话规范, 优先级高于其他宿主残留环境变量
-    if current_session_id and str(current_session_id).lower().startswith("sess_"):
-        return "zcode"
-    if env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"):
-        return "codex"
-    if env.get("ANTIGRAVITY_CONVERSATION_ID"):
-        return "antigravity"
     return None
 
 
@@ -148,23 +153,7 @@ def scan_existing_memory_docs(ws_root):
     return memory_docs
 
 
-def spawn_root_conversation(title, prompt, ws_root):
-    env = dict(os.environ)
-    for k in ["ANTIGRAVITY_CONVERSATION_ID", "ANTIGRAVITY_SOURCE_METADATA", "ANTIGRAVITY_TRAJECTORY_ID"]:
-        env.pop(k, None)
-
-    cmd = ["agentapi.bat", "new-conversation", f"--title={title}", prompt]
-    try:
-        res = subprocess.run(cmd, env=env, cwd=ws_root, shell=True, capture_output=True, text=True, encoding="utf-8")
-        if res.stdout:
-            data = json.loads(res.stdout)
-            return data.get("response", {}).get("newConversation", {}).get("conversationId")
-    except Exception:
-        pass
-    return None
-
-
-def resolve_module_assignments(suggestions, memory_docs=None, existing_modules=None):
+def resolve_module_assignments(suggestions, memory_docs=None, existing_modules=None, current_vendor="antigravity"):
     """单一事实源: 严格以 docs/memory/*.md 中的法定模块为准进行 1:1 对齐匹配。
     粘性绑定锁保护 (Sticky Binding Lock):
     优先以 sessions.json 中既有确立绑定的 modules 字典为最高置信度来源，
@@ -175,24 +164,32 @@ def resolve_module_assignments(suggestions, memory_docs=None, existing_modules=N
 
     # 0. 粘性绑定锁: 优先锁定 sessions.json 中既有确立的 modules
     for mod_key, mod_val in existing_modules.items():
-        if isinstance(mod_val, dict) and mod_val.get("session_id"):
+        mod_vendor = state_store.normalize_vendor(mod_val.get("vendor")) if isinstance(mod_val, dict) else None
+        mod_vendor = mod_vendor or current_vendor
+        if is_reusable_session(mod_vendor, mod_val):
             sess_id = mod_val["session_id"]
-            existing_match = next((s for s in suggestions if s.get("session_id") == sess_id), None)
+            existing_identity = state_store.session_identity(mod_vendor, sess_id)
+            existing_match = next((s for s in suggestions if state_store.session_identity(s.get("vendor"), s.get("session_id")) == existing_identity), None)
             if existing_match:
                 existing_match["suggested_module_key"] = mod_key
                 if mod_val.get("title"):
                     existing_match["suggested_topic_name"] = mod_val["title"]
+                existing_match["resumable"] = True
+                existing_match["lifecycle_status"] = state_store.SESSION_STATUS["BOUND"]
                 assignments[mod_key] = existing_match
             else:
                 assignments[mod_key] = {
                     "session_id": sess_id,
-                    "vendor": mod_val.get("vendor") or "antigravity",
+                    "vendor": mod_vendor,
+                    "id_kind": mod_val.get("id_kind"),
                     "original_title": mod_val.get("title") or f"{mod_key}专题",
                     "suggested_module_key": mod_key,
                     "suggested_topic_name": mod_val.get("title") or f"[{mod_key}专题] 核心功能维护 & 记忆沉淀",
                     "suggested_tags": mod_val.get("tags") or [mod_key, "topic"],
                     "suggested_memory_doc": mod_val.get("memory_doc") or f"docs/memory/{mod_key}.md",
-                    "resumable": mod_val.get("resumable") is not False,
+                    "resumable": True,
+                    "physical_session": True,
+                    "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
                     "is_main_candidate": mod_key == "main"
                 }
 
@@ -205,14 +202,14 @@ def resolve_module_assignments(suggestions, memory_docs=None, existing_modules=N
             assignments["main"] = main_cand
 
     # 2. 为每个受控记忆文档匹配首个最合适的建议项 (排除已绑定的会话)
-    assigned_session_ids = {a["session_id"] for a in assignments.values() if isinstance(a, dict) and a.get("session_id")}
+    assigned_session_ids = {state_store.session_identity(a.get("vendor"), a.get("session_id")) for a in assignments.values() if isinstance(a, dict) and a.get("session_id")}
     for doc in (memory_docs or []):
         if doc["module_key"] == "main" or doc["module_key"] in assignments:
             continue
-        matched = next((s for s in suggestions if s.get("suggested_module_key") == doc["module_key"] and s.get("session_id") not in assigned_session_ids), None)
+        matched = next((s for s in suggestions if s.get("suggested_module_key") == doc["module_key"] and state_store.session_identity(s.get("vendor"), s.get("session_id")) not in assigned_session_ids), None)
         if matched:
             assignments[doc["module_key"]] = matched
-            assigned_session_ids.add(matched["session_id"])
+            assigned_session_ids.add(state_store.session_identity(matched.get("vendor"), matched.get("session_id")))
 
     return assignments
 
@@ -222,11 +219,14 @@ def apply_approval_gate(assignments, memory_alignment, options=None):
     options = options or {}
     allow = set(options.get("module_allowlist") or options.get("moduleAllowlist") or [])
     exclude = set(options.get("module_exclude") or options.get("moduleExclude") or [])
-    aligned_keys = {a["module_key"] for a in memory_alignment if a["status"] in ("ALIGNED", "CREATED_AND_ALIGNED")}
+    aligned_keys = {a["module_key"] for a in memory_alignment if a["status"] in ("BOUND", "DISCOVERED", "ALIGNED", "CREATED_AND_ALIGNED")}
 
     approved = []
     pending = []
     for key, suggestion in assignments.items():
+        if not suggestion.get("session_id") or suggestion.get("resumable") is not True:
+            pending.append({"module_key": key, "session_id": suggestion.get("session_id"), "reason": "no physical resumable session; creation is pending or unsupported"})
+            continue
         if key in exclude:
             pending.append({"module_key": key, "session_id": suggestion["session_id"], "reason": "explicitly_excluded"})
             continue
@@ -262,11 +262,12 @@ def scaffold_memory_doc(ws_root, relative_path, topic_name):
 def survey_existing_sessions(ws_root, options=None):
     if options is None:
         options = {}
-    target_vendor = options.get("vendor") or detect_current_vendor(options.get("env"), options.get("current_session") or options.get("currentSession")) or "antigravity"
-    caller_session_id = (
-        options.get("current_session") or options.get("current_session_id") or options.get("currentSessionId")
-        or os.environ.get("ANTIGRAVITY_CONVERSATION_ID") or os.environ.get("ZCODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID")
-    )
+    env = options.get("env") or os.environ
+    explicit_vendor = state_store.normalize_vendor(options.get("vendor"))
+    explicit_caller_id = options.get("current_session") or options.get("current_session_id") or options.get("currentSessionId")
+    detected_vendor = explicit_vendor or detect_current_vendor(env, explicit_caller_id)
+    caller_session_id = explicit_caller_id or state_store.get_current_session_id(env, detected_vendor)
+    target_vendor = explicit_vendor or detected_vendor or "antigravity"
     explicit_main_session_id = options.get("main_session") or options.get("main_session_id") or options.get("mainSessionId")
     current_vendor = target_vendor
 
@@ -281,14 +282,19 @@ def survey_existing_sessions(ws_root, options=None):
     all_sessions = agy_s + codex_s + claude_s + zcode_s
     unique_map = {}
     for s in all_sessions:
-        s_id = s.get("session_id")
-        if s_id and s_id not in unique_map:
-            unique_map[s_id] = s
+        s_id = str(s.get("session_id") or "").strip()
+        s_vendor = state_store.normalize_vendor(s.get("vendor")) or "antigravity"
+        identity = state_store.session_identity(s_vendor, s_id)
+        if identity and identity not in unique_map:
+            record = dict(s)
+            record.update({"session_id": s_id, "vendor": s_vendor})
+            unique_map[identity] = record
 
     # 若 caller_session_id 存在但在扫描中未发现，自动补入
-    if caller_session_id and caller_session_id not in unique_map:
+    caller_identity = state_store.session_identity(current_vendor, caller_session_id)
+    if caller_identity and caller_identity not in unique_map:
         now_iso = datetime.now(timezone.utc).isoformat()
-        unique_map[caller_session_id] = {
+        unique_map[caller_identity] = {
             "session_id": caller_session_id,
             "vendor": current_vendor,
             "title": "[主会话] 任务编排 & 治理中枢",
@@ -303,53 +309,68 @@ def survey_existing_sessions(ws_root, options=None):
     # 3) 历史扫描中明确属于当前宿主环境且带 [主会话] 标签或 is_main 的会话
     # 4) suggestions 列表中的第一项
     chosen_main_id = None
+    chosen_main_identity = None
+    persistent_identity = None
     if explicit_main_session_id:
         chosen_main_id = explicit_main_session_id
-        if explicit_main_session_id not in unique_map:
+        chosen_main_identity = state_store.session_identity(target_vendor, explicit_main_session_id)
+        if chosen_main_identity and chosen_main_identity not in unique_map:
             now_iso = datetime.now(timezone.utc).isoformat()
-            unique_map[explicit_main_session_id] = {
+            unique_map[chosen_main_identity] = {
                 "session_id": explicit_main_session_id,
-                "vendor": current_vendor,
+                "vendor": target_vendor,
                 "title": "[主会话] 任务编排 & 治理中枢",
                 "is_main": True,
                 "created_at": now_iso,
-                "last_active_at": now_iso
+                "last_active_at": now_iso,
             }
-    elif caller_session_id and caller_session_id in unique_map:
+    elif caller_identity and caller_identity in unique_map:
         chosen_main_id = caller_session_id
+        chosen_main_identity = caller_identity
     elif caller_session_id:
         chosen_main_id = caller_session_id
-        now_iso = datetime.now(timezone.utc).isoformat()
-        unique_map[caller_session_id] = {
-            "session_id": caller_session_id,
-            "vendor": current_vendor,
-            "title": "[主会话] 任务编排 & 治理中枢",
-            "is_main": True,
-            "created_at": now_iso,
-            "last_active_at": now_iso
-        }
+        chosen_main_identity = caller_identity
+        if chosen_main_identity:
+            now_iso = datetime.now(timezone.utc).isoformat()
+            unique_map[chosen_main_identity] = {
+                "session_id": caller_session_id,
+                "vendor": target_vendor,
+                "title": "[主会话] 任务编排 & 治理中枢",
+                "is_main": True,
+                "created_at": now_iso,
+                "last_active_at": now_iso,
+            }
     else:
+        try:
+            part = state_store.get_partition(os.path.join(ws_root, ".agents", "task-loop", "sessions.json"), target_vendor)
+            persisted_main_id = part.get("main_thread_id") if part else None
+            persistent_identity = state_store.session_identity(target_vendor, persisted_main_id)
+            if persistent_identity and persistent_identity in unique_map:
+                chosen_main_id = persisted_main_id
+                chosen_main_identity = persistent_identity
+        except Exception:
+            pass
         for s in unique_map.values():
+            if chosen_main_identity or s.get("vendor") != target_vendor:
+                continue
             raw_title = (s.get("title") or "").lower()
-            s_vendor = (s.get("vendor") or "antigravity").lower()
-            if (s.get("is_main") or "[主会话]" in raw_title or "治理中枢" in raw_title) and (s_vendor == current_vendor):
+            if s.get("is_main") or "[主会话]" in raw_title or "治理中枢" in raw_title:
                 chosen_main_id = s.get("session_id")
+                chosen_main_identity = state_store.session_identity(s.get("vendor"), s.get("session_id"))
                 break
-        if not chosen_main_id:
-            for s in unique_map.values():
-                raw_title = (s.get("title") or "").lower()
-                if s.get("is_main") or "[主会话]" in raw_title or "治理中枢" in raw_title:
-                    chosen_main_id = s.get("session_id")
-                    break
-        if not chosen_main_id and len(unique_map) > 0:
-            chosen_main_id = next(iter(unique_map.keys()))
+        if not chosen_main_identity:
+            first_target = next((s for s in unique_map.values() if s.get("vendor") == target_vendor), None)
+            if first_target:
+                chosen_main_id = first_target.get("session_id")
+                chosen_main_identity = state_store.session_identity(first_target.get("vendor"), first_target.get("session_id"))
 
     suggestions = []
     for s in unique_map.values():
         s_id = s.get("session_id")
-        s_vendor = s.get("vendor", "antigravity")
-        is_main_candidate = (s_id == chosen_main_id and s_vendor == current_vendor)
-        is_current_session = (s_id == caller_session_id)
+        s_vendor = state_store.normalize_vendor(s.get("vendor")) or "antigravity"
+        identity = state_store.session_identity(s_vendor, s_id)
+        is_main_candidate = identity == chosen_main_identity
+        is_current_session = identity == caller_identity
 
         if is_main_candidate:
             inferred = {
@@ -360,17 +381,27 @@ def survey_existing_sessions(ws_root, options=None):
             }
         else:
             inferred = infer_topic_mapping(s, memory_keys)
+            if inferred.get("module_key") == "main":
+                short_id = str(s_id or "")[:8]
+                inferred["module_key"] = f"topic_{short_id}"
+                inferred["topic_name"] = f"[业务专题] {s.get('title') or '通用开发'}"
+                inferred["tags"] = [inferred["module_key"], "topic"]
+                inferred["memory_doc"] = f"docs/memory/{inferred['module_key']}.md"
 
+        resumable = bool(s_id and s_vendor == current_vendor)
         suggestions.append({
             "session_id": s_id,
             "vendor": s_vendor,
+            "id_kind": s.get("id_kind") or ("threadId" if s_vendor == "codex" else ("conversationId" if s_vendor == "antigravity" else "sessionId")),
             "original_title": sanitize_title(s.get("title")),
             "suggested_module_key": inferred["module_key"],
             "needs_naming": bool(inferred.get("needs_naming")),
             "suggested_topic_name": inferred["topic_name"],
             "suggested_tags": inferred["tags"],
             "suggested_memory_doc": inferred["memory_doc"],
-            "resumable": s_vendor == current_vendor,
+            "resumable": resumable,
+            "physical_session": bool(s_id),
+            "lifecycle_status": state_store.SESSION_STATUS["DISCOVERED"],
             "dispatch_hint": (
                 "可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)"
                 if s_vendor == current_vendor
@@ -393,22 +424,27 @@ def survey_existing_sessions(ws_root, options=None):
         pass
 
     # 单一事实源: 一次性计算模块分配, 对齐报告与持久化共用
-    assignments = resolve_module_assignments(suggestions, memory_docs, existing_modules)
+    assignments = resolve_module_assignments(suggestions, memory_docs, existing_modules, current_vendor)
 
     memory_alignment = []
     for doc in memory_docs:
         matched = assignments.get(doc["module_key"])
+        stored = existing_modules.get(doc["module_key"])
+        status = ((matched.get("lifecycle_status") if matched else None)
+                  or (stored.get("lifecycle_status") if isinstance(stored, dict) else None)
+                  or (state_store.SESSION_STATUS["DISCOVERED"] if matched and matched.get("resumable") else state_store.SESSION_STATUS["PENDING_CREATION"]))
+        stored_needs_creation = isinstance(stored, dict) and not is_reusable_session(current_vendor, stored)
         memory_alignment.append({
             "module_key": doc["module_key"],
             "memory_doc": doc["relative_path"],
             "matched_session_id": matched["session_id"] if matched else None,
             "matched_vendor": matched["vendor"] if matched else None,
-            "resumable": matched["resumable"] if matched else False,
+            "resumable": False if stored_needs_creation else (matched["resumable"] if matched else False),
             "matched_topic_name": matched["suggested_topic_name"] if matched else f"[{doc['module_key']}专题] 核心功能维护 & 记忆沉淀",
-            "status": "ALIGNED" if matched else "MISSING_SESSION"
+            "status": state_store.SESSION_STATUS["PENDING_CREATION"] if stored_needs_creation else status
         })
 
-    return suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id, assignments, current_vendor
+    return suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id, assignments, current_vendor, existing_modules
 
 
 def init_task_loop(options=None):
@@ -416,8 +452,13 @@ def init_task_loop(options=None):
         options = {}
     ws_root = options.get("ws_root") or options.get("wsRoot") or os.getcwd()
     dry_run = options.get("dry_run") or options.get("dryRun") or False
-    create_missing = options.get("create_missing") or options.get("createMissing") or False
-    target_vendor = options.get("vendor") or detect_current_vendor(options.get("env"), options.get("current_session") or options.get("currentSession")) or "antigravity"
+    if "create_missing" in options:
+        create_missing = bool(options["create_missing"])
+    elif "createMissing" in options:
+        create_missing = bool(options["createMissing"])
+    else:
+        create_missing = True
+    target_vendor = state_store.normalize_vendor(options.get("vendor")) or detect_current_vendor(options.get("env"), options.get("current_session") or options.get("currentSession")) or "antigravity"
     options["vendor"] = target_vendor
 
     task_loop_dir = os.path.join(ws_root, ".agents", "task-loop")
@@ -427,7 +468,7 @@ def init_task_loop(options=None):
     policy_path = os.path.join(task_loop_dir, "policy.json")
     vendor_specific_file = os.path.join(task_loop_dir, f"sessions.{target_vendor}.json")
 
-    suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id, assignments, current_vendor = survey_existing_sessions(ws_root, options)
+    suggestions, memory_docs, memory_alignment, chosen_main_id, caller_session_id, assignments, current_vendor, existing_modules = survey_existing_sessions(ws_root, options)
 
     result = {
         "workspace_root": normalize_path(ws_root),
@@ -446,7 +487,10 @@ def init_task_loop(options=None):
         "current_vendor": target_vendor,
         "memory_alignment": memory_alignment,
         "topic_mapping_suggestions": suggestions,
-        "created_sessions": []
+        "created_sessions": [],
+        "pending_creation": [],
+        "creation_failures": [],
+        "unsupported": []
     }
 
     # 批准门禁 (dry-run 也计算, 便于预览 pending_approval)
@@ -463,34 +507,66 @@ def init_task_loop(options=None):
     # 实际写入
     os.makedirs(task_loop_dir, exist_ok=True)
 
-    if create_missing and target_vendor == "antigravity":
+    if create_missing:
         for align in memory_alignment:
-            if align["status"] == "MISSING_SESSION":
+            stored = existing_modules.get(align["module_key"])
+            reusable = (align["status"] in ("BOUND", "DISCOVERED", "ALIGNED", "CREATED_AND_ALIGNED")
+                        and align.get("resumable") is True
+                        and (not stored or is_reusable_session(target_vendor, stored)))
+            if not reusable:
                 title = align["matched_topic_name"]
-                prompt = f"[{align['module_key']}专题初始化] 你是 task-loop 项目的【${align['module_key']}专题负责人】。你负责维护本专题代码与记忆文档 {align['memory_doc']}。"
-                new_id = spawn_root_conversation(title, prompt, ws_root)
-                if new_id:
-                    align["matched_session_id"] = new_id
+                prompt = f"[{align['module_key']}专题初始化] 你是 task-loop 项目的【{align['module_key']}专题负责人】。你负责维护本专题代码与记忆文档 {align['memory_doc']}。"
+                existing_model = configured_model((existing_modules or {}).get(align["module_key"])) if target_vendor == "codex" else None
+                creation = spawn_root_conversation(title, prompt, ws_root, {
+                    **options,
+                    "vendor": target_vendor,
+                    "role": "main" if align["module_key"] == "main" else "topic",
+                    **({
+                        "model": options.get("model") or existing_model.get("model"),
+                        "reasoning_effort": options.get("reasoning_effort") or existing_model.get("reasoning_effort"),
+                        "thinking": options.get("thinking") or existing_model.get("thinking"),
+                    } if existing_model else {}),
+                })
+                if creation and creation.get("status") == "CREATED" and creation.get("id"):
+                    align["matched_session_id"] = creation["id"]
+                    align["matched_vendor"] = creation.get("vendor")
+                    align["resumable"] = creation.get("resumable") is True
                     align["status"] = "CREATED_AND_ALIGNED"
-                    result["created_sessions"].append({"module_key": align["module_key"], "session_id": new_id, "title": title})
+                    result["created_sessions"].append({"module_key": align["module_key"], "session_id": creation["id"], "vendor": creation.get("vendor"), "title": title})
                     suggestions.append({
-                        "session_id": new_id,
-                        "vendor": target_vendor,
+                        "session_id": creation["id"],
+                        "vendor": creation.get("vendor"),
+                        "id_kind": creation.get("id_kind"),
                         "original_title": sanitize_title(title),
                         "suggested_module_key": align["module_key"],
                         "suggested_topic_name": title,
                         "suggested_tags": [align["module_key"], "topic"],
                         "suggested_memory_doc": align["memory_doc"],
-                        "resumable": True,
+                        "resumable": creation.get("resumable") is True,
+                        "physical_session": True,
+                        "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
                         "dispatch_hint": "可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)",
                         "is_main_candidate": False,
                         "is_current_session": False
                     })
+                elif creation and creation.get("status") == "PENDING_CREATION":
+                    align["status"] = state_store.SESSION_STATUS["PENDING_CREATION"]
+                    result["pending_creation"].append({"module_key": align["module_key"], "vendor": target_vendor, "title": title, "creation_request": creation.get("creation_request") or creation.get("request"), "host_action": creation.get("host_action") or "create_thread", "reason": creation.get("reason")})
+                elif creation and creation.get("status") == "UNSUPPORTED":
+                    align["status"] = state_store.SESSION_STATUS["UNSUPPORTED"]
+                    result["unsupported"].append({"module_key": align["module_key"], "vendor": target_vendor, "title": title, "reason": creation.get("reason")})
+                else:
+                    align["status"] = state_store.SESSION_STATUS["CREATION_FAILED"]
+                    result["creation_failures"].append({"module_key": align["module_key"], "vendor": target_vendor, "title": title, "reason": creation.get("reason") if creation else "creation adapter returned no result"})
         # 新建会话后重算分配, 保证与落盘同源
-        assignments = resolve_module_assignments(suggestions, memory_docs)
+        assignments = resolve_module_assignments(suggestions, memory_docs, existing_modules, target_vendor)
 
     # 仅持久化通过批准门禁的模块; 其余会话仅入清单不占绑定
-    main_thread_id = chosen_main_id or (suggestions[0]["session_id"] if suggestions else None)
+    main_thread_id = next((s["session_id"] for s in suggestions if s.get("session_id") == chosen_main_id and s.get("vendor") == target_vendor), None)
+    if not main_thread_id:
+        sticky_main = existing_modules.get("main") if isinstance(existing_modules, dict) else None
+        if is_reusable_session(target_vendor, sticky_main):
+            main_thread_id = sticky_main["session_id"]
     approved_keys = {a["module_key"] for a in gate["approved"]}
     for align in memory_alignment:
         if align["status"] == "CREATED_AND_ALIGNED":
@@ -505,19 +581,30 @@ def init_task_loop(options=None):
         _existing_part = (_existing_doc.get("vendors") or {}).get(target_vendor)
         if _existing_part and isinstance(_existing_part.get("modules"), dict):
             for _k, _mod in _existing_part["modules"].items():
-                if isinstance(_mod, dict) and _mod.get("session_id") and _mod.get("resumable") is not False and _k not in target_modules:
-                    target_modules[_k] = _mod
+                _mod_vendor = state_store.normalize_vendor(_mod.get("vendor")) if isinstance(_mod, dict) else None
+                if isinstance(_mod, dict) and (_mod_vendor or target_vendor) == target_vendor and is_reusable_session(target_vendor, _mod) and _k not in target_modules:
+                    target_modules[_k] = {
+                        **_mod,
+                        "vendor": target_vendor,
+                        "physical_session": True,
+                        "lifecycle_status": _mod.get("lifecycle_status") or state_store.SESSION_STATUS["BOUND"],
+                        "is_main": _k == "main" or _mod.get("session_id") == main_thread_id,
+                    }
     except Exception:
         pass
     for key, item in assignments.items():
-        if key in approved_keys and item.get("vendor") == target_vendor and key not in target_modules:
+        if key in approved_keys and item.get("vendor") == target_vendor and is_reusable_session(target_vendor, item) and key not in target_modules:
             target_modules[key] = {
                 "session_id": item["session_id"],
                 "title": item["suggested_topic_name"],
                 "tags": item["suggested_tags"],
                 "memory_doc": item["suggested_memory_doc"],
                 "vendor": item["vendor"],
+                "id_kind": item.get("id_kind"),
                 "resumable": True,
+                "physical_session": True,
+                "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
+                "is_main": key == "main" or item["session_id"] == main_thread_id,
                 "dispatch_hint": item["dispatch_hint"],
                 "summary": f"专题模块: {item['suggested_topic_name']}"
             }
@@ -542,7 +629,10 @@ def init_task_loop(options=None):
             "title": mod["title"],
             "is_main": (key == "main" or mod["session_id"] == main_thread_id),
             "module_key": key,
-            "resumable": True,
+            "id_kind": mod.get("id_kind"),
+            "resumable": mod.get("resumable") is True and bool(mod.get("session_id")),
+            "physical_session": bool(mod.get("session_id")),
+            "lifecycle_status": mod.get("lifecycle_status") or (state_store.SESSION_STATUS["BOUND"] if mod.get("resumable") is True else state_store.SESSION_STATUS["PENDING_CREATION"]),
             "summary": mod.get("summary") or f"专题模块: {mod['title']}",
             "memory_docs": [mod["memory_doc"]] if mod.get("memory_doc") else [],
             **({"model_config": mod["model_config"]} if target_vendor == "codex" and mod.get("model_config") else {}),
@@ -638,6 +728,9 @@ def init_task_loop(options=None):
             "session_id": v["session_id"],
             "vendor": v["vendor"],
             "resumable": v["resumable"],
+            "lifecycle_status": v.get("lifecycle_status"),
+            "is_main": v.get("is_main") is True,
+            "id_kind": v.get("id_kind"),
             "tags": v["tags"],
             "memory_doc": v["memory_doc"]
         }
@@ -652,7 +745,7 @@ def init_task_loop(options=None):
 
     # 目标厂商物理镜像 topics.<vendor>.json
     with open(os.path.join(task_loop_dir, f"topics.{target_vendor}.json"), "w", encoding="utf-8") as f:
-        json.dump(dict({"schema_version": 4}, **target_topics), f, indent=2, ensure_ascii=False)
+        json.dump(dict({"schema_version": 3}, **target_topics), f, indent=2, ensure_ascii=False)
 
     topics_file_data = {
         "schema_version": 4,
@@ -689,7 +782,7 @@ def init_task_loop(options=None):
             f"1. 查 .agents/task-loop/sessions.{target_vendor}.json (或 sessions.json vendors.{target_vendor}) 寻找匹配专题, 优先复用",
             "2. 可续接专题 (resumable: true): 经当前宿主 SessionProvider send/resume 原语定向派单",
             "3. 不可续接专题 (resumable: false): 仅只读内省参考; 需要实施时经 new-session 重建本宿主原生专题",
-            "4. 无匹配专题: 经 new-session / spawn Provider 拉起新顶层会话后登记, 严禁退化为人肉 UI 操作",
+            "4. 无匹配专题: /init 经 new-session / spawn Provider 主动拉起; Codex 无原生工具时保留 PENDING_CREATION 请求, 取得 formal threadId 后再 bind",
         ],
         "vendor_mapping_doc": "references/sdk/README.md",
     }
@@ -700,7 +793,7 @@ def init_task_loop(options=None):
 def main():
     args = sys.argv[1:]
     dry_run = "--dry-run" in args or "-d" in args
-    create_missing = "--create-missing" in args or "-c" in args
+    create_missing = not dry_run
     ws_root = os.getcwd()
     if "--workspace" in args:
         idx = args.index("--workspace")
@@ -775,6 +868,14 @@ def main():
         print("【待批准模块 (pending_approval)】以下建议默认不落盘, 确需持久化请追加: --modules <key1,key2>")
         for i, p in enumerate(res["pending_approval"], 1):
             print(f"  {i}. [{p['module_key']}] {p['session_id']} ({p['reason']})")
+
+    if res.get("pending_creation"):
+        print("\n--------------------------------------------------------------------------------")
+        print("【待原生宿主创建 (PENDING_CREATION)】:")
+        for i, pending in enumerate(res["pending_creation"], 1):
+            print(f"  {i}. [{pending['module_key']}] {pending['title']} -> {pending.get('host_action') or 'create_thread'}")
+            print(f"     creation_request: {json.dumps(pending.get('creation_request') or {}, ensure_ascii=False)}")
+            print(f"     reason: {pending.get('reason') or 'formal threadId 尚未返回'}")
 
     if res.get("session_tools"):
         print("\n--------------------------------------------------------------------------------")

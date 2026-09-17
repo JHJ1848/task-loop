@@ -12,7 +12,7 @@
 * OpenAI Codex 采用 Thread/Project 结构，依赖环境变量 `CODEX_THREAD_ID` 与 Desktop App Tools/CLI；
 * Anthropic Claude Code 采用项目哈希目录存储 `.jsonl`，依赖 Hooks stdin JSON 提取会话 ID，并通过无头 `-p` 派发任务。
 
-`SessionProvider` 建立高度一致的抽象层，将上层调度逻辑与底层宿主实现完全解耦，支持一套编排流水线无缝驱动三大平台。
+`SessionProvider` 建立高度一致的抽象层，将上层调度逻辑与底层宿主实现完全解耦，支持一套编排流水线驱动三大平台。Codex Provider 的实现级接口另提供 `read/read_async`，用于在 formal threadId 上读取异步 Host Adapter 结果。
 
 ### 2. 六大核心原语契约 (Six Standard Primitives)
 
@@ -28,6 +28,23 @@
 │ 6. await_reply() -> ReactiveWakeup / Callback                          │
 └────────────────────────────────────────────────────────────────────────┘
 ```
+
+### 3. Codex formal ID 与生命周期结果
+
+```json
+{
+  "formal_id": {
+    "accepted_fields": ["threadId", "thread_id"],
+    "accepted_locations": ["structuredContent", "nested response/thread", "content text JSON"],
+    "client_fields": ["clientThreadId", "client_thread_id"],
+    "client_rule": "clientThreadId、queued 或无 formal ID -> PENDING_CREATION；不能 send、read、wait 或 bind"
+  },
+  "codex_provider_methods": ["create", "create_async", "send/submit", "read", "read_async", "wait"],
+  "status_rule": "创建只有 formal threadId 才 READY；发送只有 adapter 或明确 CLI 且 submitted=true 才 SUBMITTED；否则保留 PREPARED_ONLY/UNSUPPORTED"
+}
+```
+
+Codex `create_thread` 属于 Desktop 宿主工具，不由本仓库脚本层伪造。`/init` 或 `/new-session` 发现缺失/不可续接专题时，主会话先调用 `list_projects`，按 `isGitRepository` 选择 `worktree` 或 `local`，再调用 `create_thread`；取得正式 ID 后运行 `new_topic_session --bind-current <threadId> --id-kind threadId`，写回 `sessions.json`、`topics.json` 与厂商镜像。`send_message_to_thread` 提交成功不等于模型回复，需另行 `wait_threads/read_thread`。
 
 ---
 
@@ -98,7 +115,7 @@
     "codex": {
       "main_thread_id": "thr_main_codex_001",
       "model_policy": {
-        "main": { "model": "gpt-5.6-astra", "effort": "medium" },
+        "main": { "model": "gpt-6-astra", "effort": "medium" },
         "topic": { "model": "gpt-5.6-terra", "effort": "xhigh" },
         "subagent": { "model": "gpt-5.6-luna", "effort": "max" }
       },
@@ -114,7 +131,7 @@
 
 ### 2. 核心持久化特性
 1. **物理隔离镜像**：同时自动同步写出 `sessions.<vendor>.json` 镜像物理文件，供单厂商轻量工具直读；
-2. **粘性绑定保护 (Sticky Binding Lock)**：当执行初始化与重连扫描时，当前厂商分区内已存在的有效会话绑定（`resumable !== false`）优先予以锁定保留，严禁覆盖重建；
+2. **粘性绑定保护 (Sticky Binding Lock)**：当执行初始化与重连扫描时，当前厂商分区内已存在的有效会话绑定（`resumable === true` 且存在 formal 物理 ID）优先予以锁定保留，严禁覆盖重建；
 3. **精准只读查询 (Query CLI)**：查询状态必须调用 `node scripts/query_task_loop_state.js --vendor <v> --key <dot.path>`，杜绝全量加载大 JSON。
 
 ---
@@ -201,9 +218,32 @@ class SessionProvider:
             )
 ```
 
+## 五、QuestionProvider 与第四个跨切面边界
+
+QuestionProvider 是现有契约支柱，负责需要用户选择或确认的交互；SessionProvider 不新增 Question runtime，也不把普通文本提示冒充原生选择器。
+
+```json
+{
+  "boundary": "Execution/Capability/Authority Context",
+  "meaning": "跨厂商运行时边界，不新增独立 runtime",
+  "fields": [
+    "host capability",
+    "workspace environment",
+    "role model/reasoning",
+    "write permission/lifecycle"
+  ],
+  "codex_model_precedence": ["用户显式选择", "既有 session.model_config", "role 默认"],
+  "codex_role_defaults": {
+    "main": { "model": "gpt-6-astra", "reasoning_effort": "medium" },
+    "topic": { "model": "gpt-5.6-terra", "reasoning_effort": "xhigh" },
+    "subagent": { "model": "gpt-5.6-luna", "reasoning_effort": "max" }
+  }
+}
+```
+
 ---
 
-## 五、看门狗巡检与开发陷阱 (Gotchas)
+## 六、看门狗巡检与开发陷阱 (Gotchas)
 
 1. **[Gotcha 1] 杜绝 Polling 轮询的 Token 消耗**：
    在 AGY 中派遣任务后，严禁编写死循环轮询 `manage_subagents(status)`；必须结束当前 Turn 利用 Reactive Wakeup 机制挂起，等待系统自动唤醒。

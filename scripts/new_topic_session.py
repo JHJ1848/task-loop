@@ -14,6 +14,7 @@ import sys
 import json
 import re
 import subprocess
+import uuid
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -21,14 +22,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "pro
 import spawn_zcode_session as zcode_spawn
 import task_loop_state as state_store
 from codex_model_policy import apply_initial_model_config, build_create_thread_request
+import codex_session_provider as codex_session_provider
 
 
-def detect_topic_vendor(env=None):
+def detect_topic_vendor(env=None, explicit_vendor=None):
     env = env if env is not None else os.environ
-    # Codex explicitly owns its thread environment when multiple host markers remain.
-    if env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"):
-        return "codex"
-    return state_store.normalize_vendor(state_store.detect_vendor(env))
+    return state_store.normalize_vendor(explicit_vendor) or state_store.normalize_vendor(state_store.detect_vendor(env))
 
 
 def normalize_path(p):
@@ -83,73 +82,146 @@ def parse_memory_doc(doc_path, ws_root):
     }
 
 
-def spawn_root_conversation(title, prompt, ws_root):
-    """创建独立顶层根会话 (nestingDepth = 0) — 厂商感知双宿主实现。
-    AGY: agentapi new-conversation; ZCode: zcode --cwd -p 无头拉起。
-    返回 {"id": ..., "vendor": ...} 或 None。"""
-    env = dict(os.environ)
-    current_vendor = detect_topic_vendor(env)
-    if current_vendor == "codex":
-        print(
-            "[new-topic-session] Codex 专属创建路径：脚本不调用 AGY/ZCode 创建 API。请由 Desktop create_thread 使用以下配置创建后，再执行 --bind-current <threadId>：",
-            file=sys.stderr,
-        )
-        print(json.dumps(build_create_thread_request(title=title, prompt=prompt, role="topic"), ensure_ascii=False, indent=2), file=sys.stderr)
+def create_status(status, vendor, reason, **extra):
+    result = {
+        "status": status,
+        "vendor": vendor,
+        "submitted": False,
+        "bound": False,
+        "resumable": False,
+        "physical_session": False,
+        "reason": reason,
+    }
+    result.update(extra)
+    return result
+
+
+def created_status(vendor, session_id, id_kind, **extra):
+    result = {
+        "status": "CREATED",
+        "vendor": vendor,
+        "id": session_id,
+        "id_kind": id_kind,
+        "resumable": True,
+        "physical_session": True,
+    }
+    result.update(extra)
+    return result
+
+
+def _formal_claude_session_id(result):
+    if not isinstance(result, dict):
         return None
+    value = result.get("session_id") or result.get("sessionId")
+    return str(value).strip() if value is not None and str(value).strip() else None
+
+
+def _spawn_claude_conversation(title, prompt, ws_root, env):
+    requested_session_id = str(uuid.uuid4())
+    try:
+        result = subprocess.run(
+            ["claude", "-p", prompt, "--session-id", requested_session_id, "--output-format", "json"],
+            env=env,
+            cwd=ws_root,
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+    except FileNotFoundError:
+        return create_status("UNSUPPORTED", "claude", "Claude CLI is unavailable; no physical session was created")
+    except Exception as error:
+        return create_status("CREATION_FAILED", "claude", f"Claude CLI launch failed: {error}")
+    if result.returncode != 0:
+        return create_status("CREATION_FAILED", "claude", f"Claude CLI exited {result.returncode}")
+    try:
+        data = json.loads(result.stdout or "")
+    except json.JSONDecodeError:
+        return create_status("CREATION_FAILED", "claude", "Claude CLI returned non-JSON output; no physical session ID was confirmed")
+    session_id = _formal_claude_session_id(data)
+    if not session_id:
+        return create_status("CREATION_FAILED", "claude", "Claude CLI did not return a formal session_id")
+    return created_status("claude", session_id, "sessionId", title=title)
+
+
+def spawn_root_conversation(title, prompt, ws_root, options=None):
+    """按明确厂商创建根会话；失败、待宿主创建和不支持均不写入绑定状态。"""
+    options = options or {}
+    env = dict(os.environ)
+    current_vendor = detect_topic_vendor(env, options.get("vendor"))
+    if not current_vendor:
+        return create_status("UNSUPPORTED", None, "No supported host vendor was identified")
+
+    if current_vendor == "codex":
+        request = build_create_thread_request(
+            project_id=options.get("project_id"),
+            is_git_repository=options.get("is_git_repository"),
+            environment=options.get("environment"),
+            title=title,
+            prompt=prompt,
+            role=options.get("role") or "topic",
+            model=options.get("model"),
+            reasoning_effort=options.get("reasoning_effort"),
+            thinking=options.get("thinking"),
+        )
+        result = codex_session_provider.create(request, options.get("capabilities"), dry_run=options.get("dry_run", False))
+        if result.get("status") == "PENDING_CREATION":
+            pending = dict(result)
+            pending.update({"vendor": "codex", "creation_request": request})
+            print(json.dumps(pending, ensure_ascii=False, indent=2), file=sys.stderr)
+            return pending
+        if result.get("status") == "READY" and result.get("threadId"):
+            return created_status("codex", result["threadId"], "threadId", creation_result=result, model_config=request)
+        return create_status(
+            "CREATION_FAILED" if result.get("status") == "CREATION_FAILED" else "UNSUPPORTED",
+            "codex",
+            result.get("reason"),
+            creation_request=request,
+            creation_result=result,
+        )
+
     for k in ["ANTIGRAVITY_CONVERSATION_ID", "ANTIGRAVITY_SOURCE_METADATA", "ANTIGRAVITY_TRAJECTORY_ID"]:
         env.pop(k, None)
 
-    # 1. AGY 宿主: agentapi 可用则优先（原行为）
-    agentapi = _find_agentapi(env)
-    if agentapi:
+    if current_vendor == "claude":
+        return _spawn_claude_conversation(title, prompt, ws_root, env)
+
+    if current_vendor == "antigravity":
+        agentapi = _find_agentapi(env)
+        if not agentapi:
+            return create_status("UNSUPPORTED", "antigravity", "agentapi is unavailable; no physical session was created")
         cmd = [agentapi, "new-conversation", f"--title={title}", prompt]
         try:
             res = subprocess.run(cmd, env=env, cwd=ws_root, shell=True, capture_output=True, text=True, encoding="utf-8")
-            if res.stdout:
-                data = json.loads(res.stdout)
-                cid = data.get("response", {}).get("newConversation", {}).get("conversationId")
-                if cid:
-                    return {"id": cid, "vendor": "antigravity"}
-        except Exception:
-            pass  # fall through to ZCode CLI
+            if res.returncode != 0:
+                return create_status("CREATION_FAILED", "antigravity", f"agentapi exited {res.returncode}")
+            data = json.loads(res.stdout or "")
+            cid = data.get("response", {}).get("newConversation", {}).get("conversationId")
+            if cid:
+                return created_status("antigravity", str(cid), "conversationId", title=title)
+            return create_status("CREATION_FAILED", "antigravity", "agentapi returned no formal conversationId")
+        except json.JSONDecodeError:
+            return create_status("CREATION_FAILED", "antigravity", "agentapi returned non-JSON output")
+        except Exception as error:
+            return create_status("CREATION_FAILED", "antigravity", f"agentapi creation failed: {error}")
 
-    # 2. ZCode 宿主: 无头 CLI 拉起
-    cli = zcode_spawn.discover_zcode_cli(env)
-    if cli:
+    if current_vendor == "zcode":
+        cli = zcode_spawn.discover_zcode_cli(env)
+        if not cli:
+            return create_status("UNSUPPORTED", "zcode", "ZCode CLI is unavailable; no physical session was created")
         auth = zcode_spawn.auth_state(env)
         if not auth["logged_in"]:
-            print(
-                "[new-topic-session] ZCode CLI 未登录，跳过无头拉起。前置: login-api-key 配置 key 或 zcode login 一次；"
-                "或手动新建会话后将 ID 登记至 .agents/task-loop/sessions.json。",
-                file=sys.stderr,
-            )
-            return None
+            return create_status("UNSUPPORTED", "zcode", "ZCode CLI is not authenticated; no physical session was created")
         try:
             out = zcode_spawn.run_cli(cli, ["--cwd", ws_root, "-p", prompt], 600, env)
             sid = zcode_spawn.extract_session_id(out)
             if sid:
-                return {"id": sid, "vendor": "zcode"}
-            print(
-                "[new-topic-session] ZCode CLI 已执行但未解析出 sess_id，输出头部: " + (out or "")[:200],
-                file=sys.stderr,
-            )
-            return None
+                return created_status("zcode", sid, "sessionId", title=title)
+            return create_status("CREATION_FAILED", "zcode", "ZCode CLI returned no formal session ID")
         except Exception as err:
-            print("[new-topic-session] ZCode CLI 拉起失败: " + str(err).split("\n")[0], file=sys.stderr)
-            return None
+            return create_status("CREATION_FAILED", "zcode", f"ZCode CLI creation failed: {str(err).split(chr(10))[0]}")
 
-    print(
-        "\n============================================================\n"
-        "[new-topic-session 优雅降级引导卡]\n"
-        "无法自动拉起专题会话（未检测到 agentapi 或 ZCode CLI 无头拉起未就绪）。\n"
-        "请按以下指引手动建立与绑定：\n"
-        "1. 在 IDE 侧边栏手动点击 [+] 新建一个独立专题会话；\n"
-        f"2. 在该新会话中运行: python scripts/init_task_loop.py --bind-current {title}\n"
-        "3. 或在 sessions.json 中将新会话 ID 手动登记至 vendors.<vendor>.modules 映射表中。\n"
-        "============================================================\n",
-        file=sys.stderr,
-    )
-    return None
+    return create_status("UNSUPPORTED", current_vendor, f"No creation adapter is implemented for vendor {current_vendor}")
 
 
 def _find_agentapi(env):
@@ -185,44 +257,71 @@ def _find_agentapi(env):
     return None
 
 
-def load_sessions_state(ws_root):
+def load_sessions_state(ws_root, vendor_override=None):
     # Schema v4: 仅读取当前宿主厂商分区 (跨版本兼容读, 其余厂商分区零接触)
-    vendor = detect_topic_vendor() or "antigravity"
+    vendor = detect_topic_vendor(os.environ, vendor_override) or "antigravity"
     sessions_path = os.path.join(ws_root, ".agents", "task-loop", "sessions.json")
     part = state_store.get_partition(sessions_path, vendor)
-    base = {"schema_version": state_store.SCHEMA_VERSION, "main_thread_id": None, "modules": {}, "sessions": []}
+    base = {"schema_version": state_store.SCHEMA_VERSION, "vendor": vendor, "main_thread_id": None, "modules": {}, "sessions": []}
     if part:
         base.update(part)
     return base
 
 
-def save_sessions_state(state, ws_root):
+def save_sessions_state(state, ws_root, vendor_override=None):
     # Schema v4: 只写当前宿主厂商分区 (读-改-写), 其余厂商分区零接触, 结构上杜绝跨厂商覆写
     task_loop_dir = os.path.join(ws_root, ".agents", "task-loop")
     os.makedirs(task_loop_dir, exist_ok=True)
 
-    vendor = detect_topic_vendor() or "antigravity"
+    vendor = detect_topic_vendor(os.environ, vendor_override or state.get("vendor")) or "antigravity"
     sessions_path = os.path.join(task_loop_dir, "sessions.json")
     topics_path = os.path.join(task_loop_dir, "topics.json")
 
+    modules = {}
+    for key, value in (state.get("modules") or {}).items():
+        module = dict(value) if isinstance(value, dict) else {}
+        has_physical_id = bool(module.get("session_id") and str(module.get("session_id")).strip())
+        resumable = module.get("resumable") is True and has_physical_id
+        module.update({
+            "vendor": vendor,
+            "resumable": resumable,
+            "lifecycle_status": module.get("lifecycle_status") or (state_store.SESSION_STATUS["BOUND"] if resumable else state_store.SESSION_STATUS["PENDING_CREATION"]),
+            "is_main": module.get("is_main") is True or key == "main" or (state.get("main_thread_id") and module.get("session_id") == state.get("main_thread_id")),
+        })
+        modules[key] = module
+
+    sessions = []
+    for value in state.get("sessions") or []:
+        session = dict(value) if isinstance(value, dict) else {}
+        has_physical_id = bool(session.get("session_id") and str(session.get("session_id")).strip())
+        resumable = session.get("resumable") is True and has_physical_id
+        session.update({
+            "vendor": vendor,
+            "resumable": resumable,
+            "lifecycle_status": session.get("lifecycle_status") or (state_store.SESSION_STATUS["BOUND"] if resumable else state_store.SESSION_STATUS["PENDING_CREATION"]),
+        })
+        sessions.append(session)
+
     partition_data = {
         "main_thread_id": state.get("main_thread_id"),
-        "modules": state.get("modules") or {},
-        "sessions": state.get("sessions") or [],
+        "modules": modules,
+        "sessions": sessions,
     }
     state_store.write_partition(sessions_path, vendor, partition_data, {"kind": "sessions"})
 
-    topics = [
-        {
+    topics = [{
             "topic_key": k,
             "name": v.get("title"),
             "session_id": v.get("session_id"),
-            "vendor": v.get("vendor") or vendor,
-            "resumable": v.get("resumable") is not False,
+            "vendor": vendor,
+            "resumable": v.get("resumable") is True and bool(v.get("session_id")),
+            "lifecycle_status": v.get("lifecycle_status"),
+            "is_main": v.get("is_main") is True,
+            "id_kind": v.get("id_kind"),
             "tags": v.get("tags", [k, "topic"]),
             "memory_doc": v.get("memory_doc"),
         }
-        for k, v in (state.get("modules") or {}).items()
+        for k, v in modules.items()
     ]
     state_store.write_partition(topics_path, vendor, {"topics": topics}, {"kind": "topics"})
 
@@ -231,6 +330,9 @@ def save_sessions_state(state, ws_root):
     mirror.update(json.loads(json.dumps(partition_data)))
     with open(os.path.join(task_loop_dir, f"sessions.{vendor}.json"), "w", encoding="utf-8") as f:
         json.dump(mirror, f, ensure_ascii=False, indent=2)
+    topics_mirror = {"schema_version": 3, "vendor": vendor, "updated_at": datetime.utcnow().isoformat() + "Z", "topics": topics}
+    with open(os.path.join(task_loop_dir, f"topics.{vendor}.json"), "w", encoding="utf-8") as f:
+        json.dump(topics_mirror, f, ensure_ascii=False, indent=2)
 
 
 def create_topic_memory_doc(module_key, topic_title=None, options=None):
@@ -267,6 +369,33 @@ def create_topic_memory_doc(module_key, topic_title=None, options=None):
     return {"doc_path": doc_path, "rel_path": rel_path}
 
 
+def normalize_bound_session(vendor, session_id, options=None):
+    options = options or {}
+    if not session_id:
+        raise ValueError(f"绑定失败: vendor={vendor} 未提供有效物理会话 ID")
+    if vendor == "codex" and (options.get("clientThreadId") or options.get("client_thread_id") or options.get("id_kind") == "clientThreadId"):
+        raise ValueError("绑定失败: Codex 只能绑定正式 threadId，不能绑定 clientThreadId")
+    normalized_id = str(session_id).strip()
+    if not normalized_id:
+        raise ValueError(f"绑定失败: vendor={vendor} 未提供有效物理会话 ID")
+    if vendor == "codex":
+        declared_id_kind = options.get("id_kind") or options.get("idKind")
+        provider_result = options.get("provider_result") or options.get("providerResult")
+        provider_id = codex_session_provider.formal_create_thread_id(provider_result)
+        if declared_id_kind != "threadId" and provider_id != normalized_id:
+            raise ValueError("绑定失败: Codex 需要调用方明确声明 id_kind=threadId，或提供已确认 formal threadId 的 Provider 回执")
+        if options.get("clientThreadId") or options.get("client_thread_id"):
+            raise ValueError("绑定失败: Codex 只能绑定正式 threadId，不能绑定 clientThreadId")
+    id_kind = "threadId" if vendor == "codex" else ("conversationId" if vendor == "antigravity" else "sessionId")
+    return normalized_id, id_kind
+
+
+def is_reusable_module(vendor, module):
+    if not isinstance(module, dict) or not module.get("session_id") or module.get("resumable") is not True:
+        return False
+    return vendor != "codex" or module.get("id_kind") == "threadId"
+
+
 def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=None, options=None):
     """将当前物理会话就地注册并绑定为专题会话 (无需新建顶层会话)"""
     if options is None:
@@ -276,11 +405,14 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
     if ws_root is None:
         ws_root = os.getcwd()
 
+    vendor = detect_topic_vendor(os.environ, options.get("vendor")) or "antigravity"
+    session_id, id_kind = normalize_bound_session(vendor, session_id, options)
     doc_info = create_topic_memory_doc(module_key, topic_title, {"ws_root": ws_root, "force": options.get("force")})
     meta = parse_memory_doc(doc_info["doc_path"], ws_root)
-    state = load_sessions_state(ws_root)
+    state = load_sessions_state(ws_root, vendor)
     existing_module = (state.get("modules") or {}).get(meta["module_key"])
     existing_model_config = existing_module.get("model_config") if isinstance(existing_module, dict) else None
+    is_main = meta["module_key"] == "main" or state.get("main_thread_id") == session_id
 
     if options.get("dry_run"):
         return {
@@ -292,12 +424,16 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
             "message": f"[预览模式] 将把当前会话 (ID: {session_id}) 就地注册为专题 \"{meta['title']}\" 并绑定至 {meta['memory_doc']}"
         }
 
-    vendor = detect_topic_vendor() or "antigravity"
-
     if "modules" not in state or state["modules"] is None:
         state["modules"] = {}
     state["modules"][meta["module_key"]] = {
         "session_id": session_id,
+        "vendor": vendor,
+        "id_kind": id_kind,
+        "resumable": True,
+        "physical_session": True,
+        "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
+        "is_main": is_main,
         "title": meta["title"],
         "tags": [meta["module_key"], "topic"],
         "memory_doc": meta["memory_doc"],
@@ -311,8 +447,12 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
     session_item = {
         "session_id": session_id,
         "vendor": vendor,
+        "id_kind": id_kind,
+        "resumable": True,
+        "physical_session": True,
+        "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
         "title": meta["title"],
-        "is_main": False,
+        "is_main": is_main,
         "module_key": meta["module_key"],
         "summary": f"专题模块: {meta['title']}",
         "memory_docs": [meta["memory_doc"]],
@@ -325,7 +465,9 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
     else:
         state["sessions"].append(session_item)
 
-    save_sessions_state(state, ws_root)
+    if is_main:
+        state["main_thread_id"] = session_id
+    save_sessions_state(state, ws_root, vendor)
 
     return {
         "status": "BOUND",
@@ -350,12 +492,14 @@ def provision_single_doc(doc_path, ws_root, options=None):
     if options is None:
         options = {}
     meta = parse_memory_doc(doc_path, ws_root)
-    state = load_sessions_state(ws_root)
+    vendor = detect_topic_vendor(os.environ, options.get("vendor")) or "antigravity"
+    state = load_sessions_state(ws_root, vendor)
     existing_module = (state.get("modules") or {}).get(meta["module_key"])
 
-    if existing_module and existing_module.get("session_id") and not options.get("force"):
+    if is_reusable_module(vendor, existing_module) and not options.get("force"):
         return {
             "status": "EXISTS",
+            "vendor": vendor,
             "module_key": meta["module_key"],
             "session_id": existing_module.get("session_id"),
             "title": existing_module.get("title"),
@@ -372,18 +516,43 @@ def provision_single_doc(doc_path, ws_root, options=None):
             "message": f"[预览模式] 将创建顶层会话: \"{meta['title']}\" 并绑定至 {meta['memory_doc']}"
         }
 
-    new_id = spawn_root_conversation(meta["title"], meta["initialPrompt"], ws_root)
-    if not new_id:
-        raise RuntimeError("创建顶层会话失败: agentapi new-conversation 调用未返回有效会话 ID")
+    new_id = spawn_root_conversation(meta["title"], meta["initialPrompt"], ws_root, {
+        **options,
+        "vendor": vendor,
+        "role": options.get("role") or ("main" if meta["module_key"] == "main" else "topic"),
+        **({
+            "model": options.get("model") or (existing_module.get("model_config") or {}).get("model"),
+            "reasoning_effort": options.get("reasoning_effort") or (existing_module.get("model_config") or {}).get("reasoning_effort"),
+            "thinking": options.get("thinking") or (existing_module.get("model_config") or {}).get("thinking"),
+        } if existing_module and existing_module.get("model_config") else {}),
+    })
+    if not new_id or new_id.get("status") != "CREATED" or not new_id.get("id"):
+        result = dict(new_id or create_status("CREATION_FAILED", vendor, "创建适配器未返回结果"))
+        result.update({
+            "module_key": meta["module_key"],
+            "title": meta["title"],
+            "memory_doc": meta["memory_doc"],
+            "message": result.get("reason") or "未返回有效物理会话 ID；未写入绑定状态",
+        })
+        return result
+
+    is_main = meta["module_key"] == "main" or state.get("main_thread_id") == new_id["id"]
 
     if "modules" not in state or state["modules"] is None:
         state["modules"] = {}
     state["modules"][meta["module_key"]] = {
         "session_id": new_id["id"],
+        "vendor": new_id["vendor"],
+        "id_kind": new_id.get("id_kind"),
+        "resumable": True,
+        "physical_session": True,
+        "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
+        "is_main": is_main,
         "title": meta["title"],
         "tags": [meta["module_key"], "topic"],
         "memory_doc": meta["memory_doc"],
-        "summary": f"专题模块: {meta['title']}"
+        "summary": f"专题模块: {meta['title']}",
+        **({"model_config": new_id.get("model_config")} if new_id.get("model_config") else {}),
     }
 
     if "sessions" not in state or state["sessions"] is None:
@@ -392,11 +561,16 @@ def provision_single_doc(doc_path, ws_root, options=None):
     session_item = {
         "session_id": new_id["id"],
         "vendor": new_id["vendor"],
+        "id_kind": new_id.get("id_kind"),
+        "resumable": True,
+        "physical_session": True,
+        "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
         "title": meta["title"],
-        "is_main": False,
+        "is_main": is_main,
         "module_key": meta["module_key"],
         "summary": f"专题模块: {meta['title']}",
-        "memory_docs": [meta["memory_doc"]]
+        "memory_docs": [meta["memory_doc"]],
+        **({"model_config": new_id.get("model_config")} if new_id.get("model_config") else {}),
     }
 
     existing_idx = next((i for i, s in enumerate(state["sessions"]) if s.get("module_key") == meta["module_key"]), -1)
@@ -405,7 +579,9 @@ def provision_single_doc(doc_path, ws_root, options=None):
     else:
         state["sessions"].append(session_item)
 
-    save_sessions_state(state, ws_root)
+    if is_main:
+        state["main_thread_id"] = new_id["id"]
+    save_sessions_state(state, ws_root, vendor)
 
     return {
         "status": "CREATED",
@@ -417,9 +593,11 @@ def provision_single_doc(doc_path, ws_root, options=None):
     }
 
 
-def survey_memory_docs_status(ws_root):
+def survey_memory_docs_status(ws_root, options=None):
+    options = options or {}
     memory_dir = os.path.join(ws_root, "docs", "memory")
-    state = load_sessions_state(ws_root)
+    vendor = detect_topic_vendor(os.environ, options.get("vendor")) or "antigravity"
+    state = load_sessions_state(ws_root, vendor)
     existing_modules = state.get("modules") or {}
 
     all_docs = []
@@ -428,12 +606,17 @@ def survey_memory_docs_status(ws_root):
         for f in files:
             key = os.path.splitext(f)[0]
             mod = existing_modules.get(key)
+            is_bound = is_reusable_module(vendor, mod)
+            lifecycle_status = (mod.get("lifecycle_status") if isinstance(mod, dict) else None) or (state_store.SESSION_STATUS["BOUND"] if is_bound else state_store.SESSION_STATUS["PENDING_CREATION"])
             all_docs.append({
                 "module_key": key,
+                "vendor": vendor,
                 "memory_doc": normalize_path(os.path.join("docs", "memory", f)),
                 "session_id": mod.get("session_id") if mod else None,
                 "title": mod.get("title") if mod else f"[{key}专题] 核心功能维护 & 记忆沉淀",
-                "is_aligned": bool(mod and mod.get("session_id"))
+                "lifecycle_status": lifecycle_status,
+                "status": lifecycle_status,
+                "is_aligned": is_bound,
             })
 
     aligned = [d for d in all_docs if d["is_aligned"]]
@@ -449,7 +632,7 @@ def provision_all_missing(ws_root, options=None):
     if not os.path.exists(memory_dir):
         return {"count": 0, "results": [], "message": "未找到 docs/memory 目录。"}
 
-    survey = survey_memory_docs_status(ws_root)
+    survey = survey_memory_docs_status(ws_root, options)
     missing = survey["missing"]
 
     if not missing:
@@ -467,7 +650,7 @@ def provision_all_missing(ws_root, options=None):
     return {
         "count": len(missing),
         "results": results,
-        "message": f"共发现 {len(missing)} 个缺失会话的记忆文档，已全部补齐创建完成。"
+        "message": f"共发现 {len(missing)} 个未完成绑定的记忆文档，已按厂商能力返回创建结果。"
     }
 
 
@@ -476,6 +659,12 @@ def main():
     dry_run = "--dry-run" in args or "-d" in args
     force = "--force" in args or "-f" in args
     batch_all = "--all" in args or "-a" in args or "-y" in args or "--yes" in args
+    vendor = None
+    if "--vendor" in args:
+        idx = args.index("--vendor")
+        if idx + 1 < len(args):
+            vendor = state_store.normalize_vendor(args[idx + 1])
+    vendor = vendor or detect_topic_vendor()
 
     ws_root = os.getcwd()
     if "--workspace" in args:
@@ -501,7 +690,12 @@ def main():
             bind_current_session_id = args[idx + 1]
 
     if not bind_current_session_id and bind_current:
-        bind_current_session_id = os.environ.get("ANTIGRAVITY_CONVERSATION_ID")
+        bind_current_session_id = state_store.get_current_session_id(os.environ, vendor)
+    bind_id_kind = None
+    if "--id-kind" in args:
+        idx = args.index("--id-kind")
+        if idx + 1 < len(args):
+            bind_id_kind = args[idx + 1]
 
     is_bind_current = bind_current or bool(bind_current_session_id)
 
@@ -548,7 +742,12 @@ def main():
             print(f"自定义标题: {custom_title}")
         print("-" * 80)
         try:
-            res = bind_current_session(target_key, custom_title, bind_current_session_id, ws_root, {"dry_run": dry_run, "force": force})
+            res = bind_current_session(target_key, custom_title, bind_current_session_id, ws_root, {
+                "dry_run": dry_run,
+                "force": force,
+                "vendor": vendor,
+                "id_kind": bind_id_kind,
+            })
             print(f"状态: [{res['status']}]")
             print(f"专题标题: {res['title']}")
             print(f"记忆文档: {res['memory_doc']}")
@@ -564,7 +763,7 @@ def main():
             print(f"自定义标题: {custom_title}")
         print("-" * 80)
         try:
-            res = create_topic_and_session(create_new_topic_key, custom_title, ws_root, {"dry_run": dry_run, "force": force})
+            res = create_topic_and_session(create_new_topic_key, custom_title, ws_root, {"dry_run": dry_run, "force": force, "vendor": vendor})
             print(f"状态: [{res['status']}]")
             print(f"专题标题: {res['title']}")
             print(f"记忆文档: {res['memory_doc']}")
@@ -579,7 +778,7 @@ def main():
         print(f"目标受控记忆: {target_doc}")
         print("-" * 80)
         try:
-            res = provision_single_doc(target_doc, ws_root, {"dry_run": dry_run, "force": force})
+            res = provision_single_doc(target_doc, ws_root, {"dry_run": dry_run, "force": force, "vendor": vendor})
             print(f"状态: [{res['status']}]")
             print(f"模块 Key: {res['module_key']}")
             print(f"专题标题: {res['title']}")
@@ -592,7 +791,7 @@ def main():
     elif batch_all:
         print("模式: [全量补齐模式] 为所有未建物理会话的记忆文档批量创建会话")
         print("-" * 80)
-        res = provision_all_missing(ws_root, {"dry_run": dry_run, "force": force})
+        res = provision_all_missing(ws_root, {"dry_run": dry_run, "force": force, "vendor": vendor})
         print(res["message"])
         for idx, r in enumerate(res.get("results", [])):
             print(f"\n[{idx + 1}] 模块: {r['module_key']}")
@@ -604,7 +803,7 @@ def main():
     else:
         print("模式: [专题对齐调查模式] 检查当前受控记忆与专题会话对齐状态")
         print("-" * 80)
-        survey = survey_memory_docs_status(ws_root)
+        survey = survey_memory_docs_status(ws_root, {"vendor": vendor})
 
         print(f"【已完成 1:1 绑定的专题会话 ({len(survey['aligned'])} 个)】:")
         if survey["aligned"]:
@@ -620,7 +819,7 @@ def main():
             for i, m in enumerate(survey["missing"]):
                 print(f"  {i + 1}. [{m['module_key']}] {m['title']}")
                 print(f"     记忆文档: {m['memory_doc']}")
-                print("     状态: [⚠ 待建会话]")
+                print(f"     状态: [{m['status']}]")
             print("\n" + "-" * 80)
             print("【用户交互操作指引】:")
             print("若需为上述某个记忆文档创建专属专题会话，请执行:")

@@ -11,6 +11,8 @@
 const fs = require('fs');
 const path = require('path');
 const codexModelPolicy = require('./providers/codex_model_policy');
+const stateStore = require('./task_loop_state');
+const { spawnRootConversation: createRootConversation } = require('./new_topic_session');
 
 /**
  * 容错 Provider 注册表: 已知厂商扫描器按序尝试加载, 缺失即跳过。
@@ -43,11 +45,10 @@ function loadProviderRegistry() {
 /** 检测当前宿主厂商, 用于可续接性 (resumable) 判定 */
 function detectCurrentVendor(env, currentSessionId) {
   env = env || process.env;
-  if (env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID) return 'zcode';
-  // 会话 ID 形状硬特征: sess_ 前缀为 ZCode 会话规范, 优先级高于其他宿主残留环境变量
-  if (currentSessionId && /^sess_/i.test(currentSessionId)) return 'zcode';
-  if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
-  if (env.ANTIGRAVITY_CONVERSATION_ID) return 'antigravity';
+  const detected = stateStore.normalizeVendor(stateStore.detectVendor(env));
+  if (detected) return detected;
+  // sess_ 仅作为无宿主环境标记时的 ZCode 兼容线索，不能覆盖 Claude 标记。
+  if (currentSessionId && /^sess_/i.test(currentSessionId) && !env.CLAUDE_SESSION_ID) return 'zcode';
   return null;
 }
 
@@ -134,8 +135,6 @@ function inferTopicMapping(session, knownMemoryKeys) {
   };
 }
 
-const { spawnSync } = require('child_process');
-
 /**
  * 扫描项目现有受控记忆文档 (docs/memory/*.md)
  */
@@ -158,32 +157,11 @@ function scanExistingMemoryDocs(wsRoot) {
   return memoryDocs;
 }
 
-/**
- * 创建独立顶层根会话 (nestingDepth = 0)
- * 净化父级上下文环境变量，确保独立展示于 IDE 左侧边栏
- */
-function spawnRootConversation(title, prompt, wsRoot) {
-  const env = { ...process.env };
-  delete env.ANTIGRAVITY_CONVERSATION_ID;
-  delete env.ANTIGRAVITY_SOURCE_METADATA;
-  delete env.ANTIGRAVITY_TRAJECTORY_ID;
+const spawnRootConversation = createRootConversation;
 
-  try {
-    const res = spawnSync('agentapi.bat', ['new-conversation', `--title=${title}`, prompt], {
-      env,
-      cwd: wsRoot,
-      shell: true,
-      encoding: 'utf8'
-    });
-
-    if (res.stdout) {
-      const data = JSON.parse(res.stdout);
-      return data?.response?.newConversation?.conversationId || null;
-    }
-  } catch (e) {
-    // ignore
-  }
-  return null;
+function isReusableSession(vendor, session) {
+  if (!session || !session.session_id || session.resumable !== true) return false;
+  return stateStore.normalizeVendor(vendor) !== 'codex' || session.id_kind === 'threadId';
 }
 
 /**
@@ -192,27 +170,34 @@ function spawnRootConversation(title, prompt, wsRoot) {
  * 优先以 sessions.json 中既有确立绑定的 modules 字典为最高置信度来源，
  * 已绑定的物理会话强制锁定继承，禁止模糊分词重置为未绑定。
  */
-function resolveModuleAssignments(suggestions, memoryDocs, existingModules = {}) {
+function resolveModuleAssignments(suggestions, memoryDocs, existingModules = {}, currentVendor = 'antigravity') {
   const assignments = new Map(); // module_key -> suggestion (1:1 绑定)
 
   // 0. 粘性绑定锁: 优先锁定 sessions.json 中既有确立的 modules
   for (const [modKey, modVal] of Object.entries(existingModules || {})) {
-    if (modVal && modVal.session_id) {
-      const existingMatch = suggestions.find(s => s.session_id === modVal.session_id);
+    const existingVendor = stateStore.normalizeVendor(modVal && modVal.vendor) || currentVendor;
+    if (isReusableSession(existingVendor, modVal)) {
+      const existingIdentity = stateStore.sessionIdentity(existingVendor, modVal.session_id);
+      const existingMatch = suggestions.find(s => stateStore.sessionIdentity(s.vendor, s.session_id) === existingIdentity);
       if (existingMatch) {
         existingMatch.suggested_module_key = modKey;
         if (modVal.title) existingMatch.suggested_topic_name = modVal.title;
+        existingMatch.resumable = true;
+        existingMatch.lifecycle_status = stateStore.SESSION_STATUS.BOUND;
         assignments.set(modKey, existingMatch);
       } else {
         assignments.set(modKey, {
           session_id: modVal.session_id,
-          vendor: modVal.vendor || 'antigravity',
+          vendor: existingVendor,
+          id_kind: modVal.id_kind,
           original_title: modVal.title || `${modKey}专题`,
           suggested_module_key: modKey,
           suggested_topic_name: modVal.title || `[${modKey}专题] 核心功能维护 & 记忆沉淀`,
           suggested_tags: modVal.tags || [modKey, 'topic'],
           suggested_memory_doc: modVal.memory_doc || `docs/memory/${modKey}.md`,
-          resumable: modVal.resumable !== false,
+          resumable: true,
+          physical_session: true,
+          lifecycle_status: stateStore.SESSION_STATUS.BOUND,
           is_main_candidate: modKey === 'main'
         });
       }
@@ -228,13 +213,13 @@ function resolveModuleAssignments(suggestions, memoryDocs, existingModules = {})
   }
 
   // 2. 为每个受控记忆文档匹配首个最合适的建议项 (排除已绑定的会话)
-  const assignedSessionIds = new Set([...assignments.values()].map(a => a.session_id));
+  const assignedSessionIds = new Set([...assignments.values()].map(a => stateStore.sessionIdentity(a.vendor, a.session_id)));
   for (const doc of (memoryDocs || [])) {
     if (doc.module_key === 'main' || assignments.has(doc.module_key)) continue;
-    const matched = suggestions.find(s => s.suggested_module_key === doc.module_key && !assignedSessionIds.has(s.session_id));
+    const matched = suggestions.find(s => s.suggested_module_key === doc.module_key && !assignedSessionIds.has(stateStore.sessionIdentity(s.vendor, s.session_id)));
     if (matched) {
       assignments.set(doc.module_key, matched);
-      assignedSessionIds.add(matched.session_id);
+      assignedSessionIds.add(stateStore.sessionIdentity(matched.vendor, matched.session_id));
     }
   }
 
@@ -242,8 +227,12 @@ function resolveModuleAssignments(suggestions, memoryDocs, existingModules = {})
 }
 
 function surveyExistingSessions(wsRoot, options = {}) {
-  const callerSessionId = options.currentSession || options.currentSessionId || process.env.ZCODE_SESSION_ID || process.env.CLAUDE_SESSION_ID || process.env.ANTIGRAVITY_CONVERSATION_ID || null;
-  const currentVendor = options.vendor || detectCurrentVendor(options.env || process.env, callerSessionId) || null;
+  const env = options.env || process.env;
+  const explicitVendor = stateStore.normalizeVendor(options.vendor);
+  const explicitCallerId = options.currentSession || options.currentSessionId || null;
+  const detectedVendor = explicitVendor || detectCurrentVendor(env, explicitCallerId) || null;
+  const callerSessionId = explicitCallerId || stateStore.getCurrentSessionId(env, detectedVendor) || null;
+  const currentVendor = explicitVendor || detectCurrentVendor(env, callerSessionId) || detectedVendor || null;
   const explicitMainSessionId = options.mainSession || options.mainSessionId || null;
 
   const memoryDocs = scanExistingMemoryDocs(wsRoot);
@@ -262,14 +251,17 @@ function surveyExistingSessions(wsRoot, options = {}) {
   const uniqueMap = new Map();
 
   for (const s of all) {
-    if (!uniqueMap.has(s.session_id)) {
-      uniqueMap.set(s.session_id, s);
-    }
+    const sessionId = s && s.session_id != null ? String(s.session_id).trim() : '';
+    const vendor = stateStore.normalizeVendor(s && s.vendor) || (currentVendor || 'antigravity');
+    const identity = stateStore.sessionIdentity(vendor, sessionId);
+    if (!identity || uniqueMap.has(identity)) continue;
+    uniqueMap.set(identity, { ...s, session_id: sessionId, vendor });
   }
 
   // 若 callerSessionId 存在但在扫描中未发现，自动补入
-  if (callerSessionId && !uniqueMap.has(callerSessionId)) {
-    uniqueMap.set(callerSessionId, {
+  const callerIdentity = stateStore.sessionIdentity(currentVendor, callerSessionId);
+  if (callerIdentity && !uniqueMap.has(callerIdentity)) {
+    uniqueMap.set(callerIdentity, {
       session_id: callerSessionId,
       vendor: currentVendor,
       title: '[主会话] 任务编排 & 治理中枢',
@@ -286,58 +278,70 @@ function surveyExistingSessions(wsRoot, options = {}) {
   // 4) 历史扫描中明确属于当前宿主环境且带 [主会话] 标签或 is_main 的会话
   // 5) suggestions 列表中的第一项
   let chosenMainId = null;
+  let chosenMainIdentity = null;
+  const targetVendor = currentVendor || explicitVendor || 'antigravity';
   if (explicitMainSessionId) {
     chosenMainId = explicitMainSessionId;
-    if (!uniqueMap.has(explicitMainSessionId)) {
-      uniqueMap.set(explicitMainSessionId, {
+    chosenMainIdentity = stateStore.sessionIdentity(targetVendor, explicitMainSessionId);
+    if (chosenMainIdentity && !uniqueMap.has(chosenMainIdentity)) {
+      uniqueMap.set(chosenMainIdentity, {
         session_id: explicitMainSessionId,
-        vendor: currentVendor || 'antigravity',
+        vendor: targetVendor,
         title: '[主会话] 任务编排 & 治理中枢',
         is_main: true,
         created_at: new Date().toISOString(),
         last_active_at: new Date().toISOString()
       });
     }
-  } else if (callerSessionId && uniqueMap.has(callerSessionId)) {
+  } else if (callerIdentity && uniqueMap.has(callerIdentity)) {
     chosenMainId = callerSessionId;
+    chosenMainIdentity = callerIdentity;
   } else if (callerSessionId) {
     // callerSessionId 必定作为主会话
     chosenMainId = callerSessionId;
-    uniqueMap.set(callerSessionId, {
+    chosenMainIdentity = callerIdentity;
+    if (chosenMainIdentity) uniqueMap.set(chosenMainIdentity, {
       session_id: callerSessionId,
-      vendor: currentVendor || 'antigravity',
+      vendor: targetVendor,
       title: '[主会话] 任务编排 & 治理中枢',
       is_main: true,
       created_at: new Date().toISOString(),
       last_active_at: new Date().toISOString()
     });
   } else {
+    let persistedMainId = null;
+    try {
+      const part = stateStore.getPartition(path.join(wsRoot, '.agents', 'task-loop', 'sessions.json'), targetVendor);
+      persistedMainId = part && part.main_thread_id;
+    } catch {}
+    const persistedIdentity = stateStore.sessionIdentity(targetVendor, persistedMainId);
+    if (persistedIdentity && uniqueMap.has(persistedIdentity)) {
+      chosenMainId = persistedMainId;
+      chosenMainIdentity = persistedIdentity;
+    }
     for (const s of uniqueMap.values()) {
+      if (chosenMainIdentity || s.vendor !== targetVendor) continue;
       const rawTitle = (s.title || '').toLowerCase();
-      const sVendor = (s.vendor || 'antigravity').toLowerCase();
-      if ((s.is_main || rawTitle.includes('[主会话]') || rawTitle.includes('治理中枢')) && (sVendor === currentVendor)) {
+      if (s.is_main || rawTitle.includes('[主会话]') || rawTitle.includes('治理中枢')) {
         chosenMainId = s.session_id;
+        chosenMainIdentity = stateStore.sessionIdentity(s.vendor, s.session_id);
         break;
       }
     }
-    if (!chosenMainId) {
-      for (const s of uniqueMap.values()) {
-        const rawTitle = (s.title || '').toLowerCase();
-        if (s.is_main || rawTitle.includes('[主会话]') || rawTitle.includes('治理中枢')) {
-          chosenMainId = s.session_id;
-          break;
-        }
+    if (!chosenMainIdentity) {
+      const firstTarget = [...uniqueMap.values()].find(s => s.vendor === targetVendor);
+      if (firstTarget) {
+        chosenMainId = firstTarget.session_id;
+        chosenMainIdentity = stateStore.sessionIdentity(firstTarget.vendor, firstTarget.session_id);
       }
-    }
-    if (!chosenMainId && uniqueMap.size > 0) {
-      chosenMainId = uniqueMap.keys().next().value;
     }
   }
 
   const list = Array.from(uniqueMap.values());
   const suggestions = list.map(s => {
-    const isMainCandidate = (s.session_id === chosenMainId);
-    const isCurrentSession = (s.session_id === callerSessionId);
+    const identity = stateStore.sessionIdentity(s.vendor, s.session_id);
+    const isMainCandidate = identity === chosenMainIdentity;
+    const isCurrentSession = identity === callerIdentity;
 
     let inferred;
     if (isMainCandidate) {
@@ -359,17 +363,21 @@ function surveyExistingSessions(wsRoot, options = {}) {
       }
     }
 
+    const resumable = s.vendor === currentVendor && Boolean(s.session_id);
     return {
       session_id: s.session_id,
-      vendor: s.vendor || 'antigravity',
+      vendor: s.vendor,
+      id_kind: s.id_kind || (s.vendor === 'codex' ? 'threadId' : s.vendor === 'antigravity' ? 'conversationId' : 'sessionId'),
       original_title: s.original_title || sanitizeTitle(s.title),
       suggested_module_key: inferred.module_key,
       needs_naming: Boolean(inferred.needs_naming),
       suggested_topic_name: inferred.topic_name,
       suggested_tags: inferred.tags,
       suggested_memory_doc: inferred.memory_doc,
-      resumable: (s.vendor || 'antigravity') === currentVendor,
-      dispatch_hint: (s.vendor || 'antigravity') === currentVendor
+      resumable,
+      physical_session: Boolean(s.session_id),
+      lifecycle_status: stateStore.SESSION_STATUS.DISCOVERED,
+      dispatch_hint: resumable
         ? '可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)'
         : '只读遗留: 当前宿主不可续接, 仅支持历史内省; 建议经 new-session 重建为本宿主原生专题',
       is_main_candidate: isMainCandidate,
@@ -394,23 +402,30 @@ function surveyExistingSessions(wsRoot, options = {}) {
   } catch {}
 
   // 单一事实源: 一次性计算模块分配, 对齐报告与持久化共用
-  const assignments = resolveModuleAssignments(suggestions, memoryDocs, existingModules);
+  const assignments = resolveModuleAssignments(suggestions, memoryDocs, existingModules, currentVendor || targetVendor);
 
   // 扫描受控记忆文档并进行 1:1 对齐 (对齐结果同样取自 assignments, 与落盘同源)
   const memoryAlignment = memoryDocs.map(doc => {
     const matchedSession = assignments.get(doc.module_key) || null;
+    const stored = existingModules[doc.module_key];
+    const storedNeedsCreation = Boolean(stored) && !isReusableSession(currentVendor || targetVendor, stored);
+    const status = storedNeedsCreation
+      ? stateStore.SESSION_STATUS.PENDING_CREATION
+      : matchedSession
+      ? (matchedSession.lifecycle_status || (matchedSession.resumable ? stateStore.SESSION_STATUS.DISCOVERED : stateStore.SESSION_STATUS.PENDING_CREATION))
+      : (stored && stored.lifecycle_status) || stateStore.SESSION_STATUS.PENDING_CREATION;
     return {
       module_key: doc.module_key,
       memory_doc: doc.relative_path,
       matched_session_id: matchedSession ? matchedSession.session_id : null,
       matched_vendor: matchedSession ? matchedSession.vendor : null,
-      resumable: matchedSession ? matchedSession.resumable : false,
+      resumable: storedNeedsCreation ? false : (matchedSession ? matchedSession.resumable : false),
       matched_topic_name: matchedSession ? matchedSession.suggested_topic_name : `[${doc.module_key}专题] 核心功能维护 & 记忆沉淀`,
-      status: matchedSession ? 'ALIGNED' : 'MISSING_SESSION'
+      status
     };
   });
 
-  return { suggestions, memoryDocs, memoryAlignment, assignments, chosenMainId, callerSessionId, currentVendor };
+  return { suggestions, memoryDocs, memoryAlignment, assignments, chosenMainId, callerSessionId, currentVendor, existingModules };
 }
 
 /**
@@ -421,11 +436,16 @@ function surveyExistingSessions(wsRoot, options = {}) {
 function applyApprovalGate(assignments, memoryAlignment, options = {}) {
   const allow = new Set((options.moduleAllowlist || []).filter(Boolean));
   const exclude = new Set((options.moduleExclude || []).filter(Boolean));
-  const alignedKeys = new Set(memoryAlignment.filter(a => a.status === 'ALIGNED' || a.status === 'CREATED_AND_ALIGNED').map(a => a.module_key));
+  const alignedKeys = new Set(memoryAlignment.filter(a => ['BOUND', 'DISCOVERED', 'ALIGNED', 'CREATED_AND_ALIGNED'].includes(a.status)).map(a => a.module_key));
 
   const approved = [];
   const pending = [];
   for (const [key, suggestion] of assignments.entries()) {
+    const hasPhysicalResumableSession = Boolean(suggestion && suggestion.session_id && suggestion.resumable === true);
+    if (!hasPhysicalResumableSession) {
+      pending.push({ module_key: key, session_id: suggestion && suggestion.session_id || null, reason: 'no physical resumable session; creation is pending or unsupported' });
+      continue;
+    }
     if (exclude.has(key)) {
       pending.push({ module_key: key, session_id: suggestion.session_id, reason: 'explicitly_excluded' });
       continue;
@@ -463,8 +483,10 @@ function scaffoldMemoryDoc(wsRoot, relativePath, topicName) {
 function initTaskLoop(options = {}) {
   const wsRoot = options.wsRoot || process.cwd();
   const dryRun = options.dryRun || false;
-  const createMissing = options.createMissing || false;
-  const targetVendor = options.vendor || detectCurrentVendor(options.env, options.currentSession || options.currentSessionId) || 'antigravity';
+  const createMissing = Object.prototype.hasOwnProperty.call(options, 'createMissing')
+    ? Boolean(options.createMissing)
+    : true;
+  const targetVendor = stateStore.normalizeVendor(options.vendor) || detectCurrentVendor(options.env, options.currentSession || options.currentSessionId) || 'antigravity';
   options.vendor = targetVendor;
 
   const taskLoopDir = path.join(wsRoot, '.agents', 'task-loop');
@@ -473,7 +495,7 @@ function initTaskLoop(options = {}) {
   const todoPath = path.join(taskLoopDir, 'todo.json');
   const policyPath = path.join(taskLoopDir, 'policy.json');
 
-  const { suggestions, memoryDocs, memoryAlignment, assignments, chosenMainId, callerSessionId, currentVendor } = surveyExistingSessions(wsRoot, options);
+  const { suggestions, memoryDocs, memoryAlignment, assignments, chosenMainId, callerSessionId, currentVendor, existingModules } = surveyExistingSessions(wsRoot, options);
 
   const vendorSpecificFile = path.join(taskLoopDir, `sessions.${targetVendor}.json`);
 
@@ -494,7 +516,10 @@ function initTaskLoop(options = {}) {
     current_vendor: targetVendor,
     memory_alignment: memoryAlignment,
     topic_mapping_suggestions: suggestions,
-    created_sessions: []
+    created_sessions: [],
+    pending_creation: [],
+    creation_failures: [],
+    unsupported: []
   };
 
   // 批准门禁 (dry-run 也计算, 便于预览 pending_approval)
@@ -512,41 +537,74 @@ function initTaskLoop(options = {}) {
   // 实际写入
   os_mkdir_p(taskLoopDir);
 
-  // 1. 若开启了 createMissing，对缺失会话的记忆文档 1:1 自动拉起独立根会话 (仅在 Antigravity 宿主下有效)
-  if (createMissing && targetVendor === 'antigravity') {
+  // 1. /init 默认主动补齐；未获得正式 ID 的结果只记录 PENDING，不进入绑定。
+  if (createMissing) {
     for (const align of memoryAlignment) {
-      if (align.status === 'MISSING_SESSION') {
+      const stored = existingModules[align.module_key];
+      const reusable = ['BOUND', 'DISCOVERED', 'ALIGNED', 'CREATED_AND_ALIGNED'].includes(align.status)
+        && align.resumable === true
+        && (!stored || isReusableSession(targetVendor, stored));
+      if (!reusable) {
         const title = align.matched_topic_name;
         const prompt = `[${align.module_key}专题初始化] 你是 task-loop 项目的【${align.module_key}专题负责人】。你负责维护本专题代码与记忆文档 ${align.memory_doc}。`;
-        const newId = spawnRootConversation(title, prompt, wsRoot);
-        if (newId) {
-          align.matched_session_id = newId;
+        const existingModel = targetVendor === 'codex'
+          ? codexModelPolicy.configuredModel(existingModules && existingModules[align.module_key])
+          : null;
+        const creation = spawnRootConversation(title, prompt, wsRoot, {
+          ...options,
+          vendor: targetVendor,
+          role: align.module_key === 'main' ? 'main' : 'topic',
+          ...(existingModel ? {
+            model: options.model || existingModel.model,
+            reasoning_effort: options.reasoning_effort || existingModel.reasoning_effort,
+            thinking: options.thinking || existingModel.thinking
+          } : {})
+        });
+        if (creation && creation.status === 'CREATED' && creation.id) {
+          align.matched_session_id = creation.id;
+          align.matched_vendor = creation.vendor;
+          align.resumable = creation.resumable === true;
           align.status = 'CREATED_AND_ALIGNED';
-          result.created_sessions.push({ module_key: align.module_key, session_id: newId, title });
+          result.created_sessions.push({ module_key: align.module_key, session_id: creation.id, vendor: creation.vendor, title });
           suggestions.push({
-            session_id: newId,
-            vendor: targetVendor,
+            session_id: creation.id,
+            vendor: creation.vendor,
+            id_kind: creation.id_kind,
             original_title: sanitizeTitle(title),
             suggested_module_key: align.module_key,
             suggested_topic_name: title,
             suggested_tags: [align.module_key, 'topic'],
             suggested_memory_doc: align.memory_doc,
-            resumable: true,
+            resumable: creation.resumable === true,
+            physical_session: true,
+            lifecycle_status: stateStore.SESSION_STATUS.BOUND,
             dispatch_hint: '可续接: 经当前宿主会话 SDK send/resume 原语定向派单 (各厂商映射见 references/sdk/README.md)',
             is_main_candidate: false,
             is_current_session: false
           });
+        } else if (creation && creation.status === 'PENDING_CREATION') {
+          align.status = stateStore.SESSION_STATUS.PENDING_CREATION;
+          result.pending_creation.push({ module_key: align.module_key, vendor: targetVendor, title, creation_request: creation.creation_request || creation.request, host_action: creation.host_action || 'create_thread', reason: creation.reason });
+        } else if (creation && creation.status === 'UNSUPPORTED') {
+          align.status = stateStore.SESSION_STATUS.UNSUPPORTED;
+          result.unsupported.push({ module_key: align.module_key, vendor: targetVendor, title, reason: creation.reason });
+        } else {
+          align.status = stateStore.SESSION_STATUS.CREATION_FAILED;
+          result.creation_failures.push({ module_key: align.module_key, vendor: targetVendor, title, reason: creation && creation.reason || 'creation adapter returned no result' });
         }
       }
     }
     // 新建会话后重算分配, 保证与落盘同源
-    const refreshed = resolveModuleAssignments(suggestions);
+    const refreshed = resolveModuleAssignments(suggestions, memoryDocs, existingModules, targetVendor);
     assignments.clear();
     for (const [k, v] of refreshed.entries()) assignments.set(k, v);
   }
 
   // 2. 构建当前厂商的数据 (仅持久化通过批准门禁的模块; 其余会话仅入清单不占绑定)
-  const mainThreadId = chosenMainId || (suggestions[0] ? suggestions[0].session_id : null);
+  let mainThreadId = (suggestions.find(s => s.session_id === chosenMainId && s.vendor === targetVendor) || {}).session_id || null;
+  if (!mainThreadId && existingModules && isReusableSession(targetVendor, existingModules.main)) {
+    mainThreadId = existingModules.main.session_id || null;
+  }
   const approvedKeys = new Set(gate.approved.map(a => a.module_key));
   for (const align of memoryAlignment) {
     if (align.status === 'CREATED_AND_ALIGNED') approvedKeys.add(align.module_key);
@@ -559,21 +617,32 @@ function initTaskLoop(options = {}) {
     const existingPart = existingDoc && existingDoc.vendors && existingDoc.vendors[targetVendor];
     if (existingPart && typeof existingPart.modules === 'object') {
       for (const [key, mod] of Object.entries(existingPart.modules)) {
-        if (mod && mod.session_id && mod.resumable !== false && !targetModules[key]) {
-          targetModules[key] = mod;
+        const modVendor = stateStore.normalizeVendor(mod && mod.vendor) || targetVendor;
+        if (mod && modVendor === targetVendor && isReusableSession(targetVendor, mod) && !targetModules[key]) {
+          targetModules[key] = {
+            ...mod,
+            vendor: targetVendor,
+            physical_session: true,
+            lifecycle_status: mod.lifecycle_status || stateStore.SESSION_STATUS.BOUND,
+            is_main: key === 'main' || mod.session_id === mainThreadId
+          };
         }
       }
     }
   } catch {}
   for (const [key, item] of assignments.entries()) {
-    if (approvedKeys.has(key) && item.vendor === targetVendor && !targetModules[key]) {
+    if (approvedKeys.has(key) && item.vendor === targetVendor && item.session_id && item.resumable === true && !targetModules[key]) {
       targetModules[key] = {
         session_id: item.session_id,
         title: item.suggested_topic_name,
         tags: item.suggested_tags,
         memory_doc: item.suggested_memory_doc,
         vendor: item.vendor,
+        id_kind: item.id_kind,
         resumable: true,
+        physical_session: true,
+        lifecycle_status: stateStore.SESSION_STATUS.BOUND,
+        is_main: key === 'main' || item.session_id === mainThreadId,
         dispatch_hint: item.dispatch_hint,
         summary: `专题模块: ${item.suggested_topic_name}`
       };
@@ -597,7 +666,10 @@ function initTaskLoop(options = {}) {
     title: mod.title,
     is_main: (key === 'main' || mod.session_id === mainThreadId),
     module_key: key,
-    resumable: true,
+    id_kind: mod.id_kind,
+    resumable: mod.resumable === true && Boolean(mod.session_id),
+    physical_session: Boolean(mod.session_id),
+    lifecycle_status: mod.lifecycle_status || (mod.resumable === true ? stateStore.SESSION_STATUS.BOUND : stateStore.SESSION_STATUS.PENDING_CREATION),
     summary: mod.summary || `专题模块: ${mod.title}`,
     memory_docs: mod.memory_doc ? [mod.memory_doc] : [],
     ...(targetVendor === 'codex' && mod.model_config ? { model_config: mod.model_config } : {})
@@ -688,6 +760,9 @@ function initTaskLoop(options = {}) {
       session_id: v.session_id,
       vendor: v.vendor,
       resumable: v.resumable,
+      lifecycle_status: v.lifecycle_status,
+      is_main: v.is_main === true,
+      id_kind: v.id_kind,
       tags: v.tags,
       memory_doc: v.memory_doc
     }))
@@ -695,7 +770,7 @@ function initTaskLoop(options = {}) {
   topicsVendors[targetVendor] = targetTopics;
 
   // 目标厂商物理镜像 topics.<vendor>.json
-  fs.writeFileSync(path.join(taskLoopDir, `topics.${targetVendor}.json`), JSON.stringify(Object.assign({ schema_version: 4 }, targetTopics), null, 2), 'utf8');
+  fs.writeFileSync(path.join(taskLoopDir, `topics.${targetVendor}.json`), JSON.stringify(Object.assign({ schema_version: 3 }, targetTopics), null, 2), 'utf8');
 
   const topicsFileData = {
     schema_version: 4,
@@ -735,7 +810,7 @@ function initTaskLoop(options = {}) {
       `1. 查 .agents/task-loop/sessions.${targetVendor}.json (或 sessions.json vendors.${targetVendor}) 寻找匹配专题, 优先复用`,
       '2. 可续接专题 (resumable: true): 经当前宿主 SessionProvider send/resume 原语定向派单',
       '3. 不可续接专题 (resumable: false): 仅只读内省参考; 需要实施时经 new-session 重建本宿主原生专题',
-      '4. 无匹配专题: 经 new-session / spawn Provider 拉起新顶层会话后登记, 严禁退化为人肉 UI 操作'
+      '4. 无匹配专题: /init 经 new-session / spawn Provider 主动拉起; Codex 无原生工具时保留 PENDING_CREATION 请求, 取得 formal threadId 后再 bind'
     ],
     vendor_mapping_doc: 'references/sdk/README.md'
   };
@@ -752,7 +827,7 @@ function os_mkdir_p(dir) {
 function main() {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run') || args.includes('-d');
-  const createMissing = args.includes('--create-missing') || args.includes('-c');
+  const createMissing = !dryRun;
   const wsIndex = args.indexOf('--workspace');
   const wsRoot = (wsIndex !== -1 && args[wsIndex + 1]) ? args[wsIndex + 1] : process.cwd();
 
@@ -799,7 +874,7 @@ function main() {
   console.log('受控记忆文档 1:1 专题会话匹配状态 (Memory Docs 1:1 Alignment):');
   
   res.memory_alignment.forEach((m, idx) => {
-    const statusTag = m.status === 'ALIGNED' ? '[✔ 已匹配]' : (m.status === 'CREATED_AND_ALIGNED' ? '[✔ 已自动创建顶层会话并绑定]' : '[⚠ 缺失会话: 可使用 --create-missing 自动补齐]');
+    const statusTag = m.status === 'ALIGNED' ? '[✔ 已匹配]' : (m.status === 'CREATED_AND_ALIGNED' ? '[✔ 已自动创建顶层会话并绑定]' : '[⚠ 本次主动补齐中/等待 formal ID]');
     const resumeTag = m.matched_session_id ? (m.resumable ? ' [可续接]' : ' [只读遗留]') : '';
     console.log(`\n[M${idx + 1}] 记忆文档: ${m.memory_doc}`);
     console.log(`     模块 Key: ${m.module_key}`);
@@ -812,6 +887,16 @@ function main() {
     console.log('【已自动创建的新独立顶层根会话 (nestingDepth = 0)】:');
     res.created_sessions.forEach((cs, i) => {
       console.log(`  ${i + 1}. [${cs.module_key}] ${cs.title} -> ${cs.session_id}`);
+    });
+  }
+
+  if (res.pending_creation && res.pending_creation.length > 0) {
+    console.log('\n--------------------------------------------------------------------------------');
+    console.log('【待原生宿主创建 (PENDING_CREATION)】:');
+    res.pending_creation.forEach((pending, i) => {
+      console.log(`  ${i + 1}. [${pending.module_key}] ${pending.title} -> ${pending.host_action || 'create_thread'}`);
+      console.log(`     creation_request: ${JSON.stringify(pending.creation_request || {})}`);
+      console.log(`     reason: ${pending.reason || 'formal threadId 尚未返回'}`);
     });
   }
 
@@ -853,7 +938,7 @@ function main() {
   console.log('\n================================================================================');
   if (dryRun) {
     console.log('【预览模式 (Dry-Run)】未实际写入文件。');
-    console.log('若需补齐缺失记忆文档对应的顶层会话并落盘，执行: node scripts/init_task_loop.js --create-missing');
+    console.log('预览不执行创建；正式运行 node scripts/init_task_loop.js 将主动补齐，Codex 缺少原生工具时返回 PENDING_CREATION 请求。');
   } else {
     console.log('【初始化完成】已将配置保存至:');
     console.log(`  - sessions.json: ${res.storage_files.sessions_json}`);

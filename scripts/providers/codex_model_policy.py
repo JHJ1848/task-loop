@@ -5,6 +5,7 @@ CODEX_MODEL_DEFAULTS = {
     "topic": {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
     "subagent": {"model": "gpt-5.6-luna", "reasoning_effort": "max"},
 }
+CODEX_ENVIRONMENT_TYPES = ("worktree", "local")
 
 
 def normalize_role(role):
@@ -82,12 +83,37 @@ def to_cli_overrides(model_config=None):
     return result
 
 
-def build_create_thread_request(project_id=None, title=None, prompt=None, role="topic", model=None, reasoning_effort=None, thinking=None):
+def normalize_environment(environment):
+    value = environment if isinstance(environment, str) else (environment or {}).get("type")
+    return {"type": value} if value in CODEX_ENVIRONMENT_TYPES else None
+
+
+def build_create_thread_request(
+    project_id=None,
+    is_git_repository=None,
+    environment=None,
+    title=None,
+    prompt=None,
+    role="topic",
+    model=None,
+    reasoning_effort=None,
+    thinking=None,
+):
     resolved = resolve_model_config({"model": model, "reasoning_effort": reasoning_effort, "thinking": thinking}, role)
+    target = (
+        {
+            "type": "project",
+            "projectId": project_id,
+            "environment": normalize_environment(environment)
+            or {"type": "worktree" if is_git_repository is True else "local"},
+        }
+        if project_id
+        else {"type": "projectless"}
+    )
     return {
         "prompt": prompt,
         "title": title,
         "thinking": thinking or resolved["reasoning_effort"],
         "model": model or resolved["model"],
-        "target": {"type": "project", "projectId": project_id, "environment": {"type": "worktree"}} if project_id else {"type": "projectless"},
+        "target": target,
     }

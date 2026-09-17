@@ -11,6 +11,7 @@ import os
 import json
 import argparse
 from pathlib import Path
+import task_loop_state as state_store
 
 # Add providers directory to sys.path
 script_dir = Path(__file__).resolve().parent
@@ -25,7 +26,10 @@ from get_zcode_project_sessions import scan_zcode_sessions
 
 def safe_scan(vendor_name: str, scan_fn) -> list:
     try:
-        return scan_fn() or []
+        return [
+            {**item, "vendor": state_store.normalize_vendor(item.get("vendor")) or vendor_name}
+            for item in (scan_fn() or [])
+        ]
     except Exception as e:
         sys.stderr.write(f"[find-sessions] {vendor_name} provider error: {e}\n")
         return []
@@ -33,7 +37,7 @@ def safe_scan(vendor_name: str, scan_fn) -> list:
 
 def find_sessions(project_root: str = ".", vendor: str = "Auto", inspect: bool = False) -> list:
     all_sessions = []
-    vendor = vendor.lower()
+    vendor = state_store.normalize_vendor(vendor) or vendor.lower()
 
     scan_agy = lambda: safe_scan("antigravity", lambda: scan_agy_sessions(project_root, inspect_activity=inspect))
     scan_codex = lambda: safe_scan("codex", lambda: scan_codex_sessions(project_root))
@@ -59,42 +63,35 @@ def find_sessions(project_root: str = ".", vendor: str = "Auto", inspect: bool =
         if not policy_file.is_file():
             policy_file = root_path / ".codex" / "task-loop" / "policy.json"
 
-        active_vendor = "antigravity"
+        active_vendor = state_store.normalize_vendor(state_store.detect_vendor(os.environ)) or "antigravity"
         if policy_file.is_file():
             try:
                 with open(policy_file, "r", encoding="utf-8") as f:
                     p = json.load(f)
                     if p.get("active_vendor"):
-                        active_vendor = str(p["active_vendor"]).lower()
+                        active_vendor = state_store.normalize_vendor(p["active_vendor"]) or active_vendor
             except Exception:
                 pass
-        if not policy_file.is_file():
-            # No project policy: prefer the host this session is actually running in.
-            if os.environ.get("ZCODE_SESSION_ID") or os.environ.get("CLAUDE_SESSION_ID"):
-                active_vendor = "zcode"
+        primary_scans = {
+            "antigravity": scan_agy,
+            "codex": scan_codex,
+            "claude": scan_claude,
+            "zcode": scan_zcode,
+        }
+        primary = primary_scans.get(active_vendor, scan_agy)
+        primary_sessions = primary()
+        all_sessions.extend(primary_sessions)
+        if not primary_sessions:
+            for other_vendor, scan in primary_scans.items():
+                if other_vendor != active_vendor:
+                    all_sessions.extend(scan())
 
-        if active_vendor == "antigravity":
-            agy = scan_agy()
-            all_sessions.extend(agy)
-            if not agy:
-                all_sessions.extend(scan_codex())
-                all_sessions.extend(scan_zcode())
-        elif active_vendor == "codex":
-            codex = scan_codex()
-            all_sessions.extend(codex)
-            if not codex:
-                all_sessions.extend(scan_agy())
-        elif active_vendor == "claude":
-            all_sessions.extend(scan_claude())
-        elif active_vendor == "zcode":
-            zc = scan_zcode()
-            all_sessions.extend(zc)
-            if not zc:
-                all_sessions.extend(scan_agy())
-        else:
-            all_sessions.extend(scan_agy())
-
-    return all_sessions
+    unique = {}
+    for session in all_sessions:
+        identity = state_store.session_identity(session.get("vendor"), session.get("session_id"))
+        if identity and identity not in unique:
+            unique[identity] = session
+    return sorted(unique.values(), key=lambda item: item.get("last_active_at") or "", reverse=True)
 
 
 def main():

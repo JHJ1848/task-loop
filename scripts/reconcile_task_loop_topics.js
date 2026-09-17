@@ -28,6 +28,10 @@ function reconcileTopics(projectRoot, manifestPath, registryPath) {
     return { action: 'INVALID', reason: 'json_parse_error', message: e.message };
   }
 
+  if ((manifest.schema_version === 4 && manifest.vendors) || (registry.schema_version === 4 && registry.vendors)) {
+    return { action: 'UNSUPPORTED', reason: 'schema_v4_requires_init_or_new_topic_session' };
+  }
+
   if (!registry.modules) {
     registry.modules = {};
   }

@@ -11,15 +11,15 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const zcodeSpawn = require('./providers/spawn_zcode_session');
 const stateStore = require('./task_loop_state');
 const codexModelPolicy = require('./providers/codex_model_policy');
+const codexSessionProvider = require('./providers/codex_session_provider');
 
-function detectTopicVendor(env = process.env) {
-  // Codex explicitly owns its thread environment when multiple host markers remain.
-  if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
-  return stateStore.normalizeVendor(stateStore.detectVendor(env));
+function detectTopicVendor(env = process.env, explicitVendor = null) {
+  return stateStore.normalizeVendor(explicitVendor) || stateStore.normalizeVendor(stateStore.detectVendor(env));
 }
 
 function normalizePath(p) {
@@ -85,73 +85,148 @@ function parseMemoryDoc(docPath, wsRoot) {
  *   ZCode 宿主: zcode --cwd <wsRoot> -p "<prompt>" 无头拉起 (scripts/providers/spawn_zcode_session)
  * 彻底净化父级上下文环境变量；返回 { id, vendor } 或 null。
  */
-function spawnRootConversation(title, prompt, wsRoot) {
-  const env = { ...process.env };
-  const currentVendor = detectTopicVendor(env);
-  if (currentVendor === 'codex') {
-    console.error('[new-topic-session] Codex 专属创建路径：脚本不调用 AGY/ZCode 创建 API。请由 Desktop create_thread 使用以下配置创建后，再执行 --bind-current <threadId>：');
-    console.error(JSON.stringify(codexModelPolicy.buildCreateThreadRequest({ title, prompt, role: 'topic' }), null, 2));
-    return null;
+function formalClaudeSessionId(result) {
+  if (!result || typeof result !== 'object') return null;
+  const value = result.session_id || result.sessionId;
+  return value == null || !String(value).trim() ? null : String(value).trim();
+}
+
+function createStatus(status, vendor, reason, extra = {}) {
+  return {
+    status,
+    vendor,
+    submitted: false,
+    bound: false,
+    resumable: false,
+    physical_session: false,
+    reason,
+    ...extra
+  };
+}
+
+function createdStatus(vendor, id, idKind, extra = {}) {
+  return {
+    status: 'CREATED',
+    vendor,
+    id,
+    id_kind: idKind,
+    resumable: true,
+    physical_session: true,
+    ...extra
+  };
+}
+
+function spawnClaudeConversation(title, prompt, wsRoot, env) {
+  const requestedSessionId = crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex');
+  let result;
+  try {
+    result = spawnSync('claude', ['-p', prompt, '--session-id', requestedSessionId, '--output-format', 'json'], {
+      env,
+      cwd: wsRoot,
+      shell: true,
+      encoding: 'utf8'
+    });
+  } catch (error) {
+    return createStatus('CREATION_FAILED', 'claude', `Claude CLI launch failed: ${error.message}`);
   }
+  if (result && result.error && result.error.code === 'ENOENT') {
+    return createStatus('UNSUPPORTED', 'claude', 'Claude CLI is unavailable; no physical session was created');
+  }
+  if (!result || result.status !== 0) {
+    return createStatus('CREATION_FAILED', 'claude', `Claude CLI exited ${result && typeof result.status === 'number' ? result.status : 'without a status'}`);
+  }
+  let data;
+  try {
+    data = JSON.parse(result.stdout || '');
+  } catch (error) {
+    return createStatus('CREATION_FAILED', 'claude', 'Claude CLI returned non-JSON output; no physical session ID was confirmed');
+  }
+  const id = formalClaudeSessionId(data);
+  if (!id) return createStatus('CREATION_FAILED', 'claude', 'Claude CLI did not return a formal session_id');
+  return createdStatus('claude', id, 'sessionId', { title });
+}
+
+function spawnRootConversation(title, prompt, wsRoot, options = {}) {
+  const env = { ...process.env };
+  const currentVendor = detectTopicVendor(env, options.vendor);
+  if (!currentVendor) return createStatus('UNSUPPORTED', null, 'No supported host vendor was identified');
+
+  if (currentVendor === 'codex') {
+    const request = codexModelPolicy.buildCreateThreadRequest({
+      projectId: options.projectId,
+      isGitRepository: options.isGitRepository,
+      environment: options.environment,
+      title,
+      prompt,
+      role: options.role || 'topic',
+      model: options.model,
+      reasoning_effort: options.reasoning_effort,
+      thinking: options.thinking
+    });
+    const result = codexSessionProvider.create(request, options.capabilities || {}, { dryRun: options.dryRun });
+    const pending = result.status === 'PENDING_CREATION';
+    if (pending) {
+      console.error(JSON.stringify({ ...result, vendor: 'codex', creation_request: request }, null, 2));
+      return { ...result, vendor: 'codex', creation_request: request };
+    }
+    if (result.status === 'READY' && result.threadId) {
+      return createdStatus('codex', result.threadId, 'threadId', { creation_result: result, model_config: request });
+    }
+    return createStatus(result.status === 'CREATION_FAILED' ? 'CREATION_FAILED' : 'UNSUPPORTED', 'codex', result.reason, {
+      creation_request: request,
+      creation_result: result
+    });
+  }
+
   delete env.ANTIGRAVITY_CONVERSATION_ID;
   delete env.ANTIGRAVITY_SOURCE_METADATA;
   delete env.ANTIGRAVITY_TRAJECTORY_ID;
 
-  // 1. AGY 宿主: agentapi 可用则优先（原行为）
-  const agentapi = findAgentApiBinary(env);
-  if (agentapi) {
-    const exe = process.platform === 'win32' ? agentapi : agentapi;
+  if (currentVendor === 'claude') return spawnClaudeConversation(title, prompt, wsRoot, env);
+
+  if (currentVendor === 'antigravity') {
+    const agentapi = findAgentApiBinary(env);
+    if (!agentapi) return createStatus('UNSUPPORTED', 'antigravity', 'agentapi is unavailable; no physical session was created');
     try {
-      const res = spawnSync(exe, ['new-conversation', `--title=${title}`, prompt], {
+      const res = spawnSync(agentapi, ['new-conversation', `--title=${title}`, prompt], {
         env,
         cwd: wsRoot,
         shell: true,
         encoding: 'utf8'
       });
-      if (res.stdout) {
-        const data = JSON.parse(res.stdout);
-        const id = data?.response?.newConversation?.conversationId || null;
-        if (id) return { id: id, vendor: 'antigravity' };
+      if (res && res.error && res.error.code === 'ENOENT') {
+        return createStatus('UNSUPPORTED', 'antigravity', 'agentapi is unavailable; no physical session was created');
       }
-    } catch (e) {
-      // fall through to ZCode CLI
+      if (!res || res.status !== 0) {
+        return createStatus('CREATION_FAILED', 'antigravity', `agentapi exited ${res && typeof res.status === 'number' ? res.status : 'without a status'}`);
+      }
+      const data = JSON.parse(res.stdout || '');
+      const id = data?.response?.newConversation?.conversationId || null;
+      if (id) return createdStatus('antigravity', String(id), 'conversationId', { title });
+      return createStatus('CREATION_FAILED', 'antigravity', 'agentapi returned no formal conversationId');
+    } catch (error) {
+      return createStatus('CREATION_FAILED', 'antigravity', `agentapi creation failed: ${error.message}`);
     }
   }
 
-  // 2. ZCode 宿主: 无头 CLI 拉起
-  const zcodeCli = zcodeSpawn.discoverZcodeCli(env);
-  if (zcodeCli) {
+  if (currentVendor === 'zcode') {
+    const zcodeCli = zcodeSpawn.discoverZcodeCli(env);
+    if (!zcodeCli) return createStatus('UNSUPPORTED', 'zcode', 'ZCode CLI is unavailable; no physical session was created');
     const auth = zcodeSpawn.authState(env);
     if (!auth.logged_in) {
-      console.error(
-        '[new-topic-session] ZCode CLI 未登录，跳过无头拉起。前置: login-api-key 配置 key 或 zcode login 一次；' +
-        '或手动新建会话后将 ID 登记至 .agents/task-loop/sessions.json。'
-      );
-      return null;
+      return createStatus('UNSUPPORTED', 'zcode', 'ZCode CLI is not authenticated; no physical session was created');
     }
     try {
       const out = zcodeSpawn.runCli(zcodeCli, ['--cwd', wsRoot, '-p', prompt], 600, env);
       const id = zcodeSpawn.extractSessionId(out);
-      if (id) return { id: id, vendor: 'zcode' };
-      console.error('[new-topic-session] ZCode CLI 已执行但未解析出 sess_id，输出头部: ' + String(out).slice(0, 200));
-      return null;
-    } catch (e) {
-      console.error('[new-topic-session] ZCode CLI 拉起失败: ' + String(e.message).split('\n')[0]);
-      return null;
+      if (id) return createdStatus('zcode', id, 'sessionId', { title });
+      return createStatus('CREATION_FAILED', 'zcode', 'ZCode CLI returned no formal session ID');
+    } catch (error) {
+      return createStatus('CREATION_FAILED', 'zcode', `ZCode CLI creation failed: ${String(error.message).split('\n')[0]}`);
     }
   }
 
-  console.error(
-    '\n============================================================\n' +
-    '[new-topic-session 优雅降级引导卡]\n' +
-    '无法自动拉起专题会话（未检测到 agentapi 或 ZCode CLI 无头拉起未就绪）。\n' +
-    '请按以下指引手动建立与绑定：\n' +
-    '1. 在 IDE 侧边栏手动点击 [+] 新建一个独立专题会话；\n' +
-    '2. 在该新会话中运行: node scripts/init_task_loop.js --bind-current ' + (title.match(/\[(.+?)\]/)?.[1] || '专题') + '\n' +
-    '3. 或在 sessions.json 中将新会话 ID 手动登记至 vendors.<vendor>.modules 映射表中。\n' +
-    '============================================================\n'
-  );
-  return null;
+  return createStatus('UNSUPPORTED', currentVendor, `No creation adapter is implemented for vendor ${currentVendor}`);
 }
 
 function findAgentApiBinary(env) {
@@ -196,44 +271,71 @@ function findAgentApiBinary(env) {
 /**
  * 读取 sessions.json 状态
  */
-function loadSessionsState(wsRoot) {
+function loadSessionsState(wsRoot, vendorOverride = null) {
   // Schema v4: 仅读取当前宿主厂商分区 (跨版本兼容读, 其余厂商分区零接触)
-  const vendor = detectTopicVendor() || 'antigravity';
+  const vendor = detectTopicVendor(process.env, vendorOverride) || 'antigravity';
   const sessionsPath = path.join(wsRoot, '.agents', 'task-loop', 'sessions.json');
   const part = stateStore.getPartition(sessionsPath, vendor);
   if (part) {
-    return Object.assign({ schema_version: stateStore.SCHEMA_VERSION, main_thread_id: null, modules: {}, sessions: [] }, part);
+    return Object.assign({ schema_version: stateStore.SCHEMA_VERSION, vendor, main_thread_id: null, modules: {}, sessions: [] }, part);
   }
-  return { schema_version: stateStore.SCHEMA_VERSION, main_thread_id: null, modules: {}, sessions: [] };
+  return { schema_version: stateStore.SCHEMA_VERSION, vendor, main_thread_id: null, modules: {}, sessions: [] };
 }
 
 /**
  * 保存 sessions.json 与 topics.json
  */
-function saveSessionsState(state, wsRoot) {
+function saveSessionsState(state, wsRoot, vendorOverride = null) {
   // Schema v4: 只写当前宿主厂商分区 (读-改-写), 其余厂商分区零接触, 结构上杜绝跨厂商覆写
   const taskLoopDir = path.join(wsRoot, '.agents', 'task-loop');
   if (!fs.existsSync(taskLoopDir)) {
     fs.mkdirSync(taskLoopDir, { recursive: true });
   }
 
-  const vendor = detectTopicVendor() || 'antigravity';
+  const vendor = detectTopicVendor(process.env, vendorOverride || state.vendor) || 'antigravity';
   const sessionsPath = path.join(taskLoopDir, 'sessions.json');
   const topicsPath = path.join(taskLoopDir, 'topics.json');
 
+  const modules = Object.fromEntries(Object.entries(state.modules || {}).map(([key, value]) => {
+    const module = value && typeof value === 'object' ? { ...value } : {};
+    const hasPhysicalId = Boolean(module.session_id && String(module.session_id).trim());
+    const resumable = module.resumable === true && hasPhysicalId;
+    return [key, {
+      ...module,
+      vendor,
+      resumable,
+      lifecycle_status: module.lifecycle_status || (resumable ? stateStore.SESSION_STATUS.BOUND : stateStore.SESSION_STATUS.PENDING_CREATION),
+      is_main: module.is_main === true || key === 'main' || (state.main_thread_id && module.session_id === state.main_thread_id)
+    }];
+  }));
+  const sessions = (state.sessions || []).map(item => {
+    const session = item && typeof item === 'object' ? { ...item } : {};
+    const hasPhysicalId = Boolean(session.session_id && String(session.session_id).trim());
+    const resumable = session.resumable === true && hasPhysicalId;
+    return {
+      ...session,
+      vendor,
+      resumable,
+      lifecycle_status: session.lifecycle_status || (resumable ? stateStore.SESSION_STATUS.BOUND : stateStore.SESSION_STATUS.PENDING_CREATION)
+    };
+  });
+
   const partitionData = {
     main_thread_id: state.main_thread_id || null,
-    modules: state.modules || {},
-    sessions: state.sessions || []
+    modules,
+    sessions
   };
   stateStore.writePartition(sessionsPath, vendor, partitionData, { kind: 'sessions' });
 
-  const topics = Object.entries(state.modules || {}).map(([k, v]) => ({
+  const topics = Object.entries(modules).map(([k, v]) => ({
     topic_key: k,
     name: v.title,
     session_id: v.session_id,
-    vendor: v.vendor || vendor,
-    resumable: v.resumable !== false,
+    vendor,
+    resumable: v.resumable === true && Boolean(v.session_id),
+    lifecycle_status: v.lifecycle_status,
+    is_main: v.is_main === true,
+    id_kind: v.id_kind,
     tags: v.tags || [k, 'topic'],
     memory_doc: v.memory_doc
   }));
@@ -242,6 +344,8 @@ function saveSessionsState(state, wsRoot) {
   // 兼容镜像: 物理分区文件供旧版宿主工具直读
   const mirror = Object.assign({ schema_version: 3, vendor: vendor, updated_at: new Date().toISOString() }, JSON.parse(JSON.stringify(partitionData)));
   fs.writeFileSync(path.join(taskLoopDir, `sessions.${vendor}.json`), JSON.stringify(mirror, null, 2), 'utf8');
+  const topicsMirror = Object.assign({ schema_version: 3, vendor: vendor, updated_at: new Date().toISOString() }, { topics });
+  fs.writeFileSync(path.join(taskLoopDir, `topics.${vendor}.json`), JSON.stringify(topicsMirror, null, 2), 'utf8');
 }
 
 /**
@@ -281,6 +385,34 @@ function createTopicMemoryDoc(moduleKey, topicTitle, options = {}) {
   return { docPath, relPath };
 }
 
+function normalizeBoundSession(vendor, sessionId, options = {}) {
+  if (!sessionId) {
+    throw new Error(`绑定失败: vendor=${vendor} 未提供有效物理会话 ID`);
+  }
+  if (vendor === 'codex' && (options.clientThreadId || options.client_thread_id || options.id_kind === 'clientThreadId')) {
+    throw new Error('绑定失败: Codex 只能绑定正式 threadId，不能绑定 clientThreadId');
+  }
+  const id = String(sessionId).trim();
+  if (!id) throw new Error(`绑定失败: vendor=${vendor} 未提供有效物理会话 ID`);
+  if (vendor === 'codex') {
+    const declaredIdKind = options.id_kind || options.idKind;
+    const providerResult = options.provider_result || options.providerResult;
+    const providerId = codexSessionProvider.formalCreateThreadId(providerResult);
+    if (declaredIdKind !== 'threadId' && providerId !== id) {
+      throw new Error('绑定失败: Codex 需要调用方明确声明 id_kind=threadId，或提供已确认 formal threadId 的 Provider 回执');
+    }
+    if (options.clientThreadId || options.client_thread_id) {
+      throw new Error('绑定失败: Codex 只能绑定正式 threadId，不能绑定 clientThreadId');
+    }
+  }
+  return { id, id_kind: vendor === 'codex' ? 'threadId' : vendor === 'antigravity' ? 'conversationId' : 'sessionId' };
+}
+
+function isReusableModule(vendor, module) {
+  if (!module || !module.session_id || module.resumable !== true) return false;
+  return vendor !== 'codex' || module.id_kind === 'threadId';
+}
+
 /**
  * 将当前物理会话就地注册并绑定为专题会话 (无需新建顶层会话)
  */
@@ -288,11 +420,15 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
   if (!sessionId) {
     throw new Error('就地绑定专题失败: 必须提供有效的 session_id');
   }
+  const vendor = detectTopicVendor(process.env, options.vendor) || 'antigravity';
+  const boundSession = normalizeBoundSession(vendor, sessionId, options);
+  sessionId = boundSession.id;
   const { docPath, relPath } = createTopicMemoryDoc(moduleKey, topicTitle, { wsRoot, force: options.force });
   const meta = parseMemoryDoc(docPath, wsRoot);
-  const state = loadSessionsState(wsRoot);
+  const state = loadSessionsState(wsRoot, vendor);
   const existingModule = state.modules && state.modules[meta.module_key];
   const existingModelConfig = existingModule && existingModule.model_config;
+  const isMain = meta.module_key === 'main' || state.main_thread_id === sessionId;
 
   if (options.dryRun) {
     return {
@@ -305,13 +441,16 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
     };
   }
 
-  // 判定当前厂商
-  const vendor = detectTopicVendor() || 'antigravity';
-
   // 更新 state
   if (!state.modules) state.modules = {};
   state.modules[meta.module_key] = {
     session_id: sessionId,
+    vendor,
+    id_kind: boundSession.id_kind,
+    resumable: true,
+    physical_session: true,
+    lifecycle_status: stateStore.SESSION_STATUS.BOUND,
+    is_main: isMain,
     title: meta.title,
     tags: [meta.module_key, 'topic'],
     memory_doc: meta.memory_doc,
@@ -324,8 +463,12 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
   const sessionItem = {
     session_id: sessionId,
     vendor: vendor,
+    id_kind: boundSession.id_kind,
+    resumable: true,
+    physical_session: true,
+    lifecycle_status: stateStore.SESSION_STATUS.BOUND,
     title: meta.title,
-    is_main: false,
+    is_main: isMain,
     module_key: meta.module_key,
     summary: `专题模块: ${meta.title}`,
     memory_docs: [meta.memory_doc],
@@ -338,7 +481,9 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
     state.sessions.push(sessionItem);
   }
 
-  saveSessionsState(state, wsRoot);
+  if (isMain) state.main_thread_id = sessionId;
+
+  saveSessionsState(state, wsRoot, vendor);
 
   return {
     status: 'BOUND',
@@ -363,12 +508,14 @@ function createTopicAndSession(moduleKey, topicTitle, wsRoot, options = {}) {
  */
 function provisionSingleDoc(docPath, wsRoot, options = {}) {
   const meta = parseMemoryDoc(docPath, wsRoot);
-  const state = loadSessionsState(wsRoot);
+  const vendor = detectTopicVendor(process.env, options.vendor) || 'antigravity';
+  const state = loadSessionsState(wsRoot, vendor);
   const existingModule = state.modules ? state.modules[meta.module_key] : null;
 
-  if (existingModule && existingModule.session_id && !options.force) {
+  if (isReusableModule(vendor, existingModule) && !options.force) {
     return {
       status: 'EXISTS',
+      vendor,
       module_key: meta.module_key,
       session_id: existingModule.session_id,
       title: existingModule.title,
@@ -387,19 +534,43 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
     };
   }
 
-  const newId = spawnRootConversation(meta.title, meta.initialPrompt, wsRoot);
-  if (!newId || !newId.id) {
-    throw new Error(`创建顶层会话失败: 未返回有效会话 ID（详见 stderr 提示: agentapi / zcode CLI / 手动登记三选一）`);
+  const newId = spawnRootConversation(meta.title, meta.initialPrompt, wsRoot, {
+    ...options,
+    vendor,
+    role: options.role || (meta.module_key === 'main' ? 'main' : 'topic'),
+    ...(existingModule && existingModule.model_config ? {
+      model: options.model || existingModule.model_config.model,
+      reasoning_effort: options.reasoning_effort || existingModule.model_config.reasoning_effort,
+      thinking: options.thinking || existingModule.model_config.thinking
+    } : {})
+  });
+  if (!newId || newId.status !== 'CREATED' || !newId.id) {
+    return {
+      ...(newId || createStatus('CREATION_FAILED', vendor, '创建适配器未返回结果')),
+      module_key: meta.module_key,
+      title: meta.title,
+      memory_doc: meta.memory_doc,
+      message: newId && newId.reason ? newId.reason : '未返回有效物理会话 ID；未写入绑定状态'
+    };
   }
+
+  const isMain = meta.module_key === 'main' || state.main_thread_id === newId.id;
 
   // 更新 state
   if (!state.modules) state.modules = {};
   state.modules[meta.module_key] = {
     session_id: newId.id,
+    vendor: newId.vendor,
+    id_kind: newId.id_kind,
+    resumable: true,
+    physical_session: true,
+    lifecycle_status: stateStore.SESSION_STATUS.BOUND,
+    is_main: isMain,
     title: meta.title,
     tags: [meta.module_key, 'topic'],
     memory_doc: meta.memory_doc,
-    summary: `专题模块: ${meta.title}`
+    summary: `专题模块: ${meta.title}`,
+    ...(newId.model_config ? { model_config: newId.model_config } : {})
   };
 
   if (!state.sessions) state.sessions = [];
@@ -407,11 +578,16 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
   const sessionItem = {
     session_id: newId.id,
     vendor: newId.vendor,
+    id_kind: newId.id_kind,
+    resumable: true,
+    physical_session: true,
+    lifecycle_status: stateStore.SESSION_STATUS.BOUND,
     title: meta.title,
-    is_main: false,
+    is_main: isMain,
     module_key: meta.module_key,
     summary: `专题模块: ${meta.title}`,
-    memory_docs: [meta.memory_doc]
+    memory_docs: [meta.memory_doc],
+    ...(newId.model_config ? { model_config: newId.model_config } : {})
   };
 
   if (existingIdx !== -1) {
@@ -420,7 +596,9 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
     state.sessions.push(sessionItem);
   }
 
-  saveSessionsState(state, wsRoot);
+  if (isMain) state.main_thread_id = newId.id;
+
+  saveSessionsState(state, wsRoot, vendor);
 
   return {
     status: 'CREATED',
@@ -435,9 +613,10 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
 /**
  * 调查当前所有受控记忆文档与专题会话的对齐状态 (纯只读安全模式)
  */
-function surveyMemoryDocsStatus(wsRoot) {
+function surveyMemoryDocsStatus(wsRoot, options = {}) {
   const memoryDir = path.join(wsRoot, 'docs', 'memory');
-  const state = loadSessionsState(wsRoot);
+  const vendor = detectTopicVendor(process.env, options.vendor) || 'antigravity';
+  const state = loadSessionsState(wsRoot, vendor);
   const existingModules = state.modules || {};
 
   const allDocs = [];
@@ -446,12 +625,19 @@ function surveyMemoryDocsStatus(wsRoot) {
     for (const f of files) {
       const key = path.basename(f, '.md');
       const mod = existingModules[key];
+      const isBound = isReusableModule(vendor, mod);
+      const lifecycleStatus = mod && mod.lifecycle_status
+        ? mod.lifecycle_status
+        : isBound ? stateStore.SESSION_STATUS.BOUND : stateStore.SESSION_STATUS.PENDING_CREATION;
       allDocs.push({
         module_key: key,
+        vendor,
         memory_doc: normalizePath(path.join('docs', 'memory', f)),
         session_id: mod ? mod.session_id : null,
         title: mod ? mod.title : `[${key}专题] 核心功能维护 & 记忆沉淀`,
-        is_aligned: Boolean(mod && mod.session_id)
+        lifecycle_status: lifecycleStatus,
+        status: lifecycleStatus,
+        is_aligned: isBound
       });
     }
   }
@@ -471,7 +657,7 @@ function provisionAllMissing(wsRoot, options = {}) {
     return { count: 0, results: [], message: '未找到 docs/memory 目录。' };
   }
 
-  const { missing } = surveyMemoryDocsStatus(wsRoot);
+  const { missing } = surveyMemoryDocsStatus(wsRoot, options);
 
   if (missing.length === 0) {
     return {
@@ -490,7 +676,7 @@ function provisionAllMissing(wsRoot, options = {}) {
   return {
     count: missing.length,
     results,
-    message: `共发现 ${missing.length} 个缺失会话的记忆文档，已全部补齐创建完成。`
+    message: `共发现 ${missing.length} 个未完成绑定的记忆文档，已按厂商能力返回创建结果。`
   };
 }
 
@@ -499,6 +685,10 @@ function main() {
   const dryRun = args.includes('--dry-run') || args.includes('-d');
   const force = args.includes('--force') || args.includes('-f');
   const batchAll = args.includes('--all') || args.includes('-a') || args.includes('-y') || args.includes('--yes');
+  const vendorIndex = args.indexOf('--vendor');
+  const vendor = vendorIndex !== -1 && args[vendorIndex + 1]
+    ? stateStore.normalizeVendor(args[vendorIndex + 1])
+    : detectTopicVendor();
   const wsIndex = args.indexOf('--workspace');
   const wsRoot = (wsIndex !== -1 && args[wsIndex + 1]) ? args[wsIndex + 1] : process.cwd();
 
@@ -510,6 +700,7 @@ function main() {
   const bindCurrentIndex = args.indexOf('--bind-current');
   const sessionIndex = args.indexOf('--session');
   const sessionIdIndex = args.indexOf('--session-id');
+  const idKindIndex = args.indexOf('--id-kind');
 
   let bindCurrentSessionId = null;
   if (bindCurrentIndex !== -1) {
@@ -525,8 +716,9 @@ function main() {
     bindCurrentSessionId = args[sessionIdIndex + 1];
   }
   if (!bindCurrentSessionId && bindCurrentIndex !== -1) {
-    bindCurrentSessionId = process.env.ANTIGRAVITY_CONVERSATION_ID || null;
+    bindCurrentSessionId = stateStore.getCurrentSessionId(process.env, vendor);
   }
+  const bindIdKind = idKindIndex !== -1 && args[idKindIndex + 1] ? args[idKindIndex + 1] : null;
 
   const isBindCurrent = bindCurrentIndex !== -1 || Boolean(bindCurrentSessionId);
   const customTitle = (titleIndex !== -1 && args[titleIndex + 1]) ? args[titleIndex + 1] : null;
@@ -564,7 +756,12 @@ function main() {
     if (customTitle) console.log(`自定义标题: ${customTitle}`);
     console.log('--------------------------------------------------------------------------------');
     try {
-      const res = bindCurrentSession(targetKey, customTitle, bindCurrentSessionId, wsRoot, { dryRun, force });
+      const res = bindCurrentSession(targetKey, customTitle, bindCurrentSessionId, wsRoot, {
+        dryRun,
+        force,
+        vendor,
+        id_kind: bindIdKind
+      });
       console.log(`状态: [${res.status}]`);
       console.log(`专题标题: ${res.title}`);
       console.log(`记忆文档: ${res.memory_doc}`);
@@ -580,7 +777,7 @@ function main() {
     if (customTitle) console.log(`自定义标题: ${customTitle}`);
     console.log('--------------------------------------------------------------------------------');
     try {
-      const res = createTopicAndSession(createNewTopicKey, customTitle, wsRoot, { dryRun, force });
+      const res = createTopicAndSession(createNewTopicKey, customTitle, wsRoot, { dryRun, force, vendor });
       console.log(`状态: [${res.status}]`);
       console.log(`专题标题: ${res.title}`);
       console.log(`记忆文档: ${res.memory_doc}`);
@@ -595,7 +792,7 @@ function main() {
     console.log(`目标受控记忆: ${targetDoc}`);
     console.log('--------------------------------------------------------------------------------');
     try {
-      const res = provisionSingleDoc(targetDoc, wsRoot, { dryRun, force });
+      const res = provisionSingleDoc(targetDoc, wsRoot, { dryRun, force, vendor });
       console.log(`状态: [${res.status}]`);
       console.log(`模块 Key: ${res.module_key}`);
       console.log(`专题标题: ${res.title}`);
@@ -608,7 +805,7 @@ function main() {
   } else if (batchAll) {
     console.log('模式: [全量补齐模式] 为所有未建物理会话的记忆文档批量创建会话');
     console.log('--------------------------------------------------------------------------------');
-    const res = provisionAllMissing(wsRoot, { dryRun, force });
+    const res = provisionAllMissing(wsRoot, { dryRun, force, vendor });
     console.log(res.message);
     if (res.results && res.results.length > 0) {
       res.results.forEach((r, idx) => {
@@ -623,7 +820,7 @@ function main() {
     // 默认安全调查模式：主动列出清单并提示用户，严禁私自盲创
     console.log('模式: [专题对齐调查模式] 检查当前受控记忆与专题会话对齐状态');
     console.log('--------------------------------------------------------------------------------');
-    const survey = surveyMemoryDocsStatus(wsRoot);
+    const survey = surveyMemoryDocsStatus(wsRoot, { vendor });
 
     console.log(`【已完成 1:1 绑定的专题会话 (${survey.aligned.length} 个)】:`);
     if (survey.aligned.length > 0) {
@@ -641,7 +838,7 @@ function main() {
       survey.missing.forEach((m, i) => {
         console.log(`  ${i + 1}. [${m.module_key}] ${m.title}`);
         console.log(`     记忆文档: ${m.memory_doc}`);
-        console.log(`     状态: [⚠ 待建会话]`);
+        console.log(`     状态: [${m.status}]`);
       });
       console.log('\n--------------------------------------------------------------------------------');
       console.log('【用户交互操作指引】:');

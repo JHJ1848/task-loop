@@ -5,7 +5,7 @@ description: "[task-loop] Project initialization, existing session survey, topic
 
 # Project Initialization & Session Survey (`init`)
 
-本项目初始化技能专用于新工程接入 `task-loop` 插件时的状态机建立、已有历史会话调查与专题映射建议。
+本项目初始化技能专用于新工程接入 `task-loop` 插件时的状态机建立、已有历史会话调查、专题映射与缺失物理会话主动补齐。
 
 ![init 项目初始化与已有会话调查流程](assets/workflow.svg)
 
@@ -15,12 +15,12 @@ description: "[task-loop] Project initialization, existing session survey, topic
 
 当新项目安装或引入 `task-loop` 插件时，工程中往往已经存在了大量历史会话（来自 Antigravity、Codex 或 Claude Code）或既有的专题受控记忆文档（`docs/memory/*.md`）。
 
-`init` 技能践行 **【调度器/SDK 主动程序化创建 + Hook 生命周期被动护航】** 核心架构：
+`init` 技能践行 **【主会话按宿主能力主动创建 + Hook 生命周期被动护航】** 核心架构。`/init` 是主动执行入口，不是只读调查入口：
 1. **自动扫描历史会话与受控记忆**：无侵入式读取当前工作区的历史会话日志与 `docs/memory/*.md` 记忆文档；
 2. **记忆文档 1:1 专题对齐**：确保每一个专题记忆文档均精确对应一个独立顶层根会话（`nestingDepth: 0`）；
-3. **缺失会话自动创建 (`--create-missing`)**：对已有记忆文档但缺失顶层会话的模块，自动调用 `agentapi new-conversation`（净化父级环境变量）自动补齐；
+3. **缺失会话主动创建**：对已有记忆文档但缺失或不可续接的顶层会话，按当前厂商能力逐项补齐；Codex 必须由主会话调用原生 `mcp__codex_app__create_thread`，脚本只负责生成请求、接收正式回执与绑定；
 4. **启发式标准化命名**：根据标题、摘要与分词，自动规范化为 `[专题名称] 核心功能1 & 核心功能2` 标准命名；
-5. **用户交互确认与预览**：以结构化清单呈现给用户，支持 `--dry-run` 预览与确认；
+5. **结构化清单与预览**：以清单呈现调查和执行结果，支持 `--dry-run` 只读预览；正式 `/init` 不因缺少 `--create-missing` 而退化为 survey-only；
 6. **状态机落盘与兜底修改指引**：写入 `.agents/task-loop/sessions.json`，支持随时直接手动修改底层 JSON。
 
 ---
@@ -68,7 +68,7 @@ description: "[task-loop] Project initialization, existing session survey, topic
 ## 四、标准交互与执行流程 (Standard Workflow)
 
 ```text
-[启动初始化] -> [扫描会话 & 记忆文档] -> [主会话智能选定] -> [1:1 专题映射对齐] -> [输出用户确认卡] -> [按需补齐根会话并落盘] -> [Hook 自动接管]
+[启动 /init] -> [扫描 docs/memory/*.md & 当前 vendors.codex] -> [复用 formal resumable 会话] -> [逐项主动创建缺失专题] -> [取得 formal ID 后绑定并回写镜像] -> [重新扫描确认]
 ```
 
 ### 1. 扫描与建议清单生成 (预览模式)
@@ -82,8 +82,8 @@ description: "[task-loop] Project initialization, existing session survey, topic
   python scripts/init_task_loop.py --dry-run --current-session <CurrentSessionId>
   ```
 
-### 2. 用户确认卡输出规范 (User Confirmation Card)
-在执行初始化前，主会话或调度器应向用户呈现结构化【初始化确认卡】：
+### 2. 调查结果卡输出规范 (Initialization Result Card)
+主会话或调度器可向用户呈现结构化【初始化结果卡】。该卡用于记录扫描与执行边界，不替代 Codex 原生创建调用：
 
 ```json
 {
@@ -102,14 +102,84 @@ description: "[task-loop] Project initialization, existing session survey, topic
       "memory_doc": "docs/memory/hook.md"
     }
   ],
-  "missing_sessions_to_create": ["<ModuleKey1>"]
+  "missing_sessions_to_create": ["<ModuleKey1>"],
+  "execution": "formal threadId 绑定后才算完成；clientThreadId/queued 只记为 PENDING_CREATION"
 }
 ```
 
-### 3. 正式执行与缺失会话自动补齐
-若需将配置实际落盘，并自动为缺失会话的记忆文档建立顶层根会话：
+### 3. 正式执行与缺失会话主动补齐
+正式运行默认执行扫描、复用和补齐；`--dry-run` 才是只读模式，`--create-missing`/`-c` 仅保留为兼容别名：
 ```bash
-node scripts/init_task_loop.js --create-missing --current-session <CurrentSessionId>
+node scripts/init_task_loop.js --vendor codex --workspace <WorkspaceRoot>
+python scripts/init_task_loop.py --vendor codex --workspace <WorkspaceRoot>
+```
+
+Codex 缺少脚本层原生 Host Adapter 时，脚本返回并记录 `PENDING_CREATION` 与 `creation_request`，主会话必须按下列闭环调用 Desktop 工具；不得把 `clientThreadId`、`queued` 或 `clientThreadId` 所在的回执写入绑定：
+
+```json
+[
+  {
+    "step": 1,
+    "tool": "mcp__codex_app__list_projects",
+    "args": {},
+    "result": "选择目标 projectId，并读取 isGitRepository"
+  },
+  {
+    "step": 2,
+    "tool": "mcp__codex_app__create_thread",
+    "args": {
+      "prompt": "<memory-derived initialization prompt>",
+      "title": "<memory H1 or normalized topic title>",
+      "target": {
+        "type": "project",
+        "projectId": "<projectId>",
+        "environment": { "type": "worktree or local" }
+      },
+      "model": "<explicit model, existing model_config, or role default>",
+      "thinking": "<explicit reasoning, existing model_config, or role default>"
+    },
+    "environment_rule": "isGitRepository=true -> worktree; otherwise -> local"
+  },
+  {
+    "step": 3,
+    "result_rule": "只接受 structuredContent.threadId/thread_id 或其 response/thread 嵌套 formal 字段；clientThreadId/queued -> PENDING_CREATION",
+    "bind": "node scripts/new_topic_session.js --workspace <WorkspaceRoot> --vendor codex --doc <memory_doc> --bind-current <threadId> --id-kind threadId",
+    "python_bind": "python scripts/new_topic_session.py --workspace <WorkspaceRoot> --vendor codex --doc <memory_doc> --bind-current <threadId> --id-kind threadId"
+  },
+  {
+    "step": 4,
+    "tool": "mcp__codex_app__send_message_to_thread",
+    "condition": "可选；仅在 formal threadId 已绑定后调用",
+    "completion": "send 只代表请求已提交，不代表模型已回复；需要结果时再调用 wait_threads/read_thread"
+  },
+  {
+    "step": 5,
+    "action": "rerun init",
+    "completion": "再次扫描必须复用同一 formal resumable threadId，不得重复创建同一 module_key"
+  }
+]
+```
+
+本脚本任务不能直接调用 `mcp__codex_app__create_thread`；这是脚本层能力边界，不是创建成功。若宿主工具不可用，保持 `PENDING_CREATION` 或 `UNSUPPORTED`，不伪造完成状态。创建成功后的 `threadId` 必须立即通过 `new_topic_session --bind-current --id-kind threadId` 回写 `sessions.json`、`topics.json` 及厂商镜像，然后重新执行 `/init`。
+
+### 4. 复用、模型与能力边界
+
+```json
+{
+  "reuse": "当前 vendors.codex 中 resumable=true 且 id_kind=threadId 的物理绑定优先复用",
+  "create_when": "仅 missing 或 resumable=false 的专题逐项创建；同一 module_key 不重复创建",
+  "model_precedence": ["用户显式选择", "既有 session.model_config", "role 默认"],
+  "role_defaults": {
+    "main": { "model": "gpt-6-astra", "thinking": "medium" },
+    "topic": { "model": "gpt-5.6-terra", "thinking": "xhigh" },
+    "subagent": { "model": "gpt-5.6-luna", "thinking": "max" }
+  },
+  "question_provider": "QuestionProvider 是既有契约支柱，不新增运行时",
+  "execution_context": {
+    "name": "Execution/Capability/Authority Context",
+    "fields": ["host capability", "workspace environment", "role model/reasoning", "write permission/lifecycle"]
+  }
+}
 ```
 
 ---

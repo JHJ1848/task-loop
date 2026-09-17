@@ -25,15 +25,23 @@ VENDOR_ALIASES = {
     "claudecode": "claude",
 }
 
+SESSION_STATUS = {
+    "DISCOVERED": "DISCOVERED",
+    "BOUND": "BOUND",
+    "PENDING_CREATION": "PENDING_CREATION",
+    "CREATION_FAILED": "CREATION_FAILED",
+    "UNSUPPORTED": "UNSUPPORTED",
+}
+
 
 def detect_vendor(env=None):
     env = env if env is not None else os.environ
-    if env.get("ANTIGRAVITY_CONVERSATION_ID"):
-        return "antigravity"
-    if env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID"):
-        return "zcode"
     if env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"):
         return "codex"
+    if env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID"):
+        return "zcode"
+    if env.get("ANTIGRAVITY_CONVERSATION_ID"):
+        return "antigravity"
     return None
 
 
@@ -47,6 +55,28 @@ def normalize_vendor(name):
     if re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", key):
         return key
     return None
+
+
+def get_current_session_id(env=None, vendor=None):
+    env = env if env is not None else os.environ
+    current_vendor = normalize_vendor(vendor) or detect_vendor(env)
+    if current_vendor == "codex":
+        return env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID")
+    if current_vendor == "claude":
+        return None
+    if current_vendor == "zcode":
+        return env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID")
+    if current_vendor == "antigravity":
+        return env.get("ANTIGRAVITY_CONVERSATION_ID")
+    return None
+
+
+def session_identity(vendor, session_id):
+    normalized_vendor = normalize_vendor(vendor)
+    normalized_id = "" if session_id is None else str(session_id).strip()
+    if not normalized_vendor or not normalized_id:
+        return None
+    return f"{normalized_vendor}:{normalized_id}"
 
 
 def empty_partition(vendor):

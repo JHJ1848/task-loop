@@ -22,7 +22,7 @@ Hook 兼容性同样按厂商隔离：Codex 不提供 AGY/ZCode 的 `PreInvocati
     "unsupported": "自动 PreInvocation / PreToolUse Hook、直接写 .codex/sessions、按 UUID 猜测 AGY"
   },
   {
-    "experimental_only": "app-server / MCP；不得作为稳定自动派单或成功状态依据"
+    "experimental_only": "codex app-server JSON-RPC；Desktop App Tools 只有在宿主实际暴露时才可按本规范调用"
   }
 ]
 ```
@@ -31,7 +31,7 @@ Hook 兼容性同样按厂商隔离：Codex 不提供 AGY/ZCode 的 `PreInvocati
 
 ### 0.1 Provider 解耦入口
 
-`scripts/providers/codex_session_provider.js/.py` 提供运行时纯适配入口 `submit/submit_async`。调用方可显式注入 `desktop`、`sdk`、`api` 函数；选择顺序固定为 Desktop -> SDK -> API -> CLI。适配器只有返回 `{submitted:true}` 才会映射为 `SUBMITTED`，否则返回 `PREPARED_ONLY`。Provider 不读取或写入 `.agents/task-loop`、`.codex/sessions`，也不猜测会话 ID。
+`scripts/providers/codex_session_provider.js/.py` 提供运行时纯适配入口 `create/create_async`、`submit/submit_async`、`read/read_async` 与 `wait`。调用方可显式注入 `desktop`、`sdk`、`api` 函数；创建回执只有 formal `threadId` 才能进入 `READY`，`clientThreadId`/queued 或无回执进入 `PENDING_CREATION`。发送只有存在真实适配器或明确 CLI 能力时才报告可用；适配器只有返回 `{submitted:true}` 才会映射为 `SUBMITTED`，否则返回 `PREPARED_ONLY`。Provider 不读取或写入 `.agents/task-loop`、`.codex/sessions`，也不猜测会话 ID。
 
 ---
 
@@ -152,7 +152,7 @@ python scripts/find_project_sessions.py --root . --vendor Codex --current
   {"tool": "mcp__codex_app__list_projects", "purpose": "列出当前宿主可用的 local/remote/ChatGPT 项目及 projectId、Git 属性"},
   {"tool": "mcp__codex_app__list_threads", "purpose": "列出当前应用可见的线程/聊天摘要、状态、项目关联和线程 ID"},
   {"tool": "mcp__codex_app__read_thread", "purpose": "按 threadId 读取最近回合、消息、状态和可选工具输出；支持 cursor 分页"},
-  {"tool": "mcp__codex_app__create_thread", "purpose": "按项目或 projectless 创建新任务；仅在用户明确要求创建新任务时调用"},
+  {"tool": "mcp__codex_app__create_thread", "purpose": "按项目或 projectless 创建新任务；/init 或 new-session 发现缺失/不可续接专题时由主会话逐项调用"},
   {"tool": "mcp__codex_app__send_message_to_thread", "purpose": "向既有线程追加用户可见的 follow-up prompt"},
   {"tool": "mcp__codex_app__wait_threads", "purpose": "等待一个或多个线程完成或需要关注，使用事件等待而非 transcript 轮询"},
   {"tool": "mcp__codex_app__navigate_to_codex_page", "purpose": "在 Codex UI 中打开指定线程或聊天"},
@@ -160,7 +160,7 @@ python scripts/find_project_sessions.py --root . --vendor Codex --current
 ]
 ```
 
-工具集合受宿主版本、权限和当前线程环境影响；未暴露的工具不得通过脚本伪造。`send_message_to_thread` 没有可自定义的 sender/role 字段，来源标识只能作为 prompt 正文中的约定前缀；它不能把消息伪装成系统消息。完成后回传 main 的标准链路是 `wait_threads` -> `read_thread`（必要时）-> `send_message_to_thread`。
+工具集合受宿主版本、权限和当前线程环境影响；未暴露的工具不得通过脚本伪造。`send_message_to_thread` 没有可自定义的 sender/role 字段，来源标识只能作为 prompt 正文中的约定前缀；它不能把消息伪装成系统消息。标准链路是先 `send_message_to_thread`，再按需 `wait_threads` -> `read_thread`；发送成功只表示请求已提交，不表示模型已回复。
 
 ### 4.1 创建、请求、接收三段契约
 
@@ -168,26 +168,69 @@ python scripts/find_project_sessions.py --root . --vendor Codex --current
 [
   {
     "stage": "创建",
-    "preferred": "当前宿主实际暴露的 create_thread",
-    "required_result": "返回真实 threadId 后才写入 vendors.codex",
-    "fallback": "无创建能力时返回 PREPARED_ONLY 并生成派单包"
+    "preferred": "主会话调用 mcp__codex_app__list_projects，再逐项调用 mcp__codex_app__create_thread",
+    "required_result": "只接受 structuredContent.threadId/thread_id，或嵌套 response/thread 的同名 formal 字段",
+    "pending_result": "clientThreadId、queued 或无 formal ID -> PENDING_CREATION；保存 creation_request，不写入物理绑定"
   },
   {
     "stage": "请求",
-    "preferred": "send_message_to_thread（已登记且项目一致的 thread）",
+    "preferred": "send_message_to_thread（已登记且项目一致的 formal threadId）",
     "fallback": "codex queue --thread <id> --message <text>；批处理明确选择时才用 codex exec resume <id> -，prompt 从 stdin 输入",
-    "success": "仅收到明确 submitted=true 或 CLI exit code 0 才算 SUBMITTED"
+    "success": "仅收到明确 submitted=true 或 CLI exit code 0 才算 SUBMITTED；提交不等于模型回复"
   },
   {
     "stage": "接收",
-    "preferred": "wait_threads 获取状态变化，必要时 read_thread 读取最终文本",
+    "preferred": "wait_threads 获取状态变化，必要时 read_thread/read_async 读取最终文本",
     "fallback": "codex exec resume 的 stdout/JSONL 由调用方消费；无接收能力不得伪造完成",
     "forbidden": "把扫描历史、创建返回或派单成功当作模型回复"
   }
 ]
 ```
 
-Desktop 工具集合随宿主版本变化；运行时未暴露 `create_thread`、`send_message_to_thread` 或 `wait_threads` 时，必须降级到 CLI/派单包，并向调用方报告降级状态。
+#### 4.1.1 `/init` 与 `/new-session` 的 Codex 主动创建步骤
+
+主会话按一个 `module_key` 一个创建请求执行：
+
+```json
+[
+  {
+    "tool": "mcp__codex_app__list_projects",
+    "args": {},
+    "read": ["projectId", "isGitRepository"]
+  },
+  {
+    "tool": "mcp__codex_app__create_thread",
+    "args": {
+      "prompt": "<memory-derived initialization or topic prompt>",
+      "title": "<memory H1 or normalized topic title>",
+      "target": {
+        "type": "project",
+        "projectId": "<projectId>",
+        "environment": { "type": "worktree or local" }
+      },
+      "model": "<user explicit, then existing model_config, then role default>",
+      "thinking": "<user explicit, then existing model_config, then role default>"
+    },
+    "environment_rule": "isGitRepository=true -> worktree; otherwise -> local"
+  },
+  {
+    "tool_result": "CallToolResult",
+    "formal_fields": ["threadId", "thread_id"],
+    "formal_locations": ["structuredContent", "nested response/thread", "content text containing JSON"],
+    "client_fields": ["clientThreadId", "client_thread_id"],
+    "client_rule": "clientThreadId/queued 只能进入 PENDING_CREATION；不可 send、wait 或 bind"
+  },
+  {
+    "bind": "node scripts/new_topic_session.js --workspace <root> --vendor codex --doc <doc> --bind-current <threadId> --id-kind threadId",
+    "bind_python": "python scripts/new_topic_session.py --workspace <root> --vendor codex --doc <doc> --bind-current <threadId> --id-kind threadId",
+    "persist": "写入 sessions.json、topics.json 及 sessions.codex.json/topics.codex.json 后重新运行 init"
+  }
+]
+```
+
+`create_thread` 的精确环境映射是 `target.environment.type = worktree`（项目 `isGitRepository=true`）或 `local`（否则）；已有 `resumable=true` 且 `id_kind=threadId` 的绑定优先复用，同一专题不重复创建。`send_message_to_thread` 可在绑定后追加初始化 Prompt，但只表示请求提交；需要模型结果时使用 `wait_threads`/`read_thread`。本仓库脚本层没有原生 MCP 调用能力，因此不会在脚本内调用 `create_thread`；无 Host Adapter 时只能返回显式 `PENDING_CREATION`/`UNSUPPORTED`，由主会话完成原生调用、绑定和再次扫描。
+
+Desktop 工具集合随宿主版本、权限和当前线程环境变化；未暴露的工具不得通过脚本伪造。脚本返回 `PENDING_CREATION` 时必须保留 `creation_request`，而不是把等待中的请求当作已创建。
 
 ### 4.3 Codex 专属创建期模型策略
 

@@ -22,14 +22,23 @@ def parse_args(argv):
     return options
 
 
+def normalize_thread_id(options):
+    options = options if isinstance(options, dict) else {}
+    if options.get("clientThreadId") or options.get("client_thread_id") or options.get("id_kind") == "clientThreadId":
+        return None
+    value = options.get("threadId") or options.get("thread") or options.get("sessionId")
+    return str(value).strip() if value is not None and str(value).strip() else None
+
+
 def build_command(options, codex_bin=None):
-    if not options.get("thread") or not options.get("message"):
-        raise ValueError("--thread and --message are required")
+    thread = normalize_thread_id(options)
+    if not thread or not options.get("message"):
+        raise ValueError("formal Codex threadId and message are required; clientThreadId cannot be routed")
     codex_bin = codex_bin or os.environ.get("CODEX_BIN", "codex")
     if options.get("mode") == "resume":
-        command = [codex_bin, "exec", "resume", options["thread"], "-"]
+        command = [codex_bin, "exec", "resume", thread, "-"]
     else:
-        command = [codex_bin, "queue", "--thread", options["thread"], "--message", options["message"]]
+        command = [codex_bin, "queue", "--thread", thread, "--message", options["message"]]
     if options.get("model"):
         command.extend(["--model", options["model"]])
     if options.get("reasoning_effort"):

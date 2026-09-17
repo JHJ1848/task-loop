@@ -35,11 +35,19 @@ const VENDOR_ALIASES = {
   claudecode: 'claude'
 };
 
+const SESSION_STATUS = Object.freeze({
+  DISCOVERED: 'DISCOVERED',
+  BOUND: 'BOUND',
+  PENDING_CREATION: 'PENDING_CREATION',
+  CREATION_FAILED: 'CREATION_FAILED',
+  UNSUPPORTED: 'UNSUPPORTED'
+});
+
 function detectVendor(env) {
   env = env || process.env;
-  if (env.ANTIGRAVITY_CONVERSATION_ID) return 'antigravity';
-  if (env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID) return 'zcode';
   if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
+  if (env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID) return 'zcode';
+  if (env.ANTIGRAVITY_CONVERSATION_ID) return 'antigravity';
   return null;
 }
 
@@ -47,6 +55,23 @@ function normalizeVendor(name) {
   if (!name) return null;
   const key = String(name).trim().toLowerCase();
   return VENDOR_ALIASES[key] || (/^[a-z][a-z0-9_-]{0,31}$/.test(key) ? key : null);
+}
+
+function getCurrentSessionId(env, vendor) {
+  env = env || process.env;
+  const currentVendor = normalizeVendor(vendor) || detectVendor(env);
+  if (currentVendor === 'codex') return env.CODEX_THREAD_ID || env.CODEX_SESSION_ID || null;
+  if (currentVendor === 'claude') return null;
+  if (currentVendor === 'zcode') return env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID || null;
+  if (currentVendor === 'antigravity') return env.ANTIGRAVITY_CONVERSATION_ID || null;
+  return null;
+}
+
+function sessionIdentity(vendor, sessionId) {
+  const normalizedVendor = normalizeVendor(vendor);
+  const normalizedId = sessionId == null ? '' : String(sessionId).trim();
+  if (!normalizedVendor || !normalizedId) return null;
+  return `${normalizedVendor}:${normalizedId}`;
 }
 
 function emptyPartition(vendor) {
@@ -183,9 +208,12 @@ function writePartition(file, vendor, partitionData, options = {}) {
 
 module.exports = {
   SCHEMA_VERSION,
+  SESSION_STATUS,
   VENDOR_ALIASES,
   detectVendor,
   normalizeVendor,
+  getCurrentSessionId,
+  sessionIdentity,
   emptyPartition,
   emptyTopicsPartition,
   getDotPath,

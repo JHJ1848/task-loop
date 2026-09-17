@@ -6,6 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const stateStore = require('./task_loop_state');
 
 const { scanAgySessions } = require('./providers/get_agy_project_sessions');
 const { scanCodexSessions, getCurrentSessionMetadata } = require('./providers/get_codex_project_sessions');
@@ -14,7 +15,10 @@ const { scanZcodeSessions } = require('./providers/get_zcode_project_sessions');
 
 function safeScan(vendorName, scanFn) {
   try {
-    return scanFn() || [];
+    return (scanFn() || []).map(item => ({
+      ...item,
+      vendor: stateStore.normalizeVendor(item && item.vendor) || vendorName
+    }));
   } catch (err) {
     console.error(`[find-sessions] ${vendorName} provider error: ${err.message}`);
     return [];
@@ -23,7 +27,7 @@ function safeScan(vendorName, scanFn) {
 
 function findSessions(projectRoot = '.', vendor = 'Auto', inspect = false) {
   let allSessions = [];
-  const v = (vendor || 'auto').toLowerCase();
+  const v = stateStore.normalizeVendor(vendor) || (vendor || 'auto').toLowerCase();
 
   const scanAgy = () => safeScan('antigravity', () => scanAgySessions(projectRoot, null, inspect));
   const scanCodex = () => safeScan('codex', () => scanCodexSessions(projectRoot));
@@ -50,54 +54,32 @@ function findSessions(projectRoot = '.', vendor = 'Auto', inspect = false) {
       policyFile = path.join(rootPath, '.codex', 'task-loop', 'policy.json');
     }
 
-    let activeVendor = 'antigravity';
+    let activeVendor = stateStore.normalizeVendor(stateStore.detectVendor(process.env)) || 'antigravity';
     if (fs.existsSync(policyFile)) {
       try {
         const p = JSON.parse(fs.readFileSync(policyFile, 'utf8'));
         if (p.active_vendor) {
-          activeVendor = String(p.active_vendor).toLowerCase();
+          activeVendor = stateStore.normalizeVendor(p.active_vendor) || activeVendor;
         }
       } catch (e) {}
     }
-    if (!fs.existsSync(policyFile)) {
-      // No project policy: prefer the host this session is actually running in.
-      if (process.env.ZCODE_SESSION_ID || process.env.CLAUDE_SESSION_ID) {
-        activeVendor = 'zcode';
+    const primaryScans = { antigravity: scanAgy, codex: scanCodex, claude: scanClaude, zcode: scanZcode };
+    const primary = primaryScans[activeVendor] || scanAgy;
+    const primarySessions = primary();
+    allSessions = allSessions.concat(primarySessions);
+    if (primarySessions.length === 0) {
+      for (const [otherVendor, scan] of Object.entries(primaryScans)) {
+        if (otherVendor !== activeVendor) allSessions = allSessions.concat(scan());
       }
-    }
-
-    if (activeVendor === 'antigravity') {
-      const agy = scanAgy();
-      allSessions = allSessions.concat(agy);
-      if (agy.length === 0) {
-        allSessions = allSessions.concat(scanCodex());
-        allSessions = allSessions.concat(scanZcode());
-      }
-    } else if (activeVendor === 'codex') {
-      const codex = scanCodex();
-      allSessions = allSessions.concat(codex);
-      if (codex.length === 0) {
-        allSessions = allSessions.concat(scanAgy());
-      }
-    } else if (activeVendor === 'claude') {
-      const claude = scanClaude();
-      allSessions = allSessions.concat(claude);
-      if (claude.length === 0) {
-        allSessions = allSessions.concat(scanAgy());
-      }
-    } else if (activeVendor === 'zcode') {
-      const zcode = scanZcode();
-      allSessions = allSessions.concat(zcode);
-      if (zcode.length === 0) {
-        allSessions = allSessions.concat(scanAgy());
-      }
-    } else {
-      allSessions = allSessions.concat(scanAgy());
     }
   }
 
-  allSessions.sort((a, b) => (b.last_active_at || '').localeCompare(a.last_active_at || ''));
-  return allSessions;
+  const unique = new Map();
+  for (const session of allSessions) {
+    const identity = stateStore.sessionIdentity(session.vendor, session.session_id);
+    if (identity && !unique.has(identity)) unique.set(identity, session);
+  }
+  return Array.from(unique.values()).sort((a, b) => (b.last_active_at || '').localeCompare(a.last_active_at || ''));
 }
 
 function main() {

@@ -6,6 +6,7 @@ const CODEX_MODEL_DEFAULTS = Object.freeze({
   topic: Object.freeze({ model: 'gpt-5.6-terra', reasoning_effort: 'xhigh' }),
   subagent: Object.freeze({ model: 'gpt-5.6-luna', reasoning_effort: 'max' })
 });
+const CODEX_ENVIRONMENT_TYPES = Object.freeze(['worktree', 'local']);
 
 function normalizeRole(role) {
   const value = String(role || '').trim().toLowerCase();
@@ -76,14 +77,26 @@ function toCliOverrides(modelConfig = {}) {
   return result;
 }
 
-function buildCreateThreadRequest({ projectId, title, prompt, role = 'topic', model, reasoning_effort, thinking } = {}) {
+function normalizeEnvironment(environment) {
+  const value = typeof environment === 'string' ? environment : environment && environment.type;
+  return CODEX_ENVIRONMENT_TYPES.includes(value) ? { type: value } : null;
+}
+
+function buildCreateThreadRequest({ projectId, isGitRepository, environment, title, prompt, role = 'topic', model, reasoning_effort, thinking } = {}) {
   const resolved = resolveModelConfig({ model, reasoning_effort, thinking }, role);
+  const target = projectId
+    ? {
+        type: 'project',
+        projectId,
+        environment: normalizeEnvironment(environment) || { type: isGitRepository === true ? 'worktree' : 'local' }
+      }
+    : { type: 'projectless' };
   return {
     prompt,
     title,
     thinking: thinking || resolved.reasoning_effort,
     model: model || resolved.model,
-    target: projectId ? { type: 'project', projectId, environment: { type: 'worktree' } } : { type: 'projectless' }
+    target
   };
 }
 
@@ -95,5 +108,6 @@ module.exports = {
   applyInitialModelConfig,
   resolveModelConfig,
   toCliOverrides,
+  normalizeEnvironment,
   buildCreateThreadRequest
 };

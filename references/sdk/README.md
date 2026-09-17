@@ -1,10 +1,10 @@
 # [SDK Index] 跨厂商智能体控制 SDK 体系规范
 
-本文档定义了 `task-loop` 中跨厂商智能体（Google Antigravity、OpenAI Codex 与 Anthropic Claude Code）的核心解耦架构规范，涵盖 **Hook 拦截与上下文注入**、**Session 会话调度与状态持久化** 以及 **Question 原生问答与选项交互** 三大核心支柱。
+本文档定义了 `task-loop` 中跨厂商智能体（Google Antigravity、OpenAI Codex 与 Anthropic Claude Code）的核心解耦架构规范，涵盖 **Hook 拦截与上下文注入**、**Session 会话调度与状态持久化** 以及 **Question 原生问答与选项交互** 三大核心支柱，并定义不新增 runtime 的 **Execution/Capability/Authority Context** 跨切面边界。
 
 ---
 
-## 一、三大跨厂商解耦支柱架构 (Three Architectural Pillars)
+## 一、三大跨厂商解耦支柱与执行边界 (Three Pillars + Execution Boundary)
 
 ```text
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -20,6 +20,22 @@
 │   白名单物理门禁 │ • manage()           │ • 原生交互模态与单键降级     │
 │ • 零污染项目规则 │ • Schema v4 分区状态 │ • 决策推演与门禁审批统一     │
 └──────────────────┴──────────────────────┴──────────────────────────────┘
+```
+
+QuestionProvider 是现有契约支柱，继续负责原生问答、选项和确认交互；下述第四项是跨切面执行边界，不是新的运行时或第四个 Provider。
+
+```json
+{
+  "boundary": "Execution/Capability/Authority Context",
+  "fields": [
+    "host capability",
+    "workspace environment",
+    "role model/reasoning",
+    "write permission/lifecycle"
+  ],
+  "codex_formal_id_rule": "只接受 formal threadId/thread_id；clientThreadId/queued -> PENDING_CREATION",
+  "codex_model_precedence": ["用户显式选择", "既有 session.model_config", "role 默认"]
+}
 ```
 
 ```json
@@ -80,11 +96,13 @@
   {
     "vendor": "OpenAI Codex",
     "doc_path": "references/sdk/codex.md",
-    "status": "稳定降级适配 (Stable Degradation Adapter)",
+    "status": "宿主能力适配 (Host-Capability Adapter)",
     "capabilities": [
       "交互选择组件与 CLI 单字符快速按键选项降级",
       "环境变量注入: CODEX_THREAD_ID / CODEX_SESSION_ID 读取",
       "Desktop App Tools 探测与 CLI 消息队列 (codex queue)",
+      "/init 与 /new-session 缺失专题的 list_projects -> create_thread -> formal bind 闭环",
+      "structuredContent/嵌套回执解析；clientThreadId/queued 显式 PENDING_CREATION",
       "创建期专属模型与推理深度策略 (Main: Astra, Topic: Terra, Subagent: Luna)",
       "状态持久化: vendors.codex 专属隔离分区"
     ]

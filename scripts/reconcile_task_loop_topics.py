@@ -28,6 +28,10 @@ def reconcile_topics(project_root: str, manifest_path: str, registry_path: str) 
     with open(registry_file, "r", encoding="utf-8") as f:
         registry = json.load(f)
 
+    if ((manifest.get("schema_version") == 4 and manifest.get("vendors"))
+            or (registry.get("schema_version") == 4 and registry.get("vendors"))):
+        return {"action": "UNSUPPORTED", "reason": "schema_v4_requires_init_or_new_topic_session"}
+
     if "modules" not in registry:
         registry["modules"] = {}
 
