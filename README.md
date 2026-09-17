@@ -274,6 +274,21 @@ node scripts/install_zcode_plugin.js     # 幂等整目录覆盖, 无需先删�
 ```json
 [
   {
+    "version": "1.5.1",
+    "created_at": "2026-09-17",
+    "updated_at": "2026-09-17",
+    "status": "Codex Thread Lifecycle & Cross-Vendor Boundaries",
+    "highlights": [
+      "/init 按 docs/memory/*.md 主动补齐缺失专题会话，并保持当前厂商分区绑定",
+      "Codex 正式 threadId/clientThreadId 生命周期与 project environment 适配",
+      "明确 model/thinking 的角色默认值与优先级",
+      "收敛跨厂商 Session/Hook 能力边界，不声明 Codex 自动 Hook 已支持"
+    ],
+    "verified_governance": [
+      "✓ 版本说明明确区分 Codex 会话生命周期适配与自动 Hook 能力边界，避免将后者表述为已支持"
+    ]
+  },
+  {
     "version": "1.5.0",
     "created_at": "2026-09-14",
     "updated_at": "2026-09-14",
