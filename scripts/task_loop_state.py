@@ -38,7 +38,9 @@ def detect_vendor(env=None):
     env = env if env is not None else os.environ
     if env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID"):
         return "codex"
-    if env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID"):
+    # CLAUDE_SESSION_ID is only a ZCode compatibility input when the caller
+    # explicitly requests vendor=zcode; it must not auto-select ZCode.
+    if env.get("ZCODE_SESSION_ID"):
         return "zcode"
     if env.get("ANTIGRAVITY_CONVERSATION_ID"):
         return "antigravity"

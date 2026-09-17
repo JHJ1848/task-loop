@@ -46,7 +46,9 @@ const SESSION_STATUS = Object.freeze({
 function detectVendor(env) {
   env = env || process.env;
   if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
-  if (env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID) return 'zcode';
+  // Claude's session marker is only a ZCode compatibility input when the
+  // caller explicitly requests vendor=zcode; it must not auto-select ZCode.
+  if (env.ZCODE_SESSION_ID) return 'zcode';
   if (env.ANTIGRAVITY_CONVERSATION_ID) return 'antigravity';
   return null;
 }

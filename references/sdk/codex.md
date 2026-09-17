@@ -228,7 +228,7 @@ python scripts/find_project_sessions.py --root . --vendor Codex --current
 ]
 ```
 
-`create_thread` 的精确环境映射是 `target.environment.type = worktree`（项目 `isGitRepository=true`）或 `local`（否则）；已有 `resumable=true` 且 `id_kind=threadId` 的绑定优先复用，同一专题不重复创建。`send_message_to_thread` 可在绑定后追加初始化 Prompt，但只表示请求提交；需要模型结果时使用 `wait_threads`/`read_thread`。本仓库脚本层没有原生 MCP 调用能力，因此不会在脚本内调用 `create_thread`；无 Host Adapter 时只能返回显式 `PENDING_CREATION`/`UNSUPPORTED`，由主会话完成原生调用、绑定和再次扫描。
+`create_thread` 的精确环境映射是 `target.environment.type = worktree`（项目 `isGitRepository=true`）或 `local`（否则）；已有 `resumable=true` 且 `id_kind=threadId` 的绑定优先复用，同一专题不重复创建。去重或迁移不得依据任务标题相同；标题只用于展示，不能替代 `module_key`、项目身份和已登记的线程 ID。专题续发必须解析 `vendors.codex.modules.<module_key>` 中已绑定的正式 `threadId`，不得使用 `clientThreadId`、`rollout_id` 或扫描结果代替，也不得把工作树交接当作线程迁移。`send_message_to_thread` 可在绑定后追加初始化 Prompt，但只表示请求提交；需要模型结果时使用 `wait_threads`/`read_thread`。本仓库脚本层没有原生 MCP 调用能力，因此不会在脚本内调用 `create_thread`；无 Host Adapter 时只能返回显式 `PENDING_CREATION`/`UNSUPPORTED`，由主会话完成原生调用、绑定和再次扫描。
 
 Desktop 工具集合随宿主版本、权限和当前线程环境变化；未暴露的工具不得通过脚本伪造。脚本返回 `PENDING_CREATION` 时必须保留 `creation_request`，而不是把等待中的请求当作已创建。
 
