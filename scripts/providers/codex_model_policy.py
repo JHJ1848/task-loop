@@ -105,7 +105,7 @@ def build_create_thread_request(
             "type": "project",
             "projectId": project_id,
             "environment": normalize_environment(environment)
-            or {"type": "worktree" if is_git_repository is True else "local"},
+            or {"type": "worktree" if is_git_repository is not False else "local"},
         }
         if project_id
         else {"type": "projectless"}

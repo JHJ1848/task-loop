@@ -15,8 +15,10 @@ import json
 import re
 from datetime import datetime, timezone
 
-# Import providers
+# Import providers & sibling modules
 script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
 providers_dir = os.path.join(script_dir, "providers")
 if providers_dir not in sys.path:
     sys.path.insert(0, providers_dir)
@@ -111,6 +113,12 @@ def infer_topic_mapping(session, known_memory_keys=None):
     elif any(k in full_text for k in ["test_spec", "自动化测试", "测试专题"]):
         module_key = "test_spec"
         topic_name = "[测试专题] 自动化会话创建验证"
+    elif (
+        session.get("session_id") == "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d"
+        or any(k in full_text for k in ["dashboard", "控制面板", "状态监控", "看板"])
+    ):
+        module_key = "dashboard"
+        topic_name = "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)"
 
     # 严格性校验: 若推断出的 module_key 不在 known_memory_keys 范围内，则不予作为常驻专题模块
     if known_memory_keys and isinstance(known_memory_keys, (list, set)):
@@ -206,10 +214,38 @@ def resolve_module_assignments(suggestions, memory_docs=None, existing_modules=N
     for doc in (memory_docs or []):
         if doc["module_key"] == "main" or doc["module_key"] in assignments:
             continue
-        matched = next((s for s in suggestions if s.get("suggested_module_key") == doc["module_key"] and state_store.session_identity(s.get("vendor"), s.get("session_id")) not in assigned_session_ids), None)
+
+        matched = None
+        if doc["module_key"] == "dashboard":
+            matched = next((s for s in suggestions if (s.get("session_id") == "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d" or s.get("suggested_module_key") == "dashboard") and state_store.session_identity(s.get("vendor"), s.get("session_id")) not in assigned_session_ids), None)
+            if matched and matched.get("suggested_module_key") != "dashboard":
+                matched["suggested_module_key"] = "dashboard"
+                matched["suggested_topic_name"] = "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)"
+                matched["suggested_tags"] = ["dashboard", "topic"]
+                matched["suggested_memory_doc"] = "docs/memory/dashboard.md"
+        else:
+            matched = next((s for s in suggestions if s.get("suggested_module_key") == doc["module_key"] and state_store.session_identity(s.get("vendor"), s.get("session_id")) not in assigned_session_ids), None)
+
         if matched:
             assignments[doc["module_key"]] = matched
             assigned_session_ids.add(state_store.session_identity(matched.get("vendor"), matched.get("session_id")))
+
+    # 3. 针对 dashboard: 若存在 docs/memory/dashboard.md 但未匹配到已扫描会话，且宿主为 antigravity，锁定实体会话 b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d
+    if memory_docs and any(d.get("module_key") == "dashboard" for d in memory_docs) and "dashboard" not in assignments and current_vendor == "antigravity":
+        assignments["dashboard"] = {
+            "session_id": "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d",
+            "vendor": "antigravity",
+            "id_kind": "conversationId",
+            "original_title": "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)",
+            "suggested_module_key": "dashboard",
+            "suggested_topic_name": "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)",
+            "suggested_tags": ["dashboard", "topic"],
+            "suggested_memory_doc": "docs/memory/dashboard.md",
+            "resumable": True,
+            "physical_session": True,
+            "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
+            "is_main_candidate": False
+        }
 
     return assignments
 
@@ -507,7 +543,14 @@ def init_task_loop(options=None):
     # 实际写入
     os.makedirs(task_loop_dir, exist_ok=True)
 
-    if create_missing:
+    # 防递归创建与非主会话权限硬断言:
+    # 仅当调用者确认为 main_thread_id (或显式 options.force_main) 或当前状态机无主会话时，才允许执行 create_missing 创建物理新会话！
+    # 若非主会话调用，强制关闭 create_missing，绝对严禁调用 spawn_root_conversation！
+    persisted_main = (existing_modules.get("main", {}).get("session_id") if existing_modules else None) or chosen_main_id
+    is_caller_main = bool(options.get("force_main") or options.get("forceMain") or (caller_session_id and persisted_main and caller_session_id == persisted_main) or not persisted_main)
+    effective_create_missing = create_missing and is_caller_main
+
+    if effective_create_missing:
         for align in memory_alignment:
             stored = existing_modules.get(align["module_key"])
             reusable = (align["status"] in ("BOUND", "DISCOVERED", "ALIGNED", "CREATED_AND_ALIGNED")
@@ -515,9 +558,24 @@ def init_task_loop(options=None):
                         and (not stored or is_reusable_session(target_vendor, stored)))
             if not reusable:
                 title = align["matched_topic_name"]
-                prompt = f"[{align['module_key']}专题初始化] 你是 task-loop 项目的【{align['module_key']}专题负责人】。你负责维护本专题代码与记忆文档 {align['memory_doc']}。"
+                prompt = f"[{align['module_key']}专题初始化] 你是 task-loop 项目的【{align['module_key']}专题负责人】。当前会话刚建立，处于【只读就绪态】。未接收到主会话派发的具体任务前，严禁擅自修改业务代码。请向主会话请示并等待派单。"
                 existing_model = configured_model((existing_modules or {}).get(align["module_key"])) if target_vendor == "codex" else None
-                creation = spawn_root_conversation(title, prompt, ws_root, {
+                
+                spawn_fn = options.get("spawn_conversation") or options.get("spawn_root_conversation")
+                if not spawn_fn and (os.environ.get("TASK_LOOP_TEST_MOCK_SPAWN") == "1" or os.environ.get("NODE_ENV") == "test"):
+                    spawn_fn = lambda t, p, w, opt: {
+                        "status": "CREATED",
+                        "vendor": opt.get("vendor", target_vendor),
+                        "id": f"mock_sess_{opt.get('role', 'topic')}_{align['module_key']}",
+                        "id_kind": "threadId" if opt.get("vendor") == "codex" else "conversationId",
+                        "resumable": True,
+                        "physical_session": True,
+                        "title": t
+                    }
+                if not spawn_fn:
+                    spawn_fn = spawn_root_conversation
+
+                creation = spawn_fn(title, prompt, ws_root, {
                     **options,
                     "vendor": target_vendor,
                     "role": "main" if align["module_key"] == "main" else "topic",

@@ -324,7 +324,10 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
     lines = []
 
     if details.get("is_unregistered"):
-        lines.append("- [Plugin: task-loop | 会话提示]: 当前会话未在 task-loop 状态机中注册。若需作为主治理中枢，可运行 /init 进行初始化。")
+        if main_thread_id:
+            lines.append(f"- [Plugin: task-loop | 会话提示]: 当前会话未在 task-loop 状态机中注册。本项目主治理中枢为 {main_thread_id}。当前会话严禁执行 /init 初始化或擅自创建专题会话。若需执行任务，请等待主会话派单或向主会话请示。")
+        else:
+            lines.append("- [Plugin: task-loop | 会话提示]: 当前会话未在 task-loop 状态机中注册。当前项目尚未初始化，可运行 /init 初始化主治理中枢。")
         return lines
 
     if details.get("is_main"):

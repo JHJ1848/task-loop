@@ -190,7 +190,11 @@ def spawn_root_conversation(title, prompt, ws_root, options=None):
         agentapi = _find_agentapi(env)
         if not agentapi:
             return create_status("UNSUPPORTED", "antigravity", "agentapi is unavailable; no physical session was created")
-        cmd = [agentapi, "new-conversation", f"--title={title}", prompt]
+        is_win = sys.platform == "win32"
+        safe_title = f'"{str(title or "").replace(chr(34), chr(34)*2)}"' if is_win else title
+        safe_prompt = f'"{str(prompt or "").replace(chr(34), chr(34)*2)}"' if is_win else prompt
+        title_arg = f"--title={safe_title}" if is_win else f"--title={title}"
+        cmd = [agentapi, "new-conversation", title_arg, safe_prompt]
         try:
             res = subprocess.run(cmd, env=env, cwd=ws_root, shell=True, capture_output=True, text=True, encoding="utf-8")
             if res.returncode != 0:

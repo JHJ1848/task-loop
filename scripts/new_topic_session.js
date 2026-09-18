@@ -188,7 +188,11 @@ function spawnRootConversation(title, prompt, wsRoot, options = {}) {
     const agentapi = findAgentApiBinary(env);
     if (!agentapi) return createStatus('UNSUPPORTED', 'antigravity', 'agentapi is unavailable; no physical session was created');
     try {
-      const res = spawnSync(agentapi, ['new-conversation', `--title=${title}`, prompt], {
+      const isWin = process.platform === 'win32';
+      const safeTitle = isWin ? `"${String(title || '').replace(/"/g, '""')}"` : title;
+      const safePrompt = isWin ? `"${String(prompt || '').replace(/"/g, '""')}"` : prompt;
+      const titleArg = isWin ? `--title=${safeTitle}` : `--title=${title}`;
+      const res = spawnSync(agentapi, ['new-conversation', titleArg, safePrompt], {
         env,
         cwd: wsRoot,
         shell: true,

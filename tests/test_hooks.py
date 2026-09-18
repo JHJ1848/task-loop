@@ -129,7 +129,8 @@ class TestAntigravityHooks(unittest.TestCase):
         self.assertIn("是否主会话: 待定 (Unregistered)", msg)
         self.assertIn("未注册会话 (Unregistered Session)", msg)
         self.assertIn("角色定位: [待定 / 初始会话]", msg)
-        self.assertIn("当前会话未在 task-loop 状态机中注册。若需作为主治理中枢，可运行 /init 进行初始化。", msg)
+        self.assertIn("当前会话未在 task-loop 状态机中注册。本项目主治理中枢为", msg)
+        self.assertIn("当前会话严禁执行 /init 初始化或擅自创建专题会话", msg)
         self.assertNotIn("[Plugin: task-loop | 专题会话约束规则]", msg)
 
     def test_pre_tool_use_read_tool(self):

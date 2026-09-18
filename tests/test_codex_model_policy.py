@@ -30,7 +30,9 @@ class TestCodexModelPolicy(unittest.TestCase):
         self.assertEqual(corrected["model_config"]["reasoning_effort"], "max")
 
     def test_create_request(self):
-        request = POLICY.build_create_thread_request("project-1", "topic", "init", "topic")
+        request = POLICY.build_create_thread_request(
+            project_id="project-1", title="topic", prompt="init", role="topic"
+        )
         self.assertEqual(request["model"], "gpt-5.6-terra")
         self.assertEqual(request["thinking"], "xhigh")
         self.assertEqual(request["target"], {"type": "project", "projectId": "project-1", "environment": {"type": "worktree"}})

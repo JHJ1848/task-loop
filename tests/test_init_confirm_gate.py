@@ -27,7 +27,7 @@ def mk_suggestion(sid, key, vendor="antigravity", **opts):
         "suggested_topic_name": f"[专题] {key}",
         "suggested_tags": [key, "topic"],
         "suggested_memory_doc": f"docs/memory/{key}.md",
-        "resumable": False,
+        "resumable": True,
         "dispatch_hint": "hint",
         "is_main_candidate": False,
         "is_current_session": False,

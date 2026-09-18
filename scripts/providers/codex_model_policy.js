@@ -88,7 +88,7 @@ function buildCreateThreadRequest({ projectId, isGitRepository, environment, tit
     ? {
         type: 'project',
         projectId,
-        environment: normalizeEnvironment(environment) || { type: isGitRepository === true ? 'worktree' : 'local' }
+        environment: normalizeEnvironment(environment) || { type: isGitRepository !== false ? 'worktree' : 'local' }
       }
     : { type: 'projectless' };
   return {

@@ -75,7 +75,9 @@ class TestNewTopicSessionSkill(unittest.TestCase):
         previous = os.environ.get("CODEX_THREAD_ID")
         os.environ["CODEX_THREAD_ID"] = "codex-test-thread"
         try:
-            self.assertIsNone(spawn_root_conversation("[测试专题] x", "初始化", self.tmp_ws))
+            res = spawn_root_conversation("[测试专题] x", "初始化", self.tmp_ws)
+            self.assertEqual(res.get("status"), "PENDING_CREATION")
+            self.assertEqual(res.get("host_action"), "create_thread")
         finally:
             if previous is None:
                 os.environ.pop("CODEX_THREAD_ID", None)

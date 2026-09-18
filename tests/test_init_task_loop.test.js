@@ -29,6 +29,12 @@ function runInitSkillTests() {
   assert.strictEqual(mappedSession.module_key, 'session_control');
   assert.strictEqual(mappedSession.topic_name, '[Session] SDK & Scripting');
 
+  const mockDashboard = { session_id: 'b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d', title: '控制面板状态监控与拖拽', summary: 'dashboard web' };
+  const mappedDashboard = inferTopicMapping(mockDashboard);
+  assert.strictEqual(mappedDashboard.module_key, 'dashboard');
+  assert.strictEqual(mappedDashboard.topic_name, '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)');
+  assert.strictEqual(mappedDashboard.memory_doc, 'docs/memory/dashboard.md');
+
   // Test 2: initTaskLoop dry-run mode
   const dryRunRes = initTaskLoop({ dryRun: true });
   assert.ok(dryRunRes.workspace_root);
@@ -37,13 +43,31 @@ function runInitSkillTests() {
   assert.ok(Array.isArray(dryRunRes.memory_alignment));
 
   // Test 3: initTaskLoop in isolated temporary workspace (Schema v3 & Multi-Vendor Partitions)
+  process.env.TASK_LOOP_TEST_MOCK_SPAWN = '1';
+  const mockSpawn = (title, prompt, wsRoot, opt) => ({
+    status: 'CREATED',
+    vendor: opt.vendor || 'antigravity',
+    id: `mock_sess_${opt.role || 'topic'}_${opt.vendor}`,
+    id_kind: opt.vendor === 'codex' ? 'threadId' : 'conversationId',
+    resumable: true,
+    physical_session: true,
+    title
+  });
+
   const tmpWs = fs.mkdtempSync(path.join(os.tmpdir(), 'task_loop_init_test_'));
   const tmpMemoryDir = path.join(tmpWs, 'docs', 'memory');
   fs.mkdirSync(tmpMemoryDir, { recursive: true });
   fs.writeFileSync(path.join(tmpMemoryDir, 'hook.md'), '# Hook Memory', 'utf8');
 
-  // Initialize with antigravity vendor
-  const liveResAgy = initTaskLoop({ wsRoot: tmpWs, dryRun: false, vendor: 'antigravity', mainSessionId: 'sess_agy_main' });
+  // Initialize with antigravity vendor (with mock spawn to isolate from real IDE)
+  const liveResAgy = initTaskLoop({
+    wsRoot: tmpWs,
+    dryRun: false,
+    vendor: 'antigravity',
+    mainSessionId: 'sess_agy_main',
+    forceMain: true,
+    spawnConversation: mockSpawn
+  });
   assert.ok(fs.existsSync(liveResAgy.storage_files.sessions_json));
   assert.ok(fs.existsSync(liveResAgy.storage_files.sessions_vendor_json));
   assert.ok(fs.existsSync(liveResAgy.storage_files.topics_json));
@@ -57,7 +81,14 @@ function runInitSkillTests() {
   assert.ok(savedSessionsAgy.vendors.antigravity);
 
   // Initialize with zcode vendor on top of the same workspace -> must preserve antigravity partition!
-  const liveResZCode = initTaskLoop({ wsRoot: tmpWs, dryRun: false, vendor: 'zcode', mainSessionId: 'sess_zcode_main' });
+  const liveResZCode = initTaskLoop({
+    wsRoot: tmpWs,
+    dryRun: false,
+    vendor: 'zcode',
+    mainSessionId: 'sess_zcode_main',
+    forceMain: true,
+    spawnConversation: mockSpawn
+  });
   const savedSessionsZCode = JSON.parse(fs.readFileSync(liveResZCode.storage_files.sessions_json, 'utf8'));
   assert.strictEqual(savedSessionsZCode.schema_version, 4);
   assert.strictEqual(savedSessionsZCode.vendors.zcode.main_thread_id, 'sess_zcode_main');

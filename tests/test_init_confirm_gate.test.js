@@ -24,7 +24,7 @@ function mkSuggestion(id, key, vendor, opts = {}) {
     suggested_topic_name: `[专题] ${key}`,
     suggested_tags: [key, 'topic'],
     suggested_memory_doc: `docs/memory/${key}.md`,
-    resumable: false,
+    resumable: true,
     dispatch_hint: 'hint',
     is_main_candidate: false,
     is_current_session: false

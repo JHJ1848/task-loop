@@ -5,7 +5,12 @@ import tempfile
 import json
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+scripts_dir = os.path.join(repo_root, 'scripts')
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+if scripts_dir not in sys.path:
+    sys.path.insert(0, scripts_dir)
 from scripts.init_task_loop import infer_topic_mapping, init_task_loop
 
 
@@ -28,6 +33,12 @@ class TestInitSkill(unittest.TestCase):
         self.assertEqual(mapped_subagent["module_key"], "subagent")
         self.assertEqual(mapped_subagent["topic_name"], "[子代理专题] Subagent机制 & 动态模板")
 
+        mock_dashboard = {"session_id": "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d", "title": "控制面板状态监控与拖拽", "summary": "dashboard web"}
+        mapped_dashboard = infer_topic_mapping(mock_dashboard)
+        self.assertEqual(mapped_dashboard["module_key"], "dashboard")
+        self.assertEqual(mapped_dashboard["topic_name"], "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)")
+        self.assertEqual(mapped_dashboard["memory_doc"], "docs/memory/dashboard.md")
+
     def test_init_dry_run(self):
         res = init_task_loop({"dry_run": True})
         self.assertTrue(res["workspace_root"])
@@ -36,6 +47,18 @@ class TestInitSkill(unittest.TestCase):
         self.assertIsInstance(res["memory_alignment"], list)
 
     def test_init_isolated_workspace(self):
+        os.environ["TASK_LOOP_TEST_MOCK_SPAWN"] = "1"
+        def mock_spawn(title, prompt, ws_root, opt):
+            return {
+                "status": "CREATED",
+                "vendor": opt.get("vendor", "antigravity"),
+                "id": f"mock_sess_{opt.get('role', 'topic')}_{opt.get('vendor')}",
+                "id_kind": "threadId" if opt.get("vendor") == "codex" else "conversationId",
+                "resumable": True,
+                "physical_session": True,
+                "title": title
+            }
+
         tmp_ws = tempfile.mkdtemp(prefix="task_loop_init_py_test_")
         try:
             tmp_mem = os.path.join(tmp_ws, "docs", "memory")
@@ -43,8 +66,15 @@ class TestInitSkill(unittest.TestCase):
             with open(os.path.join(tmp_mem, "hook.md"), "w", encoding="utf-8") as f:
                 f.write("# Hook Memory")
 
-            # Initialize with antigravity vendor
-            res_agy = init_task_loop({"ws_root": tmp_ws, "dry_run": False, "vendor": "antigravity", "main_session_id": "sess_agy_main"})
+            # Initialize with antigravity vendor (with mock spawn)
+            res_agy = init_task_loop({
+                "ws_root": tmp_ws,
+                "dry_run": False,
+                "vendor": "antigravity",
+                "main_session_id": "sess_agy_main",
+                "force_main": True,
+                "spawn_conversation": mock_spawn
+            })
             self.assertTrue(os.path.exists(res_agy["storage_files"]["sessions_json"]))
             self.assertTrue(os.path.exists(res_agy["storage_files"]["sessions_vendor_json"]))
             self.assertTrue(os.path.exists(res_agy["storage_files"]["topics_json"]))
@@ -59,7 +89,14 @@ class TestInitSkill(unittest.TestCase):
                 self.assertIn("antigravity", data_agy.get("vendors", {}))
 
             # Initialize with zcode vendor on top of the same workspace -> must preserve antigravity partition!
-            res_zcode = init_task_loop({"ws_root": tmp_ws, "dry_run": False, "vendor": "zcode", "main_session_id": "sess_zcode_main"})
+            res_zcode = init_task_loop({
+                "ws_root": tmp_ws,
+                "dry_run": False,
+                "vendor": "zcode",
+                "main_session_id": "sess_zcode_main",
+                "force_main": True,
+                "spawn_conversation": mock_spawn
+            })
             with open(res_zcode["storage_files"]["sessions_json"], "r", encoding="utf-8") as f:
                 data_zcode = json.load(f)
                 self.assertEqual(data_zcode.get("schema_version"), 4)

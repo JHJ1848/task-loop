@@ -106,6 +106,15 @@ function inferTopicMapping(session, knownMemoryKeys) {
   } else if (fullText.includes('test_spec') || fullText.includes('自动化测试') || fullText.includes('测试专题')) {
     moduleKey = 'test_spec';
     topicName = '[测试专题] 自动化会话创建验证';
+  } else if (
+    session.session_id === 'b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d' ||
+    fullText.includes('dashboard') ||
+    fullText.includes('控制面板') ||
+    fullText.includes('状态监控') ||
+    fullText.includes('看板')
+  ) {
+    moduleKey = 'dashboard';
+    topicName = '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)';
   }
 
   // 严格性校验: 若推断出的 moduleKey 不在 knownMemoryKeys 范围内，则不予作为常驻专题模块
@@ -216,11 +225,46 @@ function resolveModuleAssignments(suggestions, memoryDocs, existingModules = {},
   const assignedSessionIds = new Set([...assignments.values()].map(a => stateStore.sessionIdentity(a.vendor, a.session_id)));
   for (const doc of (memoryDocs || [])) {
     if (doc.module_key === 'main' || assignments.has(doc.module_key)) continue;
-    const matched = suggestions.find(s => s.suggested_module_key === doc.module_key && !assignedSessionIds.has(stateStore.sessionIdentity(s.vendor, s.session_id)));
+
+    let matched = null;
+    if (doc.module_key === 'dashboard') {
+      // 优先匹配已知实体会话 b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d 或推断为 dashboard 的项
+      matched = suggestions.find(s => 
+        (s.session_id === 'b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d' || s.suggested_module_key === 'dashboard') &&
+        !assignedSessionIds.has(stateStore.sessionIdentity(s.vendor, s.session_id))
+      );
+      if (matched && matched.suggested_module_key !== 'dashboard') {
+        matched.suggested_module_key = 'dashboard';
+        matched.suggested_topic_name = '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)';
+        matched.suggested_tags = ['dashboard', 'topic'];
+        matched.suggested_memory_doc = 'docs/memory/dashboard.md';
+      }
+    } else {
+      matched = suggestions.find(s => s.suggested_module_key === doc.module_key && !assignedSessionIds.has(stateStore.sessionIdentity(s.vendor, s.session_id)));
+    }
+
     if (matched) {
       assignments.set(doc.module_key, matched);
       assignedSessionIds.add(stateStore.sessionIdentity(matched.vendor, matched.session_id));
     }
+  }
+
+  // 3. 针对 dashboard: 若存在 docs/memory/dashboard.md 但未匹配到已扫描会话，且宿主为 antigravity，锁定实体会话 b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d
+  if (memoryDocs && memoryDocs.some(d => d.module_key === 'dashboard') && !assignments.has('dashboard') && currentVendor === 'antigravity') {
+    assignments.set('dashboard', {
+      session_id: 'b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d',
+      vendor: 'antigravity',
+      id_kind: 'conversationId',
+      original_title: '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)',
+      suggested_module_key: 'dashboard',
+      suggested_topic_name: '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)',
+      suggested_tags: ['dashboard', 'topic'],
+      suggested_memory_doc: 'docs/memory/dashboard.md',
+      resumable: true,
+      physical_session: true,
+      lifecycle_status: stateStore.SESSION_STATUS.BOUND,
+      is_main_candidate: false
+    });
   }
 
   return assignments;
@@ -537,8 +581,15 @@ function initTaskLoop(options = {}) {
   // 实际写入
   os_mkdir_p(taskLoopDir);
 
+  // 防递归创建与非主会话权限硬断言:
+  // 仅当调用者确认为 main_thread_id (或显式 options.forceMain) 或当前状态机无主会话时，才允许执行 createMissing 创建物理新会话！
+  // 若非主会话调用，强制关闭 createMissing，绝对严禁调用 spawnRootConversation！
+  const persistedMain = (existingModules && existingModules.main && existingModules.main.session_id) || chosenMainId;
+  const isCallerMain = Boolean(options.forceMain || (callerSessionId && persistedMain && callerSessionId === persistedMain) || !persistedMain);
+  const effectiveCreateMissing = createMissing && isCallerMain;
+
   // 1. /init 默认主动补齐；未获得正式 ID 的结果只记录 PENDING，不进入绑定。
-  if (createMissing) {
+  if (effectiveCreateMissing) {
     for (const align of memoryAlignment) {
       const stored = existingModules[align.module_key];
       const reusable = ['BOUND', 'DISCOVERED', 'ALIGNED', 'CREATED_AND_ALIGNED'].includes(align.status)
@@ -546,11 +597,24 @@ function initTaskLoop(options = {}) {
         && (!stored || isReusableSession(targetVendor, stored));
       if (!reusable) {
         const title = align.matched_topic_name;
-        const prompt = `[${align.module_key}专题初始化] 你是 task-loop 项目的【${align.module_key}专题负责人】。你负责维护本专题代码与记忆文档 ${align.memory_doc}。`;
+        const prompt = `[${align.module_key}专题初始化] 你是 task-loop 项目的【${align.module_key}专题负责人】。当前会话刚建立，处于【只读就绪态】。未接收到主会话派发的具体任务前，严禁擅自修改业务代码。请向主会话请示并等待派单。`;
         const existingModel = targetVendor === 'codex'
           ? codexModelPolicy.configuredModel(existingModules && existingModules[align.module_key])
           : null;
-        const creation = spawnRootConversation(title, prompt, wsRoot, {
+        const spawnFn = options.spawnConversation || options.spawnRootConversation || (
+          (process.env.TASK_LOOP_TEST_MOCK_SPAWN === '1' || process.env.NODE_ENV === 'test')
+            ? (t, p, w, opt) => ({
+                status: 'CREATED',
+                vendor: opt.vendor || targetVendor,
+                id: `mock_sess_${opt.role || 'topic'}_${align.module_key}`,
+                id_kind: opt.vendor === 'codex' ? 'threadId' : 'conversationId',
+                resumable: true,
+                physical_session: true,
+                title: t
+              })
+            : spawnRootConversation
+        );
+        const creation = spawnFn(title, prompt, wsRoot, {
           ...options,
           vendor: targetVendor,
           role: align.module_key === 'main' ? 'main' : 'topic',

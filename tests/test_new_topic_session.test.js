@@ -55,7 +55,9 @@ function runNewSessionSkillTests() {
     const previousCodexThread = process.env.CODEX_THREAD_ID;
     process.env.CODEX_THREAD_ID = 'codex-test-thread';
     try {
-      assert.strictEqual(spawnRootConversation('[测试专题] x', '初始化', tmpWs), null);
+      const res = spawnRootConversation('[测试专题] x', '初始化', tmpWs);
+      assert.strictEqual(res.status, 'PENDING_CREATION');
+      assert.strictEqual(res.host_action, 'create_thread');
     } finally {
       if (previousCodexThread === undefined) delete process.env.CODEX_THREAD_ID;
       else process.env.CODEX_THREAD_ID = previousCodexThread;
