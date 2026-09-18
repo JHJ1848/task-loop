@@ -846,6 +846,24 @@ def main():
     if res.get("chosen_main_session_id"):
         print(f"选定主会话 ID: {res['chosen_main_session_id']}")
     print("--------------------------------------------------------------------------------")
+    print("受控记忆文档 1:1 专题会话匹配状态 (Memory Docs 1:1 Alignment):")
+    for idx, item in enumerate(res["memory_alignment"]):
+        status = item.get("status")
+        status_tag = ("[✔ 已匹配]" if status in ("ALIGNED", state_store.SESSION_STATUS["BOUND"])
+                      else ("[✔ 已自动创建顶层会话并绑定]" if status == "CREATED_AND_ALIGNED" else "[⚠ 本次主动补齐中/等待 formal ID]"))
+        resume_tag = " [可续接]" if item.get("matched_session_id") and item.get("resumable") else (" [只读遗留]" if item.get("matched_session_id") else "")
+        print(f"\n[M{idx + 1}] 记忆文档: {item['memory_doc']}")
+        print(f"     模块 Key: {item['module_key']}")
+        print(f"     专题名称: {item['matched_topic_name']}")
+        print(f"     绑定会话: {item.get('matched_session_id') or '(未绑定)'} {status_tag}{resume_tag}")
+    print("--------------------------------------------------------------------------------")
+
+    if res.get("created_sessions"):
+        print("【已自动创建的新独立顶层根会话 (nestingDepth = 0)】:")
+        for index, created in enumerate(res["created_sessions"], 1):
+            print(f"  {index}. [{created['module_key']}] {created['title']} -> {created['session_id']}")
+        print("--------------------------------------------------------------------------------")
+
     print("建议专题映射清单 (Topic Mapping Recommendations):")
 
     for idx, s in enumerate(res["topic_mapping_suggestions"]):

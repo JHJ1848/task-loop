@@ -874,7 +874,7 @@ function main() {
   console.log('受控记忆文档 1:1 专题会话匹配状态 (Memory Docs 1:1 Alignment):');
   
   res.memory_alignment.forEach((m, idx) => {
-    const statusTag = m.status === 'ALIGNED' ? '[✔ 已匹配]' : (m.status === 'CREATED_AND_ALIGNED' ? '[✔ 已自动创建顶层会话并绑定]' : '[⚠ 本次主动补齐中/等待 formal ID]');
+    const statusTag = (m.status === 'ALIGNED' || m.status === stateStore.SESSION_STATUS.BOUND) ? '[✔ 已匹配]' : (m.status === 'CREATED_AND_ALIGNED' ? '[✔ 已自动创建顶层会话并绑定]' : '[⚠ 本次主动补齐中/等待 formal ID]');
     const resumeTag = m.matched_session_id ? (m.resumable ? ' [可续接]' : ' [只读遗留]') : '';
     console.log(`\n[M${idx + 1}] 记忆文档: ${m.memory_doc}`);
     console.log(`     模块 Key: ${m.module_key}`);
