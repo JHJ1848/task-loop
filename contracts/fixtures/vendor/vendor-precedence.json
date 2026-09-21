@@ -60,7 +60,7 @@
       "name": "registered_session_identity_precedence",
       "description": "Registered session ID lookup has third precedence (Level 3)",
       "input": {
-        "sessionId": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+        "sessionId": "mock-registered-session-id",
         "env": { "CODEX_THREAD_ID": "codex-th-1" }
       },
       "expected": {

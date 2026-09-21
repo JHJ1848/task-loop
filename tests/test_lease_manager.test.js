@@ -228,8 +228,31 @@ function testVendorResolutionPolicyPrecedence() {
     assert.strictEqual(res2.matched_by, 'explicit_session_payload');
 
     // 3. Registered session identity (优先级 3)
-    // 专题会话 cdd1ca5c-3532-4489-b844-15c6f34055fa 已在 sessions.json 中登记为 antigravity
-    const res3 = resolveVendor({ sessionId: 'cdd1ca5c-3532-4489-b844-15c6f34055fa', env: { CODEX_THREAD_ID: 'codex-env' } });
+    // 独立沙箱目录，杜绝 CI 环境下缺少本地 .agents/task-loop/ 导致的断言失败
+    const mockStateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lease-vendor-node-'));
+    const stateDir = path.join(mockStateRoot, '.agents', 'task-loop');
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(path.join(stateDir, 'sessions.json'), JSON.stringify({
+      schema_version: 5,
+      vendors: {
+        antigravity: {
+          vendor: 'antigravity',
+          main_thread_id: 'mock-reg-session-id',
+          sessions: [{ session_id: 'mock-reg-session-id', vendor: 'antigravity' }]
+        }
+      }
+    }), 'utf8');
+
+    let res3;
+    try {
+      res3 = resolveVendor({
+        sessionId: 'mock-reg-session-id',
+        env: { CODEX_THREAD_ID: 'codex-env' },
+        projectRoot: mockStateRoot
+      });
+    } finally {
+      fs.rmSync(mockStateRoot, { recursive: true, force: true });
+    }
     assert.strictEqual(res3.vendor, 'antigravity');
     assert.strictEqual(res3.precedence, 3);
     assert.strictEqual(res3.matched_by, 'registered_session_identity');

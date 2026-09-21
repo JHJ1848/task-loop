@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -144,11 +145,16 @@ class TestLeaseManager(unittest.TestCase):
         ]
 
         def _worker(w):
-            try:
-                res = self.manager.acquire("sessions", w)
-                return {"writer": w, "res": res, "error": None}
-            except Exception as e:
-                return {"writer": w, "res": None, "error": str(e)}
+            for attempt in range(5):
+                try:
+                    res = self.manager.acquire("sessions", w)
+                    return {"writer": w, "res": res, "error": None}
+                except (PermissionError, OSError) as e:
+                    if attempt == 4:
+                        return {"writer": w, "res": None, "error": str(e)}
+                    time.sleep(0.02 + attempt * 0.02)
+                except Exception as e:
+                    return {"writer": w, "res": None, "error": str(e)}
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
             futures = [executor.submit(_worker, w) for w in writers]
@@ -205,7 +211,26 @@ class TestLeaseManager(unittest.TestCase):
             self.assertEqual(res2["matched_by"], "explicit_session_payload")
 
             # 3. Registered session identity (优先级 3)
-            res3 = resolve_vendor({"sessionId": "cdd1ca5c-3532-4489-b844-15c6f34055fa", "env": {"CODEX_THREAD_ID": "th-1"}})
+            tmp_mock_root = Path(tempfile.mkdtemp(prefix="lease_vendor_py_"))
+            mock_state_dir = tmp_mock_root / ".agents" / "task-loop"
+            mock_state_dir.mkdir(parents=True, exist_ok=True)
+            with open(mock_state_dir / "sessions.json", "w", encoding="utf-8") as fh:
+                json.dump({
+                    "schema_version": 5,
+                    "vendors": {
+                        "antigravity": {
+                            "vendor": "antigravity",
+                            "main_thread_id": "mock-reg-py-id",
+                            "sessions": [{"session_id": "mock-reg-py-id", "vendor": "antigravity"}]
+                        }
+                    }
+                }, fh, ensure_ascii=False, indent=2)
+
+            try:
+                res3 = resolve_vendor({"sessionId": "mock-reg-py-id", "env": {"CODEX_THREAD_ID": "th-1"}, "projectRoot": str(tmp_mock_root)})
+            finally:
+                shutil.rmtree(str(tmp_mock_root), ignore_errors=True)
+
             self.assertEqual(res3["vendor"], "antigravity")
             self.assertEqual(res3["precedence"], 3)
             self.assertEqual(res3["matched_by"], "registered_session_identity")

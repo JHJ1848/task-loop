@@ -53,25 +53,56 @@ def load_fixture(rel_path):
 class TestConformancePython(unittest.TestCase):
     def test_vendor_precedence_conformance(self):
         fixture = load_fixture("vendor/vendor-precedence.json")
-        for tc in fixture["cases"]:
-            name = tc["name"]
-            inp = tc["input"]
-            if "expected" in tc:
-                exp = tc["expected"]
-                res = resolve_vendor(inp, {"project_root": str(PROJECT_ROOT)})
-                self.assertEqual(res["vendor"], exp["vendor"], f"[{name}] vendor mismatch")
-                self.assertEqual(res["precedence"], exp["precedence"], f"[{name}] precedence mismatch")
-                self.assertEqual(res["matched_by"], exp["matched_by"], f"[{name}] matched_by mismatch")
-            elif "expected_error" in tc:
-                exp_err = tc["expected_error"]
-                with self.assertRaises(VendorAmbiguousError) as cm:
-                    resolve_vendor(inp, {"project_root": str(PROJECT_ROOT), "throws": True})
-                self.assertEqual(cm.exception.code, exp_err["code"], f"[{name}] code mismatch")
+        tmp_mock_root = Path(tempfile.mkdtemp(prefix="conformance_vendor_py_"))
+        state_dir = tmp_mock_root / ".agents" / "task-loop"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        mock_sessions = {
+            "schema_version": 5,
+            "revision": 1,
+            "updated_at": "2026-09-20T10:00:00+00:00",
+            "vendors": {
+                "antigravity": {
+                    "vendor": "antigravity",
+                    "main_thread_id": "mock-registered-session-id",
+                    "updated_at": "2026-09-20T10:00:00+00:00",
+                    "modules": {
+                        "session_control": {
+                            "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+                            "memory_doc": "docs/memory/session_control.md",
+                        }
+                    },
+                    "sessions": [
+                        {"session_id": "mock-registered-session-id", "vendor": "antigravity"},
+                        {"session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa", "vendor": "antigravity"},
+                    ],
+                }
+            },
+        }
+        with open(state_dir / "sessions.json", "w", encoding="utf-8") as fh:
+            json.dump(mock_sessions, fh, ensure_ascii=False, indent=2)
 
-                res_no_throw = resolve_vendor(inp, {"project_root": str(PROJECT_ROOT), "throws": False})
-                self.assertEqual(res_no_throw.get("error"), exp_err["code"])
+        try:
+            for tc in fixture["cases"]:
+                name = tc["name"]
+                inp = dict(tc["input"], projectRoot=str(tmp_mock_root))
+                if "expected" in tc:
+                    exp = tc["expected"]
+                    res = resolve_vendor(inp)
+                    self.assertEqual(res["vendor"], exp["vendor"], f"[{name}] vendor mismatch")
+                    self.assertEqual(res["precedence"], exp["precedence"], f"[{name}] precedence mismatch")
+                    self.assertEqual(res["matched_by"], exp["matched_by"], f"[{name}] matched_by mismatch")
+                elif "expected_error" in tc:
+                    exp_err = tc["expected_error"]
+                    with self.assertRaises(VendorAmbiguousError) as cm:
+                        resolve_vendor(inp, {"project_root": str(tmp_mock_root), "throws": True})
+                    self.assertEqual(cm.exception.code, exp_err["code"], f"[{name}] code mismatch")
 
-        print("Python Vendor Precedence Conformance PASSED!")
+                    res_no_throw = resolve_vendor(inp, {"project_root": str(tmp_mock_root), "throws": False})
+                    self.assertEqual(res_no_throw.get("error"), exp_err["code"])
+
+            print("Python Vendor Precedence Conformance PASSED!")
+        finally:
+            shutil.rmtree(str(tmp_mock_root), ignore_errors=True)
 
     def test_allowlist_conformance(self):
         fixture = load_fixture("allowlist/allowlist-cases.json")

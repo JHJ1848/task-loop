@@ -25,27 +25,63 @@ function loadFixture(relPath) {
   return JSON.parse(fs.readFileSync(fullPath, 'utf8'));
 }
 
+function createMockProjectRoot() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'conformance-vendor-node-'));
+  const stateDir = path.join(tmpDir, '.agents', 'task-loop');
+  fs.mkdirSync(stateDir, { recursive: true });
+  const mockSessions = {
+    schema_version: 5,
+    revision: 1,
+    updated_at: new Date().toISOString(),
+    vendors: {
+      antigravity: {
+        vendor: 'antigravity',
+        main_thread_id: 'mock-registered-session-id',
+        updated_at: new Date().toISOString(),
+        modules: {
+          session_control: {
+            session_id: 'cdd1ca5c-3532-4489-b844-15c6f34055fa',
+            memory_doc: 'docs/memory/session_control.md'
+          }
+        },
+        sessions: [
+          { session_id: 'mock-registered-session-id', vendor: 'antigravity' },
+          { session_id: 'cdd1ca5c-3532-4489-b844-15c6f34055fa', vendor: 'antigravity' }
+        ]
+      }
+    }
+  };
+  fs.writeFileSync(path.join(stateDir, 'sessions.json'), JSON.stringify(mockSessions, null, 2), 'utf8');
+  return tmpDir;
+}
+
 function testVendorPrecedenceConformance() {
   const fixture = loadFixture('vendor/vendor-precedence.json');
   console.log(`- Running ${fixture.cases.length} vendor precedence conformance cases...`);
 
-  for (const tc of fixture.cases) {
-    if (tc.expected) {
-      const res = resolveVendor(tc.input, { projectRoot: rootDir });
-      assert.strictEqual(res.vendor, tc.expected.vendor, `[${tc.name}] vendor mismatch: expected ${tc.expected.vendor}, got ${res.vendor}`);
-      assert.strictEqual(res.precedence, tc.expected.precedence, `[${tc.name}] precedence mismatch: expected ${tc.expected.precedence}, got ${res.precedence}`);
-      assert.strictEqual(res.matched_by, tc.expected.matched_by, `[${tc.name}] matched_by mismatch: expected ${tc.expected.matched_by}, got ${res.matched_by}`);
-    } else if (tc.expected_error) {
-      // 必须捕获或返回预期错误码
-      assert.throws(() => {
-        resolveVendor(tc.input, { projectRoot: rootDir, throws: true });
-      }, (err) => {
-        return err.code === tc.expected_error.code;
-      }, `[${tc.name}] expected error code ${tc.expected_error.code}`);
+  const mockRoot = createMockProjectRoot();
+  try {
+    for (const tc of fixture.cases) {
+      const inp = Object.assign({}, tc.input, { projectRoot: mockRoot });
+      if (tc.expected) {
+        const res = resolveVendor(inp);
+        assert.strictEqual(res.vendor, tc.expected.vendor, `[${tc.name}] vendor mismatch: expected ${tc.expected.vendor}, got ${res.vendor}`);
+        assert.strictEqual(res.precedence, tc.expected.precedence, `[${tc.name}] precedence mismatch: expected ${tc.expected.precedence}, got ${res.precedence}`);
+        assert.strictEqual(res.matched_by, tc.expected.matched_by, `[${tc.name}] matched_by mismatch: expected ${tc.expected.matched_by}, got ${res.matched_by}`);
+      } else if (tc.expected_error) {
+        // 必须捕获或返回预期错误码
+        assert.throws(() => {
+          resolveVendor(inp, { throws: true });
+        }, (err) => {
+          return err.code === tc.expected_error.code;
+        }, `[${tc.name}] expected error code ${tc.expected_error.code}`);
 
-      const resNoThrow = resolveVendor(tc.input, { projectRoot: rootDir, throws: false });
-      assert.strictEqual(resNoThrow.error, tc.expected_error.code, `[${tc.name}] non-throwing mode must return error code`);
+        const resNoThrow = resolveVendor(inp, { throws: false });
+        assert.strictEqual(resNoThrow.error, tc.expected_error.code, `[${tc.name}] non-throwing mode must return error code`);
+      }
     }
+  } finally {
+    fs.rmSync(mockRoot, { recursive: true, force: true });
   }
 
   console.log('  ✔ Vendor Precedence Conformance PASSED!');
