@@ -17,6 +17,54 @@ import json
 import tempfile
 import re
 
+# 影响边界: 宿主级 Agent 状态根目录由各厂商自行读写, 承载 Agent 的记忆、配置、凭据与技能,
+# 属于宿主状态而非项目业务文件。按目录列举而非按厂商分支, 接入新宿主只需追加一行,
+# 不为每个厂商增加维护点。
+HOST_AGENT_STATE_ROOTS = [
+    os.path.join(os.path.expanduser("~"), name)
+    for name in (".claude", ".codex", ".zcode", ".gemini", ".agents")
+]
+
+# 工作区外可豁免的路径前缀: 操作系统临时目录、桌面, 以及宿主 Agent 状态根目录。
+OUTSIDE_WORKSPACE_EXEMPT_PREFIXES = [
+    tempfile.gettempdir(),
+    *HOST_AGENT_STATE_ROOTS,
+    os.path.join(os.path.expanduser("~"), "Desktop"),
+]
+
+
+def is_outside_workspace_exempt(norm_target):
+    if not norm_target:
+        return False
+    return any(is_path_inside(norm_target, prefix) for prefix in OUTSIDE_WORKSPACE_EXEMPT_PREFIXES)
+
+
+def is_project_external_path(norm_target, norm_ws_root):
+    # 仅当目标位于工作区之外时才视为项目外部。工作区内的业务文件一律仍受门禁治理,
+    # 避免工作区本身位于桌面或宿主状态目录下时被整体豁免。
+    if not norm_target:
+        return False
+    if norm_ws_root and is_path_inside(norm_target, norm_ws_root):
+        return False
+    return is_outside_workspace_exempt(norm_target)
+
+
+def is_task_loop_initialized(ws_root):
+    # 工作区接入 task-loop 的唯一标记: .agents/task-loop 目录。
+    if not ws_root:
+        return False
+    return os.path.isdir(os.path.join(ws_root, ".agents", "task-loop"))
+
+
+def has_governance_basis(ws_root):
+    # 门禁的治理依据: 工作区已接入 task-loop, 或存在显式派发的白名单(环境变量)。
+    # 两者都没有时该工作区与 task-loop 无关, fail-closed 不适用 —— 否则门禁会越过影响边界,
+    # 在无关项目中拒绝一切写入(含宿主自身的记忆与状态目录)。
+    if is_task_loop_initialized(ws_root):
+        return True
+    dispatched = os.environ.get("TASK_LOOP_ALLOWLIST")
+    return isinstance(dispatched, str) and dispatched.strip() != ""
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -243,16 +291,8 @@ def is_exempt_path(norm_target, norm_ws_root):
                 return True
         return False
 
-    # Outside the workspace: allow OS tempdir, brain, Desktop
-    outside_exempt_prefixes = [
-        tempfile.gettempdir(),
-        os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain"),
-        os.path.join(os.path.expanduser("~"), "Desktop"),
-    ]
-    for p in outside_exempt_prefixes:
-        if is_path_inside(norm_target, p):
-            return True
-    return False
+    # Outside the workspace: OS tempdir, Desktop, and host agent-state roots
+    return is_outside_workspace_exempt(norm_target)
 
 
 def is_path_allowed(target_file, allowlist, ws_root):
@@ -327,7 +367,7 @@ def is_governance_or_state_file(norm_target, norm_ws_root):
         os.path.join(abs_ws_root, "references"),
         os.path.join(abs_ws_root, "config"),
         tempfile.gettempdir(),
-        os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")
+        *HOST_AGENT_STATE_ROOTS
     ]
     for p in allowed_prefixes:
         if is_path_inside(norm_target, p):
@@ -414,6 +454,16 @@ def process_payload(payload):
 
         ws_root = resolve_workspace_root(payload.get("workspacePaths"))
         conversation_id = payload.get("conversationId") or payload.get("conversation_id") or payload.get("sessionId") or payload.get("session_id")
+
+        # 0. 影响边界: 门禁只治理「已接入 task-loop 或已显式派发白名单的工作区」内的业务文件。
+        #    工作区外(宿主 Agent 状态目录、临时目录、桌面)不是项目业务文件, 继续拦截会连带
+        #    切断宿主自身的记忆与上下文注入通道; 无治理依据的项目没有 sessions.json、白名单
+        #    与派单契约, fail-closed 只会把治理强加到与 task-loop 无关的项目上。
+        norm_target = normalize_path(target_file if os.path.isabs(target_file) else os.path.join(ws_root, target_file))
+        norm_ws_root = normalize_path(ws_root)
+        if not has_governance_basis(ws_root) or is_project_external_path(norm_target, norm_ws_root):
+            return {"decision": "allow"}
+
         # 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
         vendor = detect_vendor(conversation_id, payload.get("vendor"))
         session_data = find_sessions_registry(ws_root, vendor)
@@ -430,8 +480,6 @@ def process_payload(payload):
         is_main_session = check_is_main_session(session_data, conversation_id, vendor)
 
         if is_main_session:
-            norm_target = normalize_path(target_file if os.path.isabs(target_file) else os.path.join(ws_root, target_file))
-            norm_ws_root = normalize_path(ws_root)
             if not is_governance_or_state_file(norm_target, norm_ws_root):
                 return {
                     "decision": "deny",

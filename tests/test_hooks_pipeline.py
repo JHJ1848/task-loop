@@ -346,6 +346,88 @@ class TestHooksPipeline(unittest.TestCase):
         self.assertIn("ALLOWLIST_EXPANSION_REQUEST", res.get("reason", ""))
         self.assertIn("send_message", res.get("reason", ""))
 
+    def test_enforce_allowlist_impact_boundary(self):
+        # 门禁只治理「已接入 task-loop 或已显式派发白名单的工作区」内的业务文件，且不伸进
+        # 宿主级状态目录。本用例以干净环境运行，避免其它用例残留的白名单干扰判据。
+        prev_allowlist = os.environ.pop("TASK_LOOP_ALLOWLIST", None)
+        home = os.path.expanduser("~")
+
+        def run_gate(ws, sid, target):
+            proc = subprocess.Popen(
+                [sys.executable, self.allowlist_script], stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8"
+            )
+            out, _ = proc.communicate(input=json.dumps({
+                "vendor": "antigravity", "conversationId": sid,
+                "toolCall": {"name": "write_to_file", "args": {"TargetFile": target}},
+                "workspacePaths": [ws]
+            }))
+            return json.loads(out).get("decision")
+
+        host_state_targets = [
+            os.path.join(home, ".claude", "projects", "x", "memory", "y.md"),
+            os.path.join(home, ".codex", "skills", "s.md"),
+            os.path.join(home, ".agents", "skills", "s.md"),
+            os.path.join(home, ".zcode", "v2", "credentials.json"),
+            os.path.join(home, ".gemini", "antigravity", "brain", "ledger.md"),
+        ]
+
+        # 1. 主会话分支：宿主 Agent 状态根目录不属于项目业务文件
+        for target in host_state_targets:
+            self.assertEqual(
+                run_gate(self.sandbox_dir, MOCK_MAIN_ID, target), "allow",
+                f"host agent-state path must stay outside the gate: {target}"
+            )
+
+        # 2. 专题会话分支(allowlist 路径判定)：同样豁免宿主状态
+        os.environ["TASK_LOOP_ALLOWLIST"] = "src/only_allowed.js"
+        try:
+            for target in host_state_targets:
+                self.assertEqual(
+                    run_gate(self.sandbox_dir, MOCK_TOPIC_ID, target), "allow",
+                    f"host agent-state path must stay outside the gate: {target}"
+                )
+        finally:
+            os.environ.pop("TASK_LOOP_ALLOWLIST", None)
+
+        # 3. 无治理依据的工作区没有 sessions.json 与派发白名单来源，门禁不适用
+        import shutil
+        import tempfile
+        os.environ.pop("TASK_LOOP_ALLOWLIST", None)
+        bare_ws = tempfile.mkdtemp(prefix="test_bare_ws_")
+        try:
+            self.assertEqual(
+                run_gate(bare_ws, "99999999-8888-7777-6666-555555555555",
+                         os.path.join(bare_ws, "notes.md")),
+                "allow",
+                "a workspace without .agents/task-loop must not be governed by the gate"
+            )
+        finally:
+            shutil.rmtree(bare_ws, ignore_errors=True)
+
+        # 4. 已接入工作区内的未注册会话仍是 fail-closed
+        self.assertEqual(
+            run_gate(self.sandbox_dir, "99999999-8888-7777-6666-555555555555",
+                     os.path.join(self.sandbox_dir, "src", "a.js")),
+            "deny",
+            "fail-closed for unregistered sessions inside an initialized workspace must be preserved"
+        )
+
+        # 5. 未接入但已显式派发白名单时，门禁仍须生效（放宽只针对无治理依据的工作区）
+        os.environ["TASK_LOOP_ALLOWLIST"] = "src/only_allowed.js"
+        try:
+            self.assertEqual(
+                run_gate(bare_ws, "99999999-8888-7777-6666-555555555555",
+                         os.path.join(bare_ws, "evil.md")),
+                "deny",
+                "an explicitly dispatched allowlist is itself a governance basis"
+            )
+        finally:
+            os.environ.pop("TASK_LOOP_ALLOWLIST", None)
+
+        if prev_allowlist is not None:
+            os.environ["TASK_LOOP_ALLOWLIST"] = prev_allowlist
+
     def test_enforce_allowlist_exempt_paths(self):
         os.environ["TASK_LOOP_ALLOWLIST"] = "src/only_allowed.js"
         mock_input = json.dumps({

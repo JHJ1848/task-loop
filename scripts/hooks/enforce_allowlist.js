@@ -14,6 +14,52 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+// 影响边界: 宿主级 Agent 状态根目录由各厂商自行读写, 承载 Agent 的记忆、配置、凭据与技能,
+// 属于宿主状态而非项目业务文件。按目录列举而非按厂商分支, 接入新宿主只需追加一行,
+// 不为每个厂商增加维护点。
+const HOST_AGENT_STATE_ROOTS = [
+  '.claude',
+  '.codex',
+  '.zcode',
+  '.gemini',
+  '.agents'
+].map(name => path.join(os.homedir(), name));
+
+// 工作区外可豁免的路径前缀: 操作系统临时目录、桌面, 以及宿主 Agent 状态根目录。
+const OUTSIDE_WORKSPACE_EXEMPT_PREFIXES = [
+  os.tmpdir(),
+  ...HOST_AGENT_STATE_ROOTS,
+  path.join(os.homedir(), 'Desktop')
+];
+
+function isOutsideWorkspaceExempt(normTarget) {
+  if (!normTarget) return false;
+  return OUTSIDE_WORKSPACE_EXEMPT_PREFIXES.some(prefix => isPathInside(normTarget, prefix));
+}
+
+// 仅当目标位于工作区之外时才视为项目外部。工作区内的业务文件一律仍受门禁治理,
+// 避免工作区本身位于桌面或宿主状态目录下时被整体豁免。
+function isProjectExternalPath(normTarget, normWsRoot) {
+  if (!normTarget) return false;
+  if (normWsRoot && isPathInside(normTarget, normWsRoot)) return false;
+  return isOutsideWorkspaceExempt(normTarget);
+}
+
+// 工作区接入 task-loop 的唯一标记: .agents/task-loop 目录。
+function isTaskLoopInitialized(wsRoot) {
+  if (!wsRoot) return false;
+  return fs.existsSync(path.join(wsRoot, '.agents', 'task-loop'));
+}
+
+// 门禁的治理依据: 工作区已接入 task-loop, 或存在显式派发的白名单(环境变量)。
+// 两者都没有时该工作区与 task-loop 无关, fail-closed 不适用 —— 否则门禁会越过影响边界,
+// 在无关项目中拒绝一切写入(含宿主自身的记忆与状态目录)。
+function hasGovernanceBasis(wsRoot) {
+  if (isTaskLoopInitialized(wsRoot)) return true;
+  const dispatched = process.env.TASK_LOOP_ALLOWLIST;
+  return typeof dispatched === 'string' && dispatched.trim().length > 0;
+}
+
 function stripUncPrefix(p) {
   if (!p || typeof p !== 'string') return '';
   let str = p;
@@ -246,16 +292,8 @@ function isExemptPath(normTarget, normWsRoot) {
     return false;
   }
 
-  // Outside the workspace: allow OS tempdir, brain, Desktop
-  const outsideExemptPrefixes = [
-    os.tmpdir(),
-    path.join(os.homedir(), '.gemini', 'antigravity', 'brain'),
-    path.join(os.homedir(), 'Desktop')
-  ];
-  for (const p of outsideExemptPrefixes) {
-    if (isPathInside(normTarget, p)) return true;
-  }
-  return false;
+  // Outside the workspace: OS tempdir, Desktop, and host agent-state roots
+  return isOutsideWorkspaceExempt(normTarget);
 }
 
 function isPathAllowed(targetFile, allowlist, wsRoot) {
@@ -338,7 +376,7 @@ function isGovernanceOrStateFile(normTarget, normWsRoot) {
     path.join(absWsRoot, 'references'),
     path.join(absWsRoot, 'config'),
     os.tmpdir(),
-    path.join(os.homedir(), '.gemini', 'antigravity', 'brain')
+    ...HOST_AGENT_STATE_ROOTS
   ];
 
   for (const p of allowedPrefixes) {
@@ -421,6 +459,17 @@ function processPayload(payload) {
 
     const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
     const conversationId = payload.conversationId || payload.conversation_id || payload.sessionId || payload.session_id;
+
+    // 0. 影响边界: 门禁只治理「已接入 task-loop 或已显式派发白名单的工作区」内的业务文件。
+    //    工作区外(宿主 Agent 状态目录、临时目录、桌面)不是项目业务文件, 继续拦截会连带
+    //    切断宿主自身的记忆与上下文注入通道; 无治理依据的项目没有 sessions.json、白名单
+    //    与派单契约, fail-closed 只会把治理强加到与 task-loop 无关的项目上。
+    const normTarget = normalizePath(path.isAbsolute(targetFile) ? targetFile : path.resolve(wsRoot, targetFile));
+    const normWsRoot = normalizePath(wsRoot);
+    if (!hasGovernanceBasis(wsRoot) || isProjectExternalPath(normTarget, normWsRoot)) {
+      return { decision: 'allow' };
+    }
+
     // 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
     let vendor = detectVendor(conversationId, payload.vendor);
     const sessionData = findSessionsRegistry(wsRoot, vendor);
@@ -440,8 +489,6 @@ function processPayload(payload) {
     const isMain = checkIsMainSession(sessionData, conversationId, vendor);
 
     if (isMain) {
-      const normTarget = normalizePath(path.isAbsolute(targetFile) ? targetFile : path.resolve(wsRoot, targetFile));
-      const normWsRoot = normalizePath(wsRoot);
       if (!isGovernanceOrStateFile(normTarget, normWsRoot)) {
         return {
           decision: 'deny',

@@ -7,6 +7,7 @@ const os = require('os');
 const MOCK_MAIN_ID = '11111111-2222-3333-4444-555555555555';
 const MOCK_TOPIC_ID = '83bae782-1e95-4923-a76f-2141fe8c5c61';
 const MOCK_CODEX_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const MOCK_UNREGISTERED_ID = '99999999-8888-7777-6666-555555555555';
 
 function createMockSandbox(rootDir) {
   const tempDir = path.join(rootDir, `.test_sandbox_pipeline_js_${Date.now()}`);
@@ -307,6 +308,66 @@ function runHooksPipelineTests() {
     delete process.env.TASK_LOOP_ALLOWLIST;
     const exemptResult = JSON.parse(exemptOutput);
     assert.strictEqual(exemptResult.decision, 'allow', 'Exempt doc path should be allowed even if not in task allowlist');
+
+    // 6. 影响边界回归：门禁只治理「已接入 task-loop 或已显式派发白名单的工作区」内的业务文件，
+    //    且不伸进宿主级状态目录。本段以干净环境运行，避免其它用例残留的白名单干扰判据。
+    const prevAllowlist6 = process.env.TASK_LOOP_ALLOWLIST;
+    delete process.env.TASK_LOOP_ALLOWLIST;
+    const homeDir = os.homedir();
+    const runGate = payload => JSON.parse(execSync(`node "${allowlistScript}"`, {
+      input: JSON.stringify(payload),
+      encoding: 'utf8'
+    }));
+
+    // 6a. 宿主 Agent 状态根目录不属于项目业务文件，主会话也不得被拦截
+    const hostStateTargets = [
+      path.join(homeDir, '.claude', 'projects', 'x', 'memory', 'y.md'),
+      path.join(homeDir, '.codex', 'skills', 's.md'),
+      path.join(homeDir, '.agents', 'skills', 's.md'),
+      path.join(homeDir, '.zcode', 'v2', 'credentials.json'),
+      path.join(homeDir, '.gemini', 'antigravity', 'brain', 'ledger.md')
+    ];
+    for (const target of hostStateTargets) {
+      assert.strictEqual(
+        runGate({
+          vendor: 'antigravity', conversationId: MOCK_MAIN_ID,
+          toolCall: { name: 'write_to_file', args: { TargetFile: target } },
+          workspacePaths: [sandboxDir]
+        }).decision,
+        'allow',
+        `Host agent-state path must stay outside the gate: ${target}`
+      );
+    }
+
+    // 6b. 未接入 task-loop 的工作区没有 sessions.json 与白名单来源，门禁不适用
+    const bareSandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'test_bare_ws_'));
+    try {
+      assert.strictEqual(
+        runGate({
+          vendor: 'antigravity', conversationId: MOCK_UNREGISTERED_ID,
+          toolCall: { name: 'write_to_file', args: { TargetFile: path.join(bareSandbox, 'notes.md') } },
+          workspacePaths: [bareSandbox]
+        }).decision,
+        'allow',
+        'A workspace without .agents/task-loop must not be governed by the gate'
+      );
+    } finally {
+      fs.rmSync(bareSandbox, { recursive: true, force: true });
+    }
+
+    // 6c. 已接入工作区内的未注册会话仍是 fail-closed
+    assert.strictEqual(
+      runGate({
+        vendor: 'antigravity', conversationId: MOCK_UNREGISTERED_ID,
+        toolCall: { name: 'write_to_file', args: { TargetFile: path.join(sandboxDir, 'src', 'a.js') } },
+        workspacePaths: [sandboxDir]
+      }).decision,
+      'deny',
+      'Fail-closed for unregistered sessions inside an initialized workspace must be preserved'
+    );
+
+    if (prevAllowlist6 === undefined) delete process.env.TASK_LOOP_ALLOWLIST;
+    else process.env.TASK_LOOP_ALLOWLIST = prevAllowlist6;
 
     console.log('Node.js Hooks Pipeline Tests PASSED!');
   } finally {
