@@ -1,0 +1,11 @@
+{
+  "name": "task-loop",
+  "version": "1.6.0",
+  "description": "Universal Cross-Agent Task Loop Plugin: Topic session routing, surgical allowlist enforcement, and lifecycle orchestration",
+  "author": {
+    "name": "JHJ1848"
+  },
+  "license": "MIT",
+  "skills": "./skills",
+  "hooks": "./hooks.json"
+}

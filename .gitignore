@@ -25,15 +25,17 @@ docs/
 .DS_Store
 Thumbs.db
 
-# Temporary directories
+# Temporary directories and test artifacts
 tmp/
 temp/
+coverage/
+.nyc_output/
+*.tmp
 
 # Local Developer & Branch Sync Scripts (Git-Ignored)
 *sync_to_branches*
 scripts/local_*
 
-
-
 # ZCode workspace runtime config (desktop client auto-generated)
 .zcode/
+

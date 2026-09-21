@@ -1,0 +1,16 @@
+{
+  "name": "task-loop",
+  "owner": {
+    "name": "JHJ1848"
+  },
+  "metadata": {
+    "description": "Universal Cross-Agent Task Loop Plugin for Claude Code, Antigravity, ZCode, and Codex",
+    "version": "1.6.0"
+  },
+  "plugins": [
+    {
+      "name": "task-loop",
+      "source": "./"
+    }
+  ]
+}
