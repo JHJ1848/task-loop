@@ -119,7 +119,7 @@ def detect_vendor(env=None, options=None):
             detected.append("zcode")
         if env.get("ANTIGRAVITY_CONVERSATION_ID"):
             detected.append("antigravity")
-        if env.get("CLAUDE_CONVERSATION_ID") or env.get("CLAUDE_SESSION_ID"):
+        if env.get("CLAUDE_CONVERSATION_ID") or env.get("CLAUDE_SESSION_ID") or env.get("CLAUDE_CODE_SESSION_ID"):
             detected.append("claude")
         if len(detected) > 1:
             raise VendorAmbiguousError(f"Ambiguous vendor environment: multiple vendors detected {detected}")
@@ -131,7 +131,7 @@ def detect_vendor(env=None, options=None):
         return "zcode"
     if env.get("ANTIGRAVITY_CONVERSATION_ID"):
         return "antigravity"
-    if env.get("CLAUDE_CONVERSATION_ID") or env.get("CLAUDE_SESSION_ID"):
+    if env.get("CLAUDE_CONVERSATION_ID") or env.get("CLAUDE_SESSION_ID") or env.get("CLAUDE_CODE_SESSION_ID"):
         return "claude"
     return None
 
@@ -228,7 +228,7 @@ def resolve_vendor(input_data=None, options=None):
         detected.append("zcode")
     if runtime_env.get("ANTIGRAVITY_CONVERSATION_ID"):
         detected.append("antigravity")
-    if runtime_env.get("CLAUDE_CONVERSATION_ID") or runtime_env.get("CLAUDE_SESSION_ID"):
+    if runtime_env.get("CLAUDE_CONVERSATION_ID") or runtime_env.get("CLAUDE_SESSION_ID") or runtime_env.get("CLAUDE_CODE_SESSION_ID"):
         detected.append("claude")
 
     if len(detected) > 1:
@@ -278,9 +278,9 @@ def get_current_session_id(env=None, vendor=None):
     if current_vendor == "codex":
         return env.get("CODEX_THREAD_ID") or env.get("CODEX_SESSION_ID")
     if current_vendor == "claude":
-        return None
+        return env.get("CLAUDE_CODE_SESSION_ID") or env.get("CLAUDE_CONVERSATION_ID") or env.get("CLAUDE_SESSION_ID")
     if current_vendor == "zcode":
-        return env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID")
+        return env.get("ZCODE_SESSION_ID") or env.get("CLAUDE_SESSION_ID") or env.get("CLAUDE_CODE_SESSION_ID")
     if current_vendor == "antigravity":
         return env.get("ANTIGRAVITY_CONVERSATION_ID")
     return None

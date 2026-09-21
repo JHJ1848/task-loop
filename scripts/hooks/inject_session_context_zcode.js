@@ -8,7 +8,7 @@
  *   Dimension      | AGY PreInvocation            | ZCode (this adapter)
  *   ---------------+------------------------------+---------------------------------
  *   Input channel  | stdin { conversationId, ... }| stdin Claude-Code-style payload
- *   Session ID key | conversationId               | session_id | sessionId | $CLAUDE_SESSION_ID | $ZCODE_SESSION_ID
+ *   Session ID key | conversationId               | session_id | sessionId | $CLAUDE_CODE_SESSION_ID | $ZCODE_SESSION_ID
  *   Workspace root | workspacePaths[0]            | cwd | $ZCODE_PROJECT_DIR | $CLAUDE_PROJECT_DIR
  *   Output shape   | { injectSteps:[{ephemeralMessage}] } | { hookSpecificOutput:{ hookEventName, additionalContext } }
  *   Trigger events | PreInvocation (every turn)   | SessionStart + UserPromptSubmit (per-turn parity)
@@ -24,11 +24,15 @@
  */
 
 const core = require('./inject_session_context.js');
+const hostVendor = require('./host_vendor.js');
+
+const UUID_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function extractSessionId(payload, env) {
   return (
     payload.session_id ||
     payload.sessionId ||
+    (env && env.CLAUDE_CODE_SESSION_ID) ||
     (env && env.CLAUDE_SESSION_ID) ||
     (env && env.ZCODE_SESSION_ID) ||
     null
@@ -57,7 +61,7 @@ function extractEventName(payload) {
   return 'UserPromptSubmit';
 }
 
-function processPayload(payload, env) {
+function processPayload(payload, env, argv) {
   try {
     env = env || process.env;
     const sessionId = extractSessionId(payload, env);
@@ -65,10 +69,15 @@ function processPayload(payload, env) {
       return {};
     }
 
-    // 若会话 ID 明显不是 ZCode 格式 (如标准 UUID)，fail-open 不执行 ZCode 注入，避免跨宿主误触发
-    if (!sessionId.startsWith('sess_') && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)) {
+    // Host attribution: a host that declares itself is authoritative. The id-shape
+    // check below is only a fallback for hosts that never declared themselves, where
+    // sess_* is ZCode's shape and a bare UUID is ambiguous (Claude Code uses UUIDs
+    // too), so an unattributed UUID is left alone rather than misread as ZCode.
+    const declaredVendor = hostVendor.resolveVendor(payload, env, argv);
+    if (!declaredVendor && !sessionId.startsWith('sess_') && UUID_SESSION_ID.test(sessionId)) {
       return {};
     }
+    const vendor = declaredVendor || 'zcode';
 
     // 去重检查
     const shouldDedupe = !payload.isTest && !payload.skipDedupe;
@@ -81,11 +90,11 @@ function processPayload(payload, env) {
     if (payload.requested_event === 'SessionStart') eventName = 'SessionStart';
 
     const wsRoot = resolveWorkspace(payload, env);
-    const sessionData = core.findSessionsRegistry(wsRoot, 'zcode');
+    const sessionData = core.findSessionsRegistry(wsRoot, vendor);
     const templates = core.findPromptTemplates(wsRoot);
     const activeTodo = core.findActiveTodo(wsRoot, sessionId);
 
-    const additionalContext = core.generateInjectionMessage(sessionId, sessionData, activeTodo, templates, 'zcode');
+    const additionalContext = core.generateInjectionMessage(sessionId, sessionData, activeTodo, templates, vendor);
 
     return {
       hookSpecificOutput: {
@@ -133,7 +142,7 @@ function main() {
       payload.hook_event_name = payload.hook_event_name || 'SessionStart';
     }
 
-    const result = processPayload(payload);
+    const result = processPayload(payload, null, process.argv);
     if (Object.keys(result).length === 0) {
       return; // empty output + exit 0 = healthy no-op for strict schema
     }

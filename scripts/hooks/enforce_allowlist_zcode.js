@@ -9,7 +9,7 @@
  *   ---------------+--------------------------------------+----------------------------------------
  *   Tool payload   | { toolCall: { name, args } }         | { tool_name, tool_input } (snake_case)
  *   File arg keys  | TargetFile / FilePath / target_path  | file_path / filePath (+ legacy fallbacks)
- *   Session ID key | conversationId                       | session_id | sessionId | $CLAUDE_SESSION_ID
+ *   Session ID key | conversationId                       | session_id | sessionId | $CLAUDE_CODE_SESSION_ID
  *   Allow output   | { decision: "allow" }                | empty output + exit 0 (strict-schema no-op)
  *   Deny output    | { decision: "deny", reason }         | { hookSpecificOutput:{ hookEventName:"PreToolUse",
  *                  |                                      |   permissionDecision:"deny", permissionDecisionReason } }
@@ -20,12 +20,15 @@
  */
 
 const core = require('./enforce_allowlist.js');
+const hostVendor = require('./host_vendor.js');
+const resolveVendor = hostVendor.resolveVendor;
 
 function extractSessionId(payload, env) {
   return (
     payload.session_id ||
     payload.sessionId ||
     payload.conversationId ||
+    (env && env.CLAUDE_CODE_SESSION_ID) ||
     (env && env.CLAUDE_SESSION_ID) ||
     (env && env.ZCODE_SESSION_ID) ||
     null
@@ -75,7 +78,7 @@ function normalizeToolCall(payload) {
   return { name: toolName, args: args };
 }
 
-function processPayload(payload, env) {
+function processPayload(payload, env, argv) {
   try {
     env = env || process.env;
     const toolCall = normalizeToolCall(payload);
@@ -90,7 +93,8 @@ function processPayload(payload, env) {
     const result = core.processPayload({
       toolCall: toolCall,
       conversationId: conversationId,
-      workspacePaths: [wsRoot]
+      workspacePaths: [wsRoot],
+      vendor: resolveVendor(payload, env, argv)
     });
 
     if (result && result.decision === 'deny') {
@@ -139,7 +143,7 @@ function main() {
       }
     }
 
-    const result = processPayload(payload);
+    const result = processPayload(payload, null, process.argv);
     if (Object.keys(result).length === 0) {
       return; // allow via empty output + exit 0
     }
@@ -155,5 +159,6 @@ module.exports = {
   processPayload,
   normalizeToolCall,
   extractSessionId,
-  resolveWorkspace
+  resolveWorkspace,
+  resolveVendor
 };

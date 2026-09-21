@@ -48,7 +48,7 @@ function detectCurrentVendor(env, currentSessionId) {
   const detected = stateStore.normalizeVendor(stateStore.detectVendor(env));
   if (detected) return detected;
   // sess_ 仅作为无宿主环境标记时的 ZCode 兼容线索，不能覆盖 Claude 标记。
-  if (currentSessionId && /^sess_/i.test(currentSessionId) && !env.CLAUDE_SESSION_ID) return 'zcode';
+  if (currentSessionId && /^sess_/i.test(currentSessionId) && !env.CLAUDE_SESSION_ID && !env.CLAUDE_CODE_SESSION_ID) return 'zcode';
   return null;
 }
 

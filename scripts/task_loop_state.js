@@ -93,7 +93,7 @@ function detectVendor(env, options = {}) {
     if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) detected.push('codex');
     if (env.ZCODE_SESSION_ID) detected.push('zcode');
     if (env.ANTIGRAVITY_CONVERSATION_ID) detected.push('antigravity');
-    if (env.CLAUDE_CONVERSATION_ID || env.CLAUDE_SESSION_ID) detected.push('claude');
+    if (env.CLAUDE_CONVERSATION_ID || env.CLAUDE_SESSION_ID || env.CLAUDE_CODE_SESSION_ID) detected.push('claude');
 
     if (detected.length > 1) {
       const err = new Error(`Ambiguous vendor environment: multiple vendors detected [${detected.join(', ')}]`);
@@ -106,7 +106,7 @@ function detectVendor(env, options = {}) {
   if (env.CODEX_THREAD_ID || env.CODEX_SESSION_ID) return 'codex';
   if (env.ZCODE_SESSION_ID) return 'zcode';
   if (env.ANTIGRAVITY_CONVERSATION_ID) return 'antigravity';
-  if (env.CLAUDE_CONVERSATION_ID || env.CLAUDE_SESSION_ID) return 'claude';
+  if (env.CLAUDE_CONVERSATION_ID || env.CLAUDE_SESSION_ID || env.CLAUDE_CODE_SESSION_ID) return 'claude';
   return null;
 }
 
@@ -204,7 +204,7 @@ function resolveVendor(input = {}, options = {}) {
   if (runtimeEnv.CODEX_THREAD_ID || runtimeEnv.CODEX_SESSION_ID) detected.push('codex');
   if (runtimeEnv.ZCODE_SESSION_ID) detected.push('zcode');
   if (runtimeEnv.ANTIGRAVITY_CONVERSATION_ID) detected.push('antigravity');
-  if (runtimeEnv.CLAUDE_CONVERSATION_ID || runtimeEnv.CLAUDE_SESSION_ID) detected.push('claude');
+  if (runtimeEnv.CLAUDE_CONVERSATION_ID || runtimeEnv.CLAUDE_SESSION_ID || runtimeEnv.CLAUDE_CODE_SESSION_ID) detected.push('claude');
 
   if (detected.length > 1) {
     const shouldThrow = options.throws !== false;
@@ -235,8 +235,8 @@ function getCurrentSessionId(env, vendor) {
   env = env || process.env;
   const currentVendor = normalizeVendor(vendor) || detectVendor(env);
   if (currentVendor === 'codex') return env.CODEX_THREAD_ID || env.CODEX_SESSION_ID || null;
-  if (currentVendor === 'claude') return null;
-  if (currentVendor === 'zcode') return env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID || null;
+  if (currentVendor === 'claude') return env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_CONVERSATION_ID || env.CLAUDE_SESSION_ID || null;
+  if (currentVendor === 'zcode') return env.ZCODE_SESSION_ID || env.CLAUDE_SESSION_ID || env.CLAUDE_CODE_SESSION_ID || null;
   if (currentVendor === 'antigravity') return env.ANTIGRAVITY_CONVERSATION_ID || null;
   return null;
 }

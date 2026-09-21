@@ -10,7 +10,7 @@ ZCode protocol adapter over the shared AGY core logic
   ---------------+--------------------------------------+----------------------------------------
   Tool payload   | { toolCall: { name, args } }         | { tool_name, tool_input } (snake_case)
   File arg keys  | TargetFile / FilePath / target_path  | file_path / filePath (+ legacy fallbacks)
-  Session ID key | conversationId                       | session_id | sessionId | $CLAUDE_SESSION_ID
+  Session ID key | conversationId                       | session_id | sessionId | $CLAUDE_CODE_SESSION_ID
   Allow output   | { decision: "allow" }                | empty output + exit 0 (strict-schema no-op)
   Deny output    | { decision: "deny", reason }         | { hookSpecificOutput:{ hookEventName:"PreToolUse",
                  |                                      |   permissionDecision:"deny", permissionDecisionReason } }
@@ -27,6 +27,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import enforce_allowlist as core
+import host_vendor
 
 
 def extract_session_id(payload, env=None):
@@ -35,6 +36,7 @@ def extract_session_id(payload, env=None):
         payload.get('session_id')
         or payload.get('sessionId')
         or payload.get('conversationId')
+        or env.get('CLAUDE_CODE_SESSION_ID')
         or env.get('CLAUDE_SESSION_ID')
         or env.get('ZCODE_SESSION_ID')
         or None
@@ -75,7 +77,7 @@ def normalize_tool_call(payload):
     return {'name': tool_name, 'args': args}
 
 
-def process_payload(payload, env=None):
+def process_payload(payload, env=None, argv=None):
     try:
         tool_call = normalize_tool_call(payload)
         if not tool_call:
@@ -89,6 +91,7 @@ def process_payload(payload, env=None):
             'toolCall': tool_call,
             'conversationId': conversation_id,
             'workspacePaths': [ws_root],
+            'vendor': host_vendor.resolve_vendor(payload, env, argv),
         })
 
         if result and result.get('decision') == 'deny':
@@ -136,7 +139,7 @@ def main():
             except Exception:
                 payload = {}
 
-    result = process_payload(payload)
+    result = process_payload(payload, None, sys.argv)
     if not result:
         return  # allow via empty output + exit 0
     sys.stdout.write(json.dumps(result, ensure_ascii=False, indent=2) + '\n')

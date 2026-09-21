@@ -9,7 +9,7 @@ ZCode protocol adapter over the shared AGY core logic
   Dimension      | AGY PreInvocation            | ZCode (this adapter)
   ---------------+------------------------------+---------------------------------
   Input channel  | stdin { conversationId, ... }| stdin Claude-Code-style payload
-  Session ID key | conversationId               | session_id | sessionId | $CLAUDE_SESSION_ID | $ZCODE_SESSION_ID
+  Session ID key | conversationId               | session_id | sessionId | $CLAUDE_CODE_SESSION_ID | $ZCODE_SESSION_ID
   Workspace root | workspacePaths[0]            | cwd | $ZCODE_PROJECT_DIR | $CLAUDE_PROJECT_DIR
   Output shape   | { injectSteps:[{ephemeralMessage}] } | { hookSpecificOutput:{ hookEventName, additionalContext } }
   Trigger events | PreInvocation (every turn)   | SessionStart + UserPromptSubmit (per-turn parity)
@@ -26,11 +26,17 @@ exit code 0.
 
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import host_vendor
 import inject_session_context as core
+
+UUID_SESSION_ID = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.IGNORECASE
+)
 
 
 def extract_session_id(payload, env=None):
@@ -38,6 +44,7 @@ def extract_session_id(payload, env=None):
     return (
         payload.get('session_id')
         or payload.get('sessionId')
+        or env.get('CLAUDE_CODE_SESSION_ID')
         or env.get('CLAUDE_SESSION_ID')
         or env.get('ZCODE_SESSION_ID')
         or None
@@ -62,16 +69,20 @@ def extract_event_name(payload):
     return 'UserPromptSubmit'
 
 
-def process_payload(payload, env=None):
+def process_payload(payload, env=None, argv=None):
     try:
         session_id = extract_session_id(payload, env)
         if not session_id:
             return {}
 
-        import re
-        # 若会话 ID 明显不是 ZCode 格式 (如标准 UUID)，fail-open 不执行 ZCode 注入，避免跨宿主误触发
-        if not session_id.startswith('sess_') and re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", session_id, re.IGNORECASE):
+        # Host attribution: a host that declares itself is authoritative. The id-shape
+        # check below is only a fallback for hosts that never declared themselves, where
+        # sess_* is ZCode's shape and a bare UUID is ambiguous (Claude Code uses UUIDs
+        # too), so an unattributed UUID is left alone rather than misread as ZCode.
+        declared_vendor = host_vendor.resolve_vendor(payload, env, argv)
+        if not declared_vendor and not session_id.startswith('sess_') and UUID_SESSION_ID.match(session_id):
             return {}
+        vendor = declared_vendor or 'zcode'
 
         # 去重检查
         should_dedupe = not payload.get('isTest') and not payload.get('skipDedupe')
@@ -80,12 +91,12 @@ def process_payload(payload, env=None):
 
         event_name = extract_event_name(payload)
         ws_root = resolve_workspace(payload, env)
-        session_data = core.find_sessions_registry(ws_root, 'zcode')
+        session_data = core.find_sessions_registry(ws_root, vendor)
         templates = core.find_prompt_templates(ws_root)
         active_todo = core.find_active_todo(ws_root, session_id)
 
         additional_context = core.generate_injection_message(
-            session_id, session_data, active_todo, templates, 'zcode'
+            session_id, session_data, active_todo, templates, vendor
         )
 
         return {
@@ -132,7 +143,7 @@ def main():
         if eidx + 1 < len(sys.argv) and sys.argv[eidx + 1] == 'SessionStart':
             payload.setdefault('hook_event_name', 'SessionStart')
 
-    result = process_payload(payload)
+    result = process_payload(payload, None, sys.argv)
     if not result:
         return  # empty output + exit 0 = healthy no-op for strict schema
     sys.stdout.write(json.dumps(result, ensure_ascii=False, indent=2) + '\n')

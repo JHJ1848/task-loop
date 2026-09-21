@@ -79,7 +79,7 @@ def detect_current_vendor(env=None, current_session_id=None):
     if detected:
         return detected
     # sess_ 仅作为无宿主环境标记时的 ZCode 兼容线索，不能覆盖 Claude 标记。
-    if current_session_id and str(current_session_id).lower().startswith("sess_") and not env.get("CLAUDE_SESSION_ID"):
+    if current_session_id and str(current_session_id).lower().startswith("sess_") and not env.get("CLAUDE_SESSION_ID") and not env.get("CLAUDE_CODE_SESSION_ID"):
         return "zcode"
     return None
 
