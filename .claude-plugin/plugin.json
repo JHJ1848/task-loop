@@ -6,6 +6,5 @@
     "name": "JHJ1848"
   },
   "license": "MIT",
-  "skills": "./skills",
-  "hooks": "./hooks.json"
+  "skills": "./skills"
 }
