@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskLoopTopicsSchemaV5",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "revision",
+    "updated_at",
+    "vendors"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 5
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "vendors": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "vendor",
+          "topics"
+        ],
+        "properties": {
+          "vendor": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "topics": {
+            "type": "array"
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": true
+}

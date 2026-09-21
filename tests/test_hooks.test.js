@@ -58,7 +58,7 @@ function testHooks() {
           title: '开发并验证 Hooks 体系',
           assignee_thread_id: 'hook-topic-uuid-5678',
           status: 'in_progress',
-          allowlist: ['docs/memory/hook.md', 'scripts/hooks/']
+          allowlist: ['docs/memory/hook.md', 'scripts/hooks/', 'contracts/rules.json']
         }
       ]
     };
@@ -199,6 +199,153 @@ function testHooks() {
     const writeDeniedRes = processAllowlistPayload(writeDeniedPayload);
     assert.strictEqual(writeDeniedRes.decision, 'deny');
     assert.ok(writeDeniedRes.reason.includes('不在当前任务白名单'));
+
+    // 2.5 Security v2: Directory Prefix Collision Guard
+    // Allowlist has 'scripts/hooks/'. 'scripts/hooks-evil/a.js' must NOT collide and must be denied!
+    const collisionPrefixPayload1 = {
+      conversationId: 'hook-topic-uuid-5678',
+      workspacePaths: [tempDir],
+      toolCall: {
+        name: 'write_to_file',
+        args: {
+          TargetFile: path.join(tempDir, 'scripts', 'hooks-evil', 'hack.js'),
+          CodeContent: '// hack'
+        }
+      }
+    };
+    const colRes1 = processAllowlistPayload(collisionPrefixPayload1);
+    assert.strictEqual(colRes1.decision, 'deny', 'Prefix collision scripts/hooks-evil must be denied');
+
+    // Allowlist has 'docs/memory/hook.md'. 'docs/memory/hook.md.bak' must be denied!
+    const collisionPrefixPayload2 = {
+      conversationId: 'hook-topic-uuid-5678',
+      workspacePaths: [tempDir],
+      toolCall: {
+        name: 'write_to_file',
+        args: {
+          TargetFile: path.join(tempDir, 'contracts', 'rules.json.bak'),
+          CodeContent: '// backup'
+        }
+      }
+    };
+    const colRes2 = processAllowlistPayload(collisionPrefixPayload2);
+    assert.strictEqual(colRes2.decision, 'deny', 'Prefix collision contracts/rules.json.bak must be denied');
+
+    // 2.6 Security v2: Path Traversal Guard
+    // Traversal hopping out of allowlist into src/
+    const traversalPayload = {
+      conversationId: 'hook-topic-uuid-5678',
+      workspacePaths: [tempDir],
+      toolCall: {
+        name: 'write_to_file',
+        args: {
+          TargetFile: path.join(tempDir, 'scripts', 'hooks', '..', '..', 'src', 'secret.js'),
+          CodeContent: '// secret'
+        }
+      }
+    };
+    const travRes = processAllowlistPayload(traversalPayload);
+    assert.strictEqual(travRes.decision, 'deny', 'Path traversal outside allowlist must be denied');
+
+    // Safe traversal remaining inside allowlist
+    const safeTravPayload = {
+      conversationId: 'hook-topic-uuid-5678',
+      workspacePaths: [tempDir],
+      toolCall: {
+        name: 'write_to_file',
+        args: {
+          TargetFile: path.join(tempDir, 'scripts', 'hooks', 'sub', '..', 'normalized.js'),
+          CodeContent: '// ok'
+        }
+      }
+    };
+    const safeTravRes = processAllowlistPayload(safeTravPayload);
+    assert.strictEqual(safeTravRes.decision, 'allow', 'Safe traversal inside allowlist must be allowed');
+
+    // 2.7 Security v2: Mixed Slashes & Windows Drive Case Insensitivity
+    const mixedSlashPayload = {
+      conversationId: 'hook-topic-uuid-5678',
+      workspacePaths: [tempDir],
+      toolCall: {
+        name: 'write_to_file',
+        args: {
+          TargetFile: tempDir.toUpperCase() + '/scripts\\hooks/mixed\\case.js',
+          CodeContent: '// mixed'
+        }
+      }
+    };
+    const mixedRes = processAllowlistPayload(mixedSlashPayload);
+    assert.strictEqual(mixedRes.decision, 'allow', 'Mixed slashes and case variations must be allowed');
+
+    // 2.8 Security v2: UNC Path Normalization
+    const uncAllowedPayload = {
+      conversationId: 'hook-topic-uuid-5678',
+      workspacePaths: [tempDir],
+      toolCall: {
+        name: 'write_to_file',
+        args: {
+          TargetFile: '\\\\?\\' + path.join(tempDir, 'scripts', 'hooks', 'unc.js'),
+          CodeContent: '// unc'
+        }
+      }
+    };
+    const uncAllowedRes = processAllowlistPayload(uncAllowedPayload);
+    assert.strictEqual(uncAllowedRes.decision, 'allow', 'Allowed UNC path must be allowed');
+
+    const uncDeniedPayload = {
+      conversationId: 'hook-topic-uuid-5678',
+      workspacePaths: [tempDir],
+      toolCall: {
+        name: 'write_to_file',
+        args: {
+          TargetFile: '\\\\?\\' + path.join(tempDir, 'src', 'unc_evil.js'),
+          CodeContent: '// evil'
+        }
+      }
+    };
+    const uncDeniedRes = processAllowlistPayload(uncDeniedPayload);
+    assert.strictEqual(uncDeniedRes.decision, 'deny', 'Disallowed UNC path must be denied');
+
+    // 2.9 Security v2: Symlink / Junction Escape Guard
+    const srcDir = path.join(tempDir, 'src');
+    fs.mkdirSync(srcDir, { recursive: true });
+    const hooksDir = path.join(tempDir, 'scripts', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+
+    let linkCreated = false;
+    const linkPath = path.join(hooksDir, 'escape_link');
+    try {
+      if (process.platform === 'win32') {
+        fs.symlinkSync(srcDir, linkPath, 'junction');
+      } else {
+        fs.symlinkSync(srcDir, linkPath);
+      }
+      linkCreated = true;
+    } catch (_) {}
+
+    if (linkCreated) {
+      const symlinkEscapePayload = {
+        conversationId: 'hook-topic-uuid-5678',
+        workspacePaths: [tempDir],
+        toolCall: {
+          name: 'write_to_file',
+          args: {
+            TargetFile: path.join(linkPath, 'evil_payload.js'),
+            CodeContent: '// escape'
+          }
+        }
+      };
+      const symlinkRes = processAllowlistPayload(symlinkEscapePayload);
+      assert.strictEqual(symlinkRes.decision, 'deny', 'Symlink escaping into src/ must be denied');
+      assert.ok(symlinkRes.reason.includes('不在当前任务白名单'));
+    }
+
+    // 2.10 Security v2: contracts/vendor-aliases.json Resolution
+    const { VENDOR_ALIASES } = require('../scripts/hooks/enforce_allowlist');
+    assert.strictEqual(VENDOR_ALIASES.agy, 'antigravity');
+    assert.strictEqual(VENDOR_ALIASES['z-code'], 'zcode');
+    assert.strictEqual(VENDOR_ALIASES['claude-code'], 'claude');
+    assert.strictEqual(VENDOR_ALIASES.claudecode, 'claude');
 
     console.log('All Node.js Hook Unit Tests PASSED!');
   } finally {

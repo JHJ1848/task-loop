@@ -8,61 +8,61 @@ window.DEFAULT_SESSIONS = {
     "antigravity": {
       "schema_version": 3,
       "vendor": "antigravity",
-      "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+      "main_thread_id": null,
       "updated_at": "2026-09-08T09:20:00.000Z",
       "modules": {
         "main": {
-          "session_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+          "session_id": null,
           "title": "[主会话] 任务编排 & 治理中枢",
           "tags": ["main", "orchestrator"],
           "memory_doc": "docs/MEMORY.md",
           "vendor": "antigravity",
-          "resumable": true,
+          "resumable": false,
           "summary": "治理中枢与门禁质检"
         },
         "session_control": {
-          "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+          "session_id": null,
           "title": "[Session] SDK & Scripting",
           "tags": ["session_control", "topic"],
           "memory_doc": "docs/memory/session_control.md",
           "vendor": "antigravity",
-          "resumable": true,
+          "resumable": false,
           "summary": "跨厂商会话日志反向内省与六大标准原语"
         },
         "hook": {
-          "session_id": "1057c10a-523d-47a4-858e-eabeaa784932",
+          "session_id": null,
           "title": "[钩子专题] 生命周期 & 安全门禁",
           "tags": ["hook", "topic"],
           "memory_doc": "docs/memory/hook.md",
           "vendor": "antigravity",
-          "resumable": true,
+          "resumable": false,
           "summary": "生命周期钩子与 Allowlist 白名单物理拦截"
         },
         "subagent": {
-          "session_id": "83bae782-1e95-4923-a76f-2141fe8c5c61",
+          "session_id": null,
           "title": "[子代理专题] Subagent机制 & 动态模板",
           "tags": ["subagent", "topic"],
           "memory_doc": "docs/memory/subagent.md",
           "vendor": "antigravity",
-          "resumable": true,
+          "resumable": false,
           "summary": "AGY 原生子代理编排原语与瞬态沙箱生命周期"
         },
         "plugin_spec": {
-          "session_id": "da7311b9-7b54-4d9e-8fa5-22e7ba3b7c0b",
+          "session_id": null,
           "title": "[插件专题] 多厂商插件规范与导出安装",
           "tags": ["plugin_spec", "topic"],
           "memory_doc": "docs/memory/plugin_spec.md",
           "vendor": "antigravity",
-          "resumable": true,
+          "resumable": false,
           "summary": "规范导出、双目录同步与多宿主适配"
         },
         "dashboard": {
-          "session_id": "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d",
+          "session_id": null,
           "title": "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)",
           "tags": ["dashboard", "topic"],
           "memory_doc": "docs/memory/dashboard.md",
           "vendor": "antigravity",
-          "resumable": true,
+          "resumable": false,
           "summary": "专题模块: [控制面板专题] 状态监控 & 拖拽交互 (dashboard)"
         }
       }
@@ -70,25 +70,25 @@ window.DEFAULT_SESSIONS = {
     "zcode": {
       "schema_version": 3,
       "vendor": "zcode",
-      "main_thread_id": "sess_5625de9f-b41d-415a-9b8c-c9304bb29748",
+      "main_thread_id": null,
       "updated_at": "2026-09-01T02:49:32.407Z",
       "modules": {
         "main": {
-          "session_id": "sess_5625de9f-b41d-415a-9b8c-c9304bb29748",
+          "session_id": null,
           "title": "[主会话] 任务编排 & 治理中枢",
           "tags": ["main", "orchestrator"],
           "memory_doc": "docs/MEMORY.md",
           "vendor": "zcode",
-          "resumable": true,
+          "resumable": false,
           "summary": "ZCode 治理主会话"
         },
         "session_control": {
-          "session_id": "sess_zcode_session_ctrl",
+          "session_id": null,
           "title": "[专题] 会话控制与内省",
           "tags": ["session_control", "topic"],
           "memory_doc": "docs/memory/session_control.md",
           "vendor": "zcode",
-          "resumable": true,
+          "resumable": false,
           "summary": "ZCode db.sqlite 与 rollout 日志反向检索"
         }
       }
@@ -96,13 +96,13 @@ window.DEFAULT_SESSIONS = {
     "codex": {
       "schema_version": 3,
       "vendor": "codex",
-      "main_thread_id": "thread_codex_main_sample",
+      "main_thread_id": null,
       "modules": {
         "main": {
-          "session_id": "thread_codex_main_sample",
+          "session_id": null,
           "title": "[主会话] 任务编排 & 治理中枢",
           "vendor": "codex",
-          "resumable": true,
+          "resumable": false,
           "summary": "Codex App Server 中枢会话"
         }
       }
@@ -110,13 +110,13 @@ window.DEFAULT_SESSIONS = {
     "claude": {
       "schema_version": 3,
       "vendor": "claude",
-      "main_thread_id": "11111111-2222-3333-4444-555555555555",
+      "main_thread_id": null,
       "modules": {
         "main": {
-          "session_id": "11111111-2222-3333-4444-555555555555",
+          "session_id": null,
           "title": "[主会话] 任务编排 & 治理中枢",
           "vendor": "claude",
-          "resumable": true,
+          "resumable": false,
           "summary": "Claude Code -p 无头中枢"
         }
       }
@@ -134,7 +134,7 @@ window.DEFAULT_TODO = {
       "status": "done",
       "complexity": 2,
       "verification_mode": "unit_test",
-      "assignee_thread_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+      "assignee_thread_id": null,
       "allowlist": ["references/dispatch-contract.md"],
       "created_at": "2026-09-06T10:00:00Z"
     },
@@ -146,7 +146,7 @@ window.DEFAULT_TODO = {
       "complexity": 2,
       "verification_mode": "ui_reload",
       "assignee": "dashboard",
-      "assignee_thread_id": "1057c10a-523d-47a4-858e-eabeaa784932",
+      "assignee_thread_id": null,
       "allowlist": [
         "scripts/hooks/inject_session_context.js",
         "references/dispatch-contract.md"
@@ -161,7 +161,7 @@ window.DEFAULT_TODO = {
       "complexity": 2,
       "verification_mode": "unit_test",
       "assignee": "session_control",
-      "assignee_thread_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+      "assignee_thread_id": null,
       "allowlist": ["scripts/inspect_agy_sessions.js"],
       "created_at": "2026-09-08T02:57:00Z"
     },
@@ -173,7 +173,7 @@ window.DEFAULT_TODO = {
       "complexity": 1,
       "verification_mode": "unit_test",
       "assignee": "",
-      "assignee_thread_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+      "assignee_thread_id": null,
       "allowlist": ["scripts/find_project_sessions.js"],
       "created_at": "2026-09-10T03:00:00Z"
     }

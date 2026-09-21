@@ -11,12 +11,14 @@ import os
 import json
 import argparse
 from pathlib import Path
-import task_loop_state as state_store
 
-# Add providers directory to sys.path
-script_dir = Path(__file__).resolve().parent
-providers_dir = script_dir / "providers"
-sys.path.insert(0, str(providers_dir))
+# 确保运行时环境与路径正常注册
+_script_dir = Path(__file__).resolve().parent
+if str(_script_dir) not in sys.path:
+    sys.path.insert(0, str(_script_dir))
+import runtime_paths
+
+import task_loop_state as state_store
 
 from get_agy_project_sessions import scan_agy_sessions
 from get_codex_project_sessions import get_current_session_metadata, scan_codex_sessions

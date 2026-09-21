@@ -1,0 +1,18 @@
+{
+  "aliases": {
+    "agy": "antigravity",
+    "antigravity": "antigravity",
+    "zcode": "zcode",
+    "z-code": "zcode",
+    "codex": "codex",
+    "claude": "claude",
+    "claude-code": "claude",
+    "claudecode": "claude"
+  },
+  "canonical_vendors": [
+    "antigravity",
+    "zcode",
+    "codex",
+    "claude"
+  ]
+}

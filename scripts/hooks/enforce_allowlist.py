@@ -25,25 +25,77 @@ if sys.platform == "win32":
         pass
 
 
+def strip_unc_prefix(p):
+    if not p or not isinstance(p, str):
+        return ""
+    s = p
+    if s.startswith("\\\\?\\") or s.startswith("//?/"):
+        s = s[4:]
+        if s.upper().startswith("UNC\\") or s.upper().startswith("UNC/"):
+            s = "\\\\" + s[4:]
+    return s
+
+
 def normalize_path(p):
     if not p:
         return ""
-    norm = os.path.normpath(p).replace("\\", "/").lower()
+    cleaned = strip_unc_prefix(p)
+    norm = os.path.normpath(cleaned).replace("\\", "/")
+    if sys.platform == "win32" or (len(norm) > 1 and norm[1] == ":"):
+        norm = norm.lower()
     return norm
+
+
+def resolve_real_path_safely(p):
+    if not p:
+        return ""
+    abs_path = os.path.abspath(strip_unc_prefix(p))
+    try:
+        if os.path.exists(abs_path):
+            return os.path.realpath(abs_path)
+        curr = abs_path
+        missing_segments = []
+        while curr and curr != os.path.dirname(curr):
+            missing_segments.insert(0, os.path.basename(curr))
+            curr = os.path.dirname(curr)
+            if os.path.exists(curr):
+                real_parent = os.path.realpath(curr)
+                return os.path.join(real_parent, *missing_segments)
+    except Exception:
+        pass
+    return os.path.realpath(abs_path)
 
 
 def is_path_inside(candidate, parent):
     if not candidate or not parent:
         return False
     try:
-        candidate_abs = os.path.abspath(candidate)
-        parent_abs = os.path.abspath(parent)
-        return os.path.commonpath([candidate_abs, parent_abs]) == parent_abs
+        abs_parent = os.path.abspath(strip_unc_prefix(parent))
+        abs_candidate = os.path.abspath(strip_unc_prefix(candidate))
+        if sys.platform == "win32" or (len(abs_parent) > 1 and abs_parent[1] == ":") or (len(abs_candidate) > 1 and abs_candidate[1] == ":"):
+            abs_parent = abs_parent.lower()
+            abs_candidate = abs_candidate.lower()
+        
+        try:
+            rel = os.path.relpath(abs_candidate, abs_parent)
+        except ValueError:
+            return False
+            
+        if rel == ".":
+            return True
+        is_outside = (
+            rel == ".." or
+            rel.startswith(".." + os.sep) or
+            rel.startswith("../") or
+            rel.startswith("..\\") or
+            os.path.isabs(rel)
+        )
+        return not is_outside
     except (OSError, ValueError):
         return False
 
 
-VENDOR_ALIASES = {
+DEFAULT_VENDOR_ALIASES = {
     "agy": "antigravity",
     "antigravity": "antigravity",
     "zcode": "zcode",
@@ -53,6 +105,30 @@ VENDOR_ALIASES = {
     "claude-code": "claude",
     "claudecode": "claude",
 }
+
+
+def load_vendor_aliases_contract():
+    script_dir = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+    roots = [
+        os.path.dirname(os.path.dirname(script_dir)),
+        os.getcwd()
+    ]
+    for r in roots:
+        p = os.path.join(r, "contracts", "vendor-aliases.json")
+        if os.path.exists(p):
+            try:
+                with open(p, "r", encoding="utf-8") as fh:
+                    raw = json.load(fh)
+                if isinstance(raw, dict) and isinstance(raw.get("aliases"), dict):
+                    res = dict(DEFAULT_VENDOR_ALIASES)
+                    res.update(raw["aliases"])
+                    return res
+            except Exception:
+                pass
+    return dict(DEFAULT_VENDOR_ALIASES)
+
+
+VENDOR_ALIASES = load_vendor_aliases_contract()
 
 
 def normalize_vendor(name):
@@ -150,12 +226,14 @@ def find_allowlist_for_session(ws_root, conversation_id):
 
 
 def is_exempt_path(norm_target, norm_ws_root):
+    if not norm_target:
+        return False
     # Inside the workspace, only specific subdirectories are exempt
     if norm_ws_root and is_path_inside(norm_target, norm_ws_root):
         ws_exempt_prefixes = [
-            normalize_path(os.path.join(norm_ws_root, "docs")),
-            normalize_path(os.path.join(norm_ws_root, "scratch")),
-            normalize_path(os.path.join(norm_ws_root, ".agents", "task-loop")),
+            os.path.join(norm_ws_root, "docs"),
+            os.path.join(norm_ws_root, "scratch"),
+            os.path.join(norm_ws_root, ".agents", "task-loop"),
         ]
         for p in ws_exempt_prefixes:
             if is_path_inside(norm_target, p):
@@ -164,9 +242,9 @@ def is_exempt_path(norm_target, norm_ws_root):
 
     # Outside the workspace: allow OS tempdir, brain, Desktop
     outside_exempt_prefixes = [
-        normalize_path(tempfile.gettempdir()),
-        normalize_path(os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")),
-        normalize_path(os.path.join(os.path.expanduser("~"), "Desktop")),
+        tempfile.gettempdir(),
+        os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain"),
+        os.path.join(os.path.expanduser("~"), "Desktop"),
     ]
     for p in outside_exempt_prefixes:
         if is_path_inside(norm_target, p):
@@ -175,11 +253,16 @@ def is_exempt_path(norm_target, norm_ws_root):
 
 
 def is_path_allowed(target_file, allowlist, ws_root):
-    norm_target = normalize_path(target_file if os.path.isabs(target_file) else os.path.join(ws_root, target_file))
-    norm_ws_root = normalize_path(ws_root)
+    if not target_file or not isinstance(allowlist, list):
+        return False
+
+    raw_ws_root = resolve_workspace_root([ws_root])
+    abs_target = os.path.abspath(strip_unc_prefix(target_file)) if os.path.isabs(target_file) else os.path.abspath(os.path.join(raw_ws_root, strip_unc_prefix(target_file)))
+    real_target = resolve_real_path_safely(abs_target)
 
     # 1. 豁免路径直接放行 (Desktop, docs, scratch, temp, brain, task-loop state)
-    if is_exempt_path(norm_target, norm_ws_root):
+    # 逻辑路径与真实路径必须均在豁免范围内，防御符号链接逃逸
+    if is_exempt_path(abs_target, raw_ws_root) and is_exempt_path(real_target, raw_ws_root):
         return True
 
     for entry in allowlist:
@@ -191,8 +274,14 @@ def is_path_allowed(target_file, allowlist, ws_root):
         elif clean_entry.endswith("/*"):
             clean_entry = clean_entry[:-2]
 
-        abs_entry = normalize_path(clean_entry if os.path.isabs(clean_entry) else os.path.join(ws_root, clean_entry))
-        if is_path_inside(norm_target, abs_entry):
+        abs_entry = os.path.abspath(strip_unc_prefix(clean_entry)) if os.path.isabs(clean_entry) else os.path.abspath(os.path.join(raw_ws_root, strip_unc_prefix(clean_entry)))
+        real_entry = resolve_real_path_safely(abs_entry)
+
+        # 逻辑路径与真实路径双重严格子路径校验，防止前缀碰撞与软链接逃逸
+        is_logical_inside = is_path_inside(abs_target, abs_entry)
+        is_real_inside = is_path_inside(real_target, real_entry)
+
+        if is_logical_inside and is_real_inside:
             return True
     return False
 
@@ -221,29 +310,33 @@ def find_sessions_registry(ws_root, target_vendor=None):
 
 
 def is_governance_or_state_file(norm_target, norm_ws_root):
+    if not norm_target:
+        return False
+    abs_ws_root = norm_ws_root or os.getcwd()
+
     allowed_prefixes = [
-        normalize_path(os.path.join(norm_ws_root, ".agents")),
-        normalize_path(os.path.join(norm_ws_root, "docs")),
-        normalize_path(os.path.join(norm_ws_root, "rules")),
-        normalize_path(os.path.join(norm_ws_root, "templates")),
-        normalize_path(os.path.join(norm_ws_root, "references")),
-        normalize_path(os.path.join(norm_ws_root, "config")),
-        normalize_path(tempfile.gettempdir()),
-        normalize_path(os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain"))
+        os.path.join(abs_ws_root, ".agents"),
+        os.path.join(abs_ws_root, "docs"),
+        os.path.join(abs_ws_root, "rules"),
+        os.path.join(abs_ws_root, "templates"),
+        os.path.join(abs_ws_root, "references"),
+        os.path.join(abs_ws_root, "config"),
+        tempfile.gettempdir(),
+        os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")
     ]
     for p in allowed_prefixes:
         if is_path_inside(norm_target, p):
             return True
 
     allowed_exact = [
-        normalize_path(os.path.join(norm_ws_root, "AGENTS.md")),
-        normalize_path(os.path.join(norm_ws_root, ".gitignore")),
-        normalize_path(os.path.join(norm_ws_root, "plugin.json")),
-        normalize_path(os.path.join(norm_ws_root, "hooks.json")),
-        normalize_path(os.path.join(norm_ws_root, "SKILL.md"))
+        os.path.join(abs_ws_root, "AGENTS.md"),
+        os.path.join(abs_ws_root, ".gitignore"),
+        os.path.join(abs_ws_root, "plugin.json"),
+        os.path.join(abs_ws_root, "hooks.json"),
+        os.path.join(abs_ws_root, "SKILL.md")
     ]
     for f in allowed_exact:
-        if norm_target == f:
+        if is_path_inside(norm_target, f):
             return True
     return False
 
@@ -339,6 +432,7 @@ def process_payload(payload):
                     "decision": "deny",
                     "reason": f"[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 ({target_file})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。"
                 }
+            return {"decision": "allow"}
 
         allowlist = find_allowlist_for_session(ws_root, conversation_id)
         if not allowlist:

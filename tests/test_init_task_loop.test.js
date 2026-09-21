@@ -29,7 +29,7 @@ function runInitSkillTests() {
   assert.strictEqual(mappedSession.module_key, 'session_control');
   assert.strictEqual(mappedSession.topic_name, '[Session] SDK & Scripting');
 
-  const mockDashboard = { session_id: 'b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d', title: '控制面板状态监控与拖拽', summary: 'dashboard web' };
+  const mockDashboard = { session_id: '52345678-0000-0000-0000-000000000000', title: '控制面板状态监控与拖拽', summary: 'dashboard web' };
   const mappedDashboard = inferTopicMapping(mockDashboard);
   assert.strictEqual(mappedDashboard.module_key, 'dashboard');
   assert.strictEqual(mappedDashboard.topic_name, '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)');

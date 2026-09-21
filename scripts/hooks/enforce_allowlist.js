@@ -14,22 +14,74 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+function stripUncPrefix(p) {
+  if (!p || typeof p !== 'string') return '';
+  let str = p;
+  if (str.startsWith('\\\\?\\') || str.startsWith('//?/')) {
+    str = str.slice(4);
+    if (str.toUpperCase().startsWith('UNC\\') || str.toUpperCase().startsWith('UNC/')) {
+      str = '\\\\' + str.slice(4);
+    }
+  }
+  return str;
+}
+
 function normalizePath(p) {
   if (!p) return '';
-  return path.normalize(p).replace(/\\/g, '/').toLowerCase();
+  let cleaned = stripUncPrefix(p);
+  cleaned = path.normalize(cleaned).replace(/\\/g, '/');
+  if (process.platform === 'win32' || /^[a-zA-Z]:[\\/]/.test(cleaned)) {
+    cleaned = cleaned.toLowerCase();
+  }
+  return cleaned;
+}
+
+function resolveRealPathSafely(p) {
+  if (!p) return '';
+  const absPath = path.resolve(stripUncPrefix(p));
+  try {
+    if (fs.existsSync(absPath)) {
+      return fs.realpathSync(absPath);
+    }
+    let curr = absPath;
+    const missingSegments = [];
+    while (curr && curr !== path.dirname(curr)) {
+      missingSegments.unshift(path.basename(curr));
+      curr = path.dirname(curr);
+      if (fs.existsSync(curr)) {
+        const realParent = fs.realpathSync(curr);
+        return path.join(realParent, ...missingSegments);
+      }
+    }
+  } catch (_) {}
+  return absPath;
 }
 
 function isPathInside(candidate, parent) {
   if (!candidate || !parent) return false;
-  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
-  return relative === '' || (
-    relative !== '..' &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  );
+  const absParent = path.resolve(stripUncPrefix(parent));
+  const absCandidate = path.resolve(stripUncPrefix(candidate));
+
+  let p1 = absParent;
+  let p2 = absCandidate;
+  if (process.platform === 'win32' || /^[a-zA-Z]:/.test(p1) || /^[a-zA-Z]:/.test(p2)) {
+    p1 = p1.toLowerCase();
+    p2 = p2.toLowerCase();
+  }
+
+  const rel = path.relative(p1, p2);
+  if (rel === '') return true;
+
+  const isOutside = rel === '..' ||
+    rel.startsWith(`..${path.sep}`) ||
+    rel.startsWith('../') ||
+    rel.startsWith('..\\') ||
+    path.isAbsolute(rel);
+
+  return !isOutside;
 }
 
-const VENDOR_ALIASES = {
+const DEFAULT_VENDOR_ALIASES = {
   agy: 'antigravity',
   antigravity: 'antigravity',
   zcode: 'zcode',
@@ -39,6 +91,27 @@ const VENDOR_ALIASES = {
   'claude-code': 'claude',
   claudecode: 'claude'
 };
+
+function loadVendorAliasesContract() {
+  const roots = [
+    path.resolve(__dirname, '..', '..'),
+    process.cwd()
+  ];
+  for (const r of roots) {
+    const p = path.join(r, 'contracts', 'vendor-aliases.json');
+    if (fs.existsSync(p)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(p, 'utf8'));
+        if (raw && typeof raw.aliases === 'object') {
+          return Object.freeze(Object.assign({}, DEFAULT_VENDOR_ALIASES, raw.aliases));
+        }
+      } catch (_) {}
+    }
+  }
+  return Object.freeze(Object.assign({}, DEFAULT_VENDOR_ALIASES));
+}
+
+const VENDOR_ALIASES = loadVendorAliasesContract();
 
 function normalizeVendor(name) {
   if (!name) return null;
@@ -150,12 +223,13 @@ function findAllowlistForSession(wsRoot, conversationId) {
 }
 
 function isExemptPath(normTarget, normWsRoot) {
+  if (!normTarget) return false;
   // Inside the workspace, only specific subdirectories are exempt
   if (normWsRoot && isPathInside(normTarget, normWsRoot)) {
     const wsExemptPrefixes = [
-      normalizePath(path.join(normWsRoot, 'docs')),
-      normalizePath(path.join(normWsRoot, 'scratch')),
-      normalizePath(path.join(normWsRoot, '.agents', 'task-loop'))
+      path.join(normWsRoot, 'docs'),
+      path.join(normWsRoot, 'scratch'),
+      path.join(normWsRoot, '.agents', 'task-loop')
     ];
     for (const p of wsExemptPrefixes) {
       if (isPathInside(normTarget, p)) return true;
@@ -165,9 +239,9 @@ function isExemptPath(normTarget, normWsRoot) {
 
   // Outside the workspace: allow OS tempdir, brain, Desktop
   const outsideExemptPrefixes = [
-    normalizePath(os.tmpdir()),
-    normalizePath(path.join(os.homedir(), '.gemini', 'antigravity', 'brain')),
-    normalizePath(path.join(os.homedir(), 'Desktop'))
+    os.tmpdir(),
+    path.join(os.homedir(), '.gemini', 'antigravity', 'brain'),
+    path.join(os.homedir(), 'Desktop')
   ];
   for (const p of outsideExemptPrefixes) {
     if (isPathInside(normTarget, p)) return true;
@@ -176,11 +250,15 @@ function isExemptPath(normTarget, normWsRoot) {
 }
 
 function isPathAllowed(targetFile, allowlist, wsRoot) {
-  const normTarget = normalizePath(path.isAbsolute(targetFile) ? targetFile : path.resolve(wsRoot, targetFile));
-  const normWsRoot = normalizePath(wsRoot);
+  if (!targetFile || !Array.isArray(allowlist)) return false;
+
+  const rawWsRoot = resolveWorkspaceRoot([wsRoot]);
+  const absTarget = path.isAbsolute(targetFile) ? path.resolve(stripUncPrefix(targetFile)) : path.resolve(rawWsRoot, stripUncPrefix(targetFile));
+  const realTarget = resolveRealPathSafely(absTarget);
 
   // 1. 豁免路径直接放行 (Desktop, docs, scratch, temp, brain, task-loop state)
-  if (isExemptPath(normTarget, normWsRoot)) {
+  // 逻辑路径与真实路径必须均在豁免范围内，防御符号链接逃逸
+  if (isExemptPath(absTarget, rawWsRoot) && isExemptPath(realTarget, rawWsRoot)) {
     return true;
   }
 
@@ -190,9 +268,16 @@ function isPathAllowed(targetFile, allowlist, wsRoot) {
     if (cleanEntry.endsWith('/**')) cleanEntry = cleanEntry.slice(0, -3);
     else if (cleanEntry.endsWith('/*')) cleanEntry = cleanEntry.slice(0, -2);
 
-    const absEntry = normalizePath(path.isAbsolute(cleanEntry) ? cleanEntry : path.resolve(wsRoot, cleanEntry));
+    const absEntry = path.isAbsolute(cleanEntry) ? path.resolve(stripUncPrefix(cleanEntry)) : path.resolve(rawWsRoot, stripUncPrefix(cleanEntry));
+    const realEntry = resolveRealPathSafely(absEntry);
 
-    if (isPathInside(normTarget, absEntry)) return true;
+    // 逻辑路径与真实路径双重严格子路径校验，防止前缀碰撞与软链接逃逸
+    const isLogicalInside = isPathInside(absTarget, absEntry);
+    const isRealInside = isPathInside(realTarget, realEntry);
+
+    if (isLogicalInside && isRealInside) {
+      return true;
+    }
   }
 
   return false;
@@ -226,16 +311,19 @@ function findSessionsRegistry(wsRoot, targetVendor) {
 }
 
 function isGovernanceOrStateFile(normTarget, normWsRoot) {
+  if (!normTarget) return false;
+  const absWsRoot = normWsRoot || process.cwd();
+
   // 允许主会话维护状态机、治理规则、受控记忆、插件定义与临时派单文件
   const allowedPrefixes = [
-    normalizePath(path.join(normWsRoot, '.agents')),
-    normalizePath(path.join(normWsRoot, 'docs')),
-    normalizePath(path.join(normWsRoot, 'rules')),
-    normalizePath(path.join(normWsRoot, 'templates')),
-    normalizePath(path.join(normWsRoot, 'references')),
-    normalizePath(path.join(normWsRoot, 'config')),
-    normalizePath(os.tmpdir()),
-    normalizePath(path.join(os.homedir(), '.gemini', 'antigravity', 'brain'))
+    path.join(absWsRoot, '.agents'),
+    path.join(absWsRoot, 'docs'),
+    path.join(absWsRoot, 'rules'),
+    path.join(absWsRoot, 'templates'),
+    path.join(absWsRoot, 'references'),
+    path.join(absWsRoot, 'config'),
+    os.tmpdir(),
+    path.join(os.homedir(), '.gemini', 'antigravity', 'brain')
   ];
 
   for (const p of allowedPrefixes) {
@@ -243,15 +331,15 @@ function isGovernanceOrStateFile(normTarget, normWsRoot) {
   }
 
   const allowedExactFiles = [
-    normalizePath(path.join(normWsRoot, 'AGENTS.md')),
-    normalizePath(path.join(normWsRoot, '.gitignore')),
-    normalizePath(path.join(normWsRoot, 'plugin.json')),
-    normalizePath(path.join(normWsRoot, 'hooks.json')),
-    normalizePath(path.join(normWsRoot, 'SKILL.md'))
+    path.join(absWsRoot, 'AGENTS.md'),
+    path.join(absWsRoot, '.gitignore'),
+    path.join(absWsRoot, 'plugin.json'),
+    path.join(absWsRoot, 'hooks.json'),
+    path.join(absWsRoot, 'SKILL.md')
   ];
 
   for (const f of allowedExactFiles) {
-    if (normTarget === f) return true;
+    if (isPathInside(normTarget, f)) return true;
   }
 
   return false;
@@ -345,6 +433,7 @@ function processPayload(payload) {
           reason: `[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 (${targetFile})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。`
         };
       }
+      return { decision: 'allow' };
     }
 
     const allowlist = findAllowlistForSession(wsRoot, conversationId);
@@ -411,5 +500,10 @@ module.exports = {
   isPathAllowed,
   findAllowlistForSession,
   detectVendor,
-  isRegisteredForVendor
+  isRegisteredForVendor,
+  isPathInside,
+  normalizePath,
+  resolveRealPathSafely,
+  stripUncPrefix,
+  VENDOR_ALIASES
 };

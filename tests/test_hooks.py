@@ -65,7 +65,7 @@ class TestAntigravityHooks(unittest.TestCase):
                     "title": "开发并验证 Hooks 体系",
                     "assignee_thread_id": "hook-topic-uuid-5678",
                     "status": "in_progress",
-                    "allowlist": ["docs/memory/hook.md", "scripts/hooks/"]
+                    "allowlist": ["docs/memory/hook.md", "scripts/hooks/", "contracts/rules.json"]
                 }
             ]
         }
@@ -196,6 +196,163 @@ class TestAntigravityHooks(unittest.TestCase):
         res = process_allowlist_payload(payload)
         self.assertEqual(res["decision"], "deny")
         self.assertIn("不在当前任务白名单", res["reason"])
+
+    def test_pre_tool_use_prefix_collision(self):
+        # 1. Directory prefix collision: 'scripts/hooks-evil/hack.py' vs 'scripts/hooks/'
+        payload1 = {
+            "vendor": "antigravity",
+            "conversationId": "hook-topic-uuid-5678",
+            "workspacePaths": [self.temp_dir],
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {
+                    "TargetFile": os.path.join(self.temp_dir, "scripts", "hooks-evil", "hack.py"),
+                    "CodeContent": "# hack"
+                }
+            }
+        }
+        res1 = process_allowlist_payload(payload1)
+        self.assertEqual(res1["decision"], "deny")
+
+        # 2. File prefix collision: 'contracts/rules.json.bak' vs 'contracts/rules.json'
+        payload2 = {
+            "vendor": "antigravity",
+            "conversationId": "hook-topic-uuid-5678",
+            "workspacePaths": [self.temp_dir],
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {
+                    "TargetFile": os.path.join(self.temp_dir, "contracts", "rules.json.bak"),
+                    "CodeContent": "# backup"
+                }
+            }
+        }
+        res2 = process_allowlist_payload(payload2)
+        self.assertEqual(res2["decision"], "deny")
+
+    def test_pre_tool_use_path_traversal(self):
+        # Traversal hopping out of allowlist
+        payload_bad = {
+            "vendor": "antigravity",
+            "conversationId": "hook-topic-uuid-5678",
+            "workspacePaths": [self.temp_dir],
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {
+                    "TargetFile": os.path.join(self.temp_dir, "scripts", "hooks", "..", "..", "src", "secret.py"),
+                    "CodeContent": "# secret"
+                }
+            }
+        }
+        res_bad = process_allowlist_payload(payload_bad)
+        self.assertEqual(res_bad["decision"], "deny")
+
+        # Safe traversal inside allowlist
+        payload_good = {
+            "vendor": "antigravity",
+            "conversationId": "hook-topic-uuid-5678",
+            "workspacePaths": [self.temp_dir],
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {
+                    "TargetFile": os.path.join(self.temp_dir, "scripts", "hooks", "sub", "..", "normalized.py"),
+                    "CodeContent": "# safe"
+                }
+            }
+        }
+        res_good = process_allowlist_payload(payload_good)
+        self.assertEqual(res_good["decision"], "allow")
+
+    def test_pre_tool_use_mixed_slashes_and_case(self):
+        mixed_target = self.temp_dir.upper() + "/scripts\\hooks/mixed\\case.py"
+        payload = {
+            "vendor": "antigravity",
+            "conversationId": "hook-topic-uuid-5678",
+            "workspacePaths": [self.temp_dir],
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {
+                    "TargetFile": mixed_target,
+                    "CodeContent": "# mixed"
+                }
+            }
+        }
+        res = process_allowlist_payload(payload)
+        self.assertEqual(res["decision"], "allow")
+
+    def test_pre_tool_use_unc_path(self):
+        unc_good = "\\\\?\\" + os.path.join(self.temp_dir, "scripts", "hooks", "unc.py")
+        payload_good = {
+            "vendor": "antigravity",
+            "conversationId": "hook-topic-uuid-5678",
+            "workspacePaths": [self.temp_dir],
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {
+                    "TargetFile": unc_good,
+                    "CodeContent": "# unc"
+                }
+            }
+        }
+        self.assertEqual(process_allowlist_payload(payload_good)["decision"], "allow")
+
+        unc_bad = "\\\\?\\" + os.path.join(self.temp_dir, "src", "unc_bad.py")
+        payload_bad = {
+            "vendor": "antigravity",
+            "conversationId": "hook-topic-uuid-5678",
+            "workspacePaths": [self.temp_dir],
+            "toolCall": {
+                "name": "write_to_file",
+                "args": {
+                    "TargetFile": unc_bad,
+                    "CodeContent": "# evil"
+                }
+            }
+        }
+        self.assertEqual(process_allowlist_payload(payload_bad)["decision"], "deny")
+
+    def test_pre_tool_use_symlink_escape(self):
+        src_dir = os.path.join(self.temp_dir, "src")
+        os.makedirs(src_dir, exist_ok=True)
+        hooks_dir = os.path.join(self.temp_dir, "scripts", "hooks")
+        os.makedirs(hooks_dir, exist_ok=True)
+
+        link_path = os.path.join(hooks_dir, "escape_link")
+        link_created = False
+        try:
+            if sys.platform == "win32":
+                import _winapi
+                _winapi.CreateJunction(src_dir, link_path)
+            else:
+                os.symlink(src_dir, link_path)
+            link_created = True
+        except Exception:
+            pass
+
+        if link_created:
+            payload = {
+                "vendor": "antigravity",
+                "conversationId": "hook-topic-uuid-5678",
+                "workspacePaths": [self.temp_dir],
+                "toolCall": {
+                    "name": "write_to_file",
+                    "args": {
+                        "TargetFile": os.path.join(link_path, "evil.py"),
+                        "CodeContent": "# escape"
+                    }
+                }
+            }
+            res = process_allowlist_payload(payload)
+            self.assertEqual(res["decision"], "deny")
+            self.assertIn("不在当前任务白名单", res["reason"])
+
+    def test_vendor_aliases_contract(self):
+        import enforce_allowlist
+        aliases = enforce_allowlist.VENDOR_ALIASES
+        self.assertEqual(aliases.get("agy"), "antigravity")
+        self.assertEqual(aliases.get("z-code"), "zcode")
+        self.assertEqual(aliases.get("claude-code"), "claude")
+        self.assertEqual(aliases.get("claudecode"), "claude")
 
 
 if __name__ == "__main__":

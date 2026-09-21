@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Unit test for Schema v4 vendor-partitioned state store (task_loop_state.js)
- * 覆盖: 动态扩展 / 厂商隔离 / 旧格式迁移 / 点路径查询 / 兼容读。
+ * Unit test for Schema v5 vendor-partitioned state store (task_loop_state.js)
+ * 覆盖: 动态扩展 / 厂商隔离 / 旧格式迁移 / 点路径查询 / 兼容读 / OCC 乐观并发控制 / Contracts 与 Capabilities。
  */
 
 const fs = require('fs');
@@ -12,21 +12,22 @@ const assert = require('assert');
 const store = require('../scripts/task_loop_state');
 
 function freshFile(name) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test_v4_'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test_v5_'));
   return { dir, file: path.join(dir, name) };
 }
 
 function testDynamicVendorExtension() {
   const { file } = freshFile('sessions.json');
-  // 首次写 zcode 分区 -> 动态创建
+  // 首次写 zcode 分区 -> 动态创建 (revision: 1)
   store.writePartition(file, 'zcode', { main_thread_id: 'sess_z1', modules: { hook: { session_id: 'sess_z1' } }, sessions: [] });
-  // 写一个全新自定义厂商 -> 动态扩展
+  // 写一个全新自定义厂商 -> 动态扩展 (revision: 2)
   store.writePartition(file, 'mistral', { main_thread_id: 'sess_m1', modules: {}, sessions: [] });
 
   const doc = store.readJson(file);
-  assert.strictEqual(doc.schema_version, 4);
+  assert.strictEqual(doc.schema_version, 5);
+  assert.strictEqual(doc.revision, 2);
   assert.deepStrictEqual(Object.keys(doc.vendors).sort(), ['mistral', 'zcode']);
-  assert.ok(!doc.main_thread_id && !doc.modules, 'v4 top-level must carry no per-vendor state');
+  assert.ok(!doc.main_thread_id && !doc.modules, 'v5 top-level must carry no per-vendor state');
   console.log('DynamicVendorExtension PASSED!');
 }
 
@@ -63,7 +64,7 @@ function testLegacyMigration() {
 
   store.writePartition(file, 'zcode', { main_thread_id: 'sess_top', modules: { main: { session_id: 'sess_top' } }, sessions: [{ session_id: 'sess_top' }] });
   const doc = store.readJson(file);
-  assert.strictEqual(doc.schema_version, 4);
+  assert.strictEqual(doc.schema_version, 5);
   assert.strictEqual(doc.vendors.antigravity.main_thread_id, 'sess_agy', 'v3 vendors must be preserved');
   assert.strictEqual(doc.vendors.zcode.main_thread_id, 'sess_top');
 
@@ -72,7 +73,7 @@ function testLegacyMigration() {
   fs.writeFileSync(f2, JSON.stringify({ schema_version: 2, main_thread_id: 'sess_v2', modules: { main: { session_id: 'sess_v2' } }, sessions: [] }), 'utf8');
   store.writePartition(f2, 'claude', { main_thread_id: 'sess_v2', modules: { main: { session_id: 'sess_v2' } }, sessions: [] });
   const doc2 = store.readJson(f2);
-  assert.strictEqual(doc2.schema_version, 4);
+  assert.strictEqual(doc2.schema_version, 5);
   assert.strictEqual(doc2.vendors.claude.main_thread_id, 'sess_v2');
   console.log('LegacyMigration PASSED!');
 }
@@ -96,7 +97,7 @@ function testTopicsAndQuery() {
 function testCompatReadV4File() {
   const { file } = freshFile('sessions_compat.json');
   store.writePartition(file, 'zcode', { main_thread_id: 'sess_z', modules: {}, sessions: [] });
-  // getPartition 兼容读 v4 文件
+  // getPartition 兼容读 v5/v4 文件
   assert.strictEqual(store.getPartition(file, 'zcode').main_thread_id, 'sess_z');
   assert.strictEqual(store.getPartition(file, 'codex'), null);
   // env 驱动
@@ -105,9 +106,45 @@ function testCompatReadV4File() {
   console.log('CompatRead PASSED!');
 }
 
+function testOptimisticConcurrencyRevisionCheck() {
+  const { file } = freshFile('sessions_occ.json');
+  // 首次写入, revision 为 1
+  store.writePartition(file, 'antigravity', { main_thread_id: 'sess_main' });
+  const doc1 = store.readJson(file);
+  assert.strictEqual(doc1.revision, 1);
+
+  // 传入匹配的 expectedRevision: 1 -> 写入成功, revision 变为 2
+  store.writePartition(file, 'antigravity', { main_thread_id: 'sess_main_updated' }, { expectedRevision: 1 });
+  const doc2 = store.readJson(file);
+  assert.strictEqual(doc2.revision, 2);
+  assert.strictEqual(doc2.vendors.antigravity.main_thread_id, 'sess_main_updated');
+
+  // 传入不匹配的 expectedRevision: 1 (实际是 2) -> 抛出 TL_STATE_REVISION_CONFLICT
+  let conflictCaught = false;
+  try {
+    store.writePartition(file, 'antigravity', { main_thread_id: 'sess_conflict' }, { expectedRevision: 1 });
+  } catch (err) {
+    conflictCaught = true;
+    assert.strictEqual(err.code, 'TL_STATE_REVISION_CONFLICT');
+  }
+  assert.ok(conflictCaught, 'expected revision conflict to be thrown');
+  console.log('OptimisticConcurrencyRevisionCheck PASSED!');
+}
+
+function testContractsAndCapabilities() {
+  assert.strictEqual(store.capabilitiesSupports('antigravity', 'create_session'), true);
+  assert.strictEqual(store.capabilitiesSupports('codex', 'create_session'), false);
+  assert.strictEqual(store.capabilitiesSupports('zcode', 'resume_session'), true);
+  assert.ok(store.ERROR_CODES.TL_STATE_REVISION_CONFLICT);
+  assert.ok(store.ERROR_CODES.TL_SECURITY_ALLOWLIST_VIOLATION);
+  console.log('ContractsAndCapabilities PASSED!');
+}
+
 testDynamicVendorExtension();
 testVendorIsolation();
 testLegacyMigration();
 testTopicsAndQuery();
 testCompatReadV4File();
+testOptimisticConcurrencyRevisionCheck();
+testContractsAndCapabilities();
 console.log('ALL State-Partition Node.js Tests PASSED SUCCESSFULLY!');

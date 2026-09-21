@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StateV5ConformanceFixture",
+  "description": "Golden conformance test fixture for Schema v5 state document structure and optimistic concurrency control (OCC) verification",
+  "sample_document": {
+    "schema_version": 5,
+    "revision": 3,
+    "updated_at": "2026-09-20T10:00:00.000Z",
+    "vendors": {
+      "antigravity": {
+        "vendor": "antigravity",
+        "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+        "updated_at": "2026-09-20T10:00:00.000Z",
+        "modules": {
+          "session_control": {
+            "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+            "memory_doc": "docs/memory/session_control.md"
+          }
+        },
+        "sessions": [
+          {
+            "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+            "module_key": "session_control",
+            "vendor": "antigravity",
+            "resumable": true
+          }
+        ]
+      },
+      "zcode": {
+        "vendor": "zcode",
+        "main_thread_id": "zcode-main-thread-uuid",
+        "updated_at": "2026-09-20T10:00:00.000Z",
+        "modules": {},
+        "sessions": []
+      }
+    }
+  },
+  "cases": [
+    {
+      "name": "schema_v5_validation_success",
+      "description": "Standard v5 sample passes Schema validation",
+      "input_document": "sample_document",
+      "expected_valid": true
+    },
+    {
+      "name": "occ_revision_match_success",
+      "description": "Writing partition with matching expectedRevision (3) succeeds and increments revision to 4",
+      "expected_revision": 3,
+      "partition_update": {
+        "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295"
+      },
+      "expected_outcome": "success",
+      "resulting_revision": 4
+    },
+    {
+      "name": "occ_revision_mismatch_conflict",
+      "description": "Writing partition with mismatched expectedRevision (999) raises TL_STATE_REVISION_CONFLICT",
+      "expected_revision": 999,
+      "partition_update": {
+        "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295"
+      },
+      "expected_outcome": "conflict",
+      "expected_error_code": "TL_STATE_REVISION_CONFLICT"
+    },
+    {
+      "name": "legacy_v4_migration_to_v5",
+      "description": "Legacy v4 document is migrated to schema_version 5 with revision preserved/initialized",
+      "legacy_input": {
+        "schema_version": 4,
+        "vendors": {
+          "antigravity": {
+            "vendor": "antigravity",
+            "main_thread_id": "main-1"
+          }
+        }
+      },
+      "expected_version": 5,
+      "expected_min_revision": 1
+    }
+  ]
+}

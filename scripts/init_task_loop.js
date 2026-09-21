@@ -107,7 +107,6 @@ function inferTopicMapping(session, knownMemoryKeys) {
     moduleKey = 'test_spec';
     topicName = '[测试专题] 自动化会话创建验证';
   } else if (
-    session.session_id === 'b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d' ||
     fullText.includes('dashboard') ||
     fullText.includes('控制面板') ||
     fullText.includes('状态监控') ||
@@ -155,10 +154,27 @@ function scanExistingMemoryDocs(wsRoot) {
     const files = fs.readdirSync(memoryDir).filter(f => f.endsWith('.md'));
     for (const f of files) {
       const moduleKey = path.basename(f, '.md');
+      const absPath = path.join(memoryDir, f);
+      let boundSessionId = null;
+      let docTitle = null;
+      try {
+        const content = fs.readFileSync(absPath, 'utf8');
+        const sessMatch = content.match(/(?:物理实体会话|实体会话|会话\s*ID|session_id)[`:\s*]+([0-9a-fA-F-]{36}|sess_[0-9a-fA-F-]{36})/i);
+        if (sessMatch) {
+          boundSessionId = sessMatch[1];
+        }
+        const titleMatch = content.match(/^#\s+(.+)$/m);
+        if (titleMatch) {
+          docTitle = titleMatch[1].replace(/\[.*?受控记忆.*?\]/g, '').replace(/[#\*`]/g, '').trim();
+        }
+      } catch {}
+
       memoryDocs.push({
         module_key: moduleKey,
         relative_path: normalizePath(path.join('docs', 'memory', f)),
-        absolute_path: normalizePath(path.join(memoryDir, f))
+        absolute_path: normalizePath(absPath),
+        bound_session_id: boundSessionId,
+        title: docTitle
       });
     }
   }
@@ -226,45 +242,44 @@ function resolveModuleAssignments(suggestions, memoryDocs, existingModules = {},
   for (const doc of (memoryDocs || [])) {
     if (doc.module_key === 'main' || assignments.has(doc.module_key)) continue;
 
-    let matched = null;
-    if (doc.module_key === 'dashboard') {
-      // 优先匹配已知实体会话 b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d 或推断为 dashboard 的项
-      matched = suggestions.find(s => 
-        (s.session_id === 'b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d' || s.suggested_module_key === 'dashboard') &&
-        !assignedSessionIds.has(stateStore.sessionIdentity(s.vendor, s.session_id))
-      );
-      if (matched && matched.suggested_module_key !== 'dashboard') {
-        matched.suggested_module_key = 'dashboard';
-        matched.suggested_topic_name = '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)';
-        matched.suggested_tags = ['dashboard', 'topic'];
-        matched.suggested_memory_doc = 'docs/memory/dashboard.md';
-      }
-    } else {
-      matched = suggestions.find(s => s.suggested_module_key === doc.module_key && !assignedSessionIds.has(stateStore.sessionIdentity(s.vendor, s.session_id)));
-    }
+    // 优先匹配建议清单中 suggested_module_key 对齐的项，或与文档元数据中 bound_session_id 对齐的项
+    let matched = suggestions.find(s => 
+      (s.suggested_module_key === doc.module_key || (doc.bound_session_id && s.session_id === doc.bound_session_id)) &&
+      !assignedSessionIds.has(stateStore.sessionIdentity(s.vendor, s.session_id))
+    );
 
     if (matched) {
+      if (matched.suggested_module_key !== doc.module_key) {
+        matched.suggested_module_key = doc.module_key;
+        if (doc.title) matched.suggested_topic_name = doc.title;
+        matched.suggested_tags = [doc.module_key, 'topic'];
+        matched.suggested_memory_doc = doc.relative_path;
+      }
       assignments.set(doc.module_key, matched);
       assignedSessionIds.add(stateStore.sessionIdentity(matched.vendor, matched.session_id));
     }
   }
 
-  // 3. 针对 dashboard: 若存在 docs/memory/dashboard.md 但未匹配到已扫描会话，且宿主为 antigravity，锁定实体会话 b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d
-  if (memoryDocs && memoryDocs.some(d => d.module_key === 'dashboard') && !assignments.has('dashboard') && currentVendor === 'antigravity') {
-    assignments.set('dashboard', {
-      session_id: 'b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d',
-      vendor: 'antigravity',
-      id_kind: 'conversationId',
-      original_title: '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)',
-      suggested_module_key: 'dashboard',
-      suggested_topic_name: '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)',
-      suggested_tags: ['dashboard', 'topic'],
-      suggested_memory_doc: 'docs/memory/dashboard.md',
-      resumable: true,
-      physical_session: true,
-      lifecycle_status: stateStore.SESSION_STATUS.BOUND,
-      is_main_candidate: false
-    });
+  // 3. 若记忆文档中明确声明了 bound_session_id，但未在已扫描会话中命中，且未分配
+  for (const doc of (memoryDocs || [])) {
+    if (doc.module_key === 'main' || assignments.has(doc.module_key)) continue;
+    if (doc.bound_session_id && currentVendor === 'antigravity') {
+      assignments.set(doc.module_key, {
+        session_id: doc.bound_session_id,
+        vendor: 'antigravity',
+        id_kind: 'conversationId',
+        original_title: doc.title || `[${doc.module_key}专题] 核心功能维护 & 记忆沉淀`,
+        suggested_module_key: doc.module_key,
+        suggested_topic_name: doc.title || `[${doc.module_key}专题] 核心功能维护 & 记忆沉淀`,
+        suggested_tags: [doc.module_key, 'topic'],
+        suggested_memory_doc: doc.relative_path,
+        resumable: true,
+        physical_session: true,
+        lifecycle_status: stateStore.SESSION_STATUS.BOUND,
+        is_main_candidate: false
+      });
+      assignedSessionIds.add(stateStore.sessionIdentity('antigravity', doc.bound_session_id));
+    }
   }
 
   return assignments;

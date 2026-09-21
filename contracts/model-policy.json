@@ -1,0 +1,35 @@
+{
+  "codex": {
+    "defaults": {
+      "main": {
+        "model": "gpt-6-astra",
+        "reasoning_effort": "medium"
+      },
+      "topic": {
+        "model": "gpt-5.6-terra",
+        "reasoning_effort": "xhigh"
+      },
+      "subagent": {
+        "model": "gpt-5.6-luna",
+        "reasoning_effort": "max"
+      }
+    },
+    "environment_types": [
+      "worktree",
+      "local"
+    ]
+  },
+  "antigravity": {
+    "defaults": {
+      "main": {
+        "model": "inherit"
+      },
+      "topic": {
+        "model": "inherit"
+      },
+      "subagent": {
+        "model": "inherit"
+      }
+    }
+  }
+}

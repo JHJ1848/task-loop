@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AllowlistConformanceFixture",
+  "description": "Golden conformance test cases for surgical Allowlist boundary checking, prefix collisions, path traversal and exemptions",
+  "workspace_root": "d:/jhj/projects/task-loop",
+  "cases": [
+    {
+      "name": "exact_file_match_allowed",
+      "target_file": "scripts/task_loop_state.js",
+      "allowlist": [
+        "scripts/task_loop_state.js",
+        "scripts/task_loop_state.py"
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "prefix_collision_denied",
+      "description": "Prefix collision attack: 'scripts/hooks-evil/hack.js' must NOT match allowlist 'scripts/hooks'",
+      "target_file": "scripts/hooks-evil/hack.js",
+      "allowlist": [
+        "scripts/hooks"
+      ],
+      "expected_decision": "deny"
+    },
+    {
+      "name": "directory_children_allowed",
+      "description": "Legitimate child file under allowlisted directory",
+      "target_file": "scripts/hooks/new_hook.js",
+      "allowlist": [
+        "scripts/hooks"
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "glob_directory_allowed",
+      "description": "Trailing /** allowlist syntax allows subdirectories",
+      "target_file": "scripts/providers/sub/deep.js",
+      "allowlist": [
+        "scripts/providers/**"
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "path_traversal_attack_denied",
+      "description": "Path traversal ../ escaping allowlist boundary must be blocked",
+      "target_file": "scripts/hooks/../../sensitive.config",
+      "allowlist": [
+        "scripts/hooks"
+      ],
+      "expected_decision": "deny"
+    },
+    {
+      "name": "unc_prefix_normalized_allowed",
+      "description": "Windows UNC extended path prefix \\\\?\\ must be stripped and matched correctly",
+      "target_file": "\\\\?\\d:\\jhj\\projects\\task-loop\\scripts\\task_loop_state.js",
+      "allowlist": [
+        "scripts/task_loop_state.js"
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "case_insensitive_drive_letter_allowed",
+      "description": "Drive letter D: vs d: matches on Windows",
+      "target_file": "D:/jhj/projects/task-loop/scripts/task_loop_state.js",
+      "allowlist": [
+        "d:/jhj/projects/task-loop/scripts/task_loop_state.js"
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "exempt_docs_path_allowed",
+      "description": "Documentation paths under docs/ are exempt and always allowed",
+      "target_file": "docs/memory/session_control.md",
+      "allowlist": [
+        "scripts/task_loop_state.js"
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "exempt_scratch_path_allowed",
+      "description": "Scratch exploration scripts under scratch/ are exempt",
+      "target_file": "scratch/temp_debug.js",
+      "allowlist": [
+        "scripts/task_loop_state.js"
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "exempt_state_machine_path_allowed",
+      "description": "Internal state machine files under .agents/task-loop/ are exempt",
+      "target_file": ".agents/task-loop/sessions.json",
+      "allowlist": [
+        "scripts/task_loop_state.js"
+      ],
+      "expected_decision": "allow"
+    },
+    {
+      "name": "unauthorized_business_file_denied",
+      "description": "Arbitrary file outside allowlist must be denied",
+      "target_file": "src/business/payment.js",
+      "allowlist": [
+        "scripts/task_loop_state.js",
+        "scripts/task_loop_lease.js"
+      ],
+      "expected_decision": "deny"
+    }
+  ]
+}

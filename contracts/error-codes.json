@@ -1,0 +1,14 @@
+{
+  "TL_STATE_INVALID_JSON": "状态文件 JSON 格式损坏无法解析",
+  "TL_STATE_INVALID_SCHEMA": "状态文件 Schema 校验未通过",
+  "TL_STATE_REVISION_CONFLICT": "状态文件写入乐观锁版本冲突 (Revision Conflict)",
+  "TL_STATE_FILE_NOT_FOUND": "状态文件不存在",
+  "TL_VENDOR_UNSUPPORTED": "不支持的目标宿主厂商",
+  "TL_VENDOR_UNAUTHENTICATED": "宿主厂商尚未完成前置登录认证",
+  "TL_SESSION_NOT_FOUND": "目标专题物理会话不存在",
+  "TL_SESSION_CREATION_FAILED": "物理会话拉起执行失败",
+  "TL_SESSION_PENDING_HOST": "会话依赖外部宿主手工拉起 (Pending Creation)",
+  "TL_SECURITY_ALLOWLIST_VIOLATION": "PreToolUse 物理白名单拦截拒绝",
+  "TL_PROVIDER_CLI_MISSING": "宿主 Provider CLI 二进制缺失",
+  "TL_DISPATCH_TIMEOUT": "派单监控超时未激活"
+}

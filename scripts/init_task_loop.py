@@ -113,10 +113,7 @@ def infer_topic_mapping(session, known_memory_keys=None):
     elif any(k in full_text for k in ["test_spec", "自动化测试", "测试专题"]):
         module_key = "test_spec"
         topic_name = "[测试专题] 自动化会话创建验证"
-    elif (
-        session.get("session_id") == "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d"
-        or any(k in full_text for k in ["dashboard", "控制面板", "状态监控", "看板"])
-    ):
+    elif any(k in full_text for k in ["dashboard", "控制面板", "状态监控", "看板"]):
         module_key = "dashboard"
         topic_name = "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)"
 
@@ -152,10 +149,29 @@ def scan_existing_memory_docs(ws_root):
         for f in os.listdir(memory_dir):
             if f.endswith(".md"):
                 module_key = os.path.splitext(f)[0]
+                abs_path = os.path.join(memory_dir, f)
+                bound_session_id = None
+                doc_title = None
+                try:
+                    with open(abs_path, "r", encoding="utf-8") as fh:
+                        content = fh.read()
+                    sess_match = re.search(r"(?:物理实体会话|实体会话|会话\s*ID|session_id)[`:\s*]+([0-9a-fA-F-]{36}|sess_[0-9a-fA-F-]{36})", content)
+                    if sess_match:
+                        bound_session_id = sess_match.group(1)
+                    title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
+                    if title_match:
+                        raw_title = title_match.group(1)
+                        doc_title = re.sub(r"\[.*?受控记忆.*?\]", "", raw_title)
+                        doc_title = re.sub(r"[#\*`]", "", doc_title).strip()
+                except Exception:
+                    pass
+
                 memory_docs.append({
                     "module_key": module_key,
                     "relative_path": normalize_path(os.path.join("docs", "memory", f)),
-                    "absolute_path": normalize_path(os.path.join(memory_dir, f))
+                    "absolute_path": normalize_path(abs_path),
+                    "bound_session_id": bound_session_id,
+                    "title": doc_title
                 })
 
     return memory_docs
@@ -215,37 +231,48 @@ def resolve_module_assignments(suggestions, memory_docs=None, existing_modules=N
         if doc["module_key"] == "main" or doc["module_key"] in assignments:
             continue
 
-        matched = None
-        if doc["module_key"] == "dashboard":
-            matched = next((s for s in suggestions if (s.get("session_id") == "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d" or s.get("suggested_module_key") == "dashboard") and state_store.session_identity(s.get("vendor"), s.get("session_id")) not in assigned_session_ids), None)
-            if matched and matched.get("suggested_module_key") != "dashboard":
-                matched["suggested_module_key"] = "dashboard"
-                matched["suggested_topic_name"] = "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)"
-                matched["suggested_tags"] = ["dashboard", "topic"]
-                matched["suggested_memory_doc"] = "docs/memory/dashboard.md"
-        else:
-            matched = next((s for s in suggestions if s.get("suggested_module_key") == doc["module_key"] and state_store.session_identity(s.get("vendor"), s.get("session_id")) not in assigned_session_ids), None)
+        matched = next(
+            (
+                s for s in suggestions
+                if (
+                    s.get("suggested_module_key") == doc["module_key"]
+                    or (doc.get("bound_session_id") and s.get("session_id") == doc["bound_session_id"])
+                )
+                and state_store.session_identity(s.get("vendor"), s.get("session_id")) not in assigned_session_ids
+            ),
+            None
+        )
 
         if matched:
+            if matched.get("suggested_module_key") != doc["module_key"]:
+                matched["suggested_module_key"] = doc["module_key"]
+                if doc.get("title"):
+                    matched["suggested_topic_name"] = doc["title"]
+                matched["suggested_tags"] = [doc["module_key"], "topic"]
+                matched["suggested_memory_doc"] = doc["relative_path"]
             assignments[doc["module_key"]] = matched
             assigned_session_ids.add(state_store.session_identity(matched.get("vendor"), matched.get("session_id")))
 
-    # 3. 针对 dashboard: 若存在 docs/memory/dashboard.md 但未匹配到已扫描会话，且宿主为 antigravity，锁定实体会话 b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d
-    if memory_docs and any(d.get("module_key") == "dashboard" for d in memory_docs) and "dashboard" not in assignments and current_vendor == "antigravity":
-        assignments["dashboard"] = {
-            "session_id": "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d",
-            "vendor": "antigravity",
-            "id_kind": "conversationId",
-            "original_title": "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)",
-            "suggested_module_key": "dashboard",
-            "suggested_topic_name": "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)",
-            "suggested_tags": ["dashboard", "topic"],
-            "suggested_memory_doc": "docs/memory/dashboard.md",
-            "resumable": True,
-            "physical_session": True,
-            "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
-            "is_main_candidate": False
-        }
+    # 3. 若记忆文档中明确声明了 bound_session_id，但未在已扫描会话中命中，且未分配
+    for doc in (memory_docs or []):
+        if doc["module_key"] == "main" or doc["module_key"] in assignments:
+            continue
+        if doc.get("bound_session_id") and current_vendor == "antigravity":
+            assignments[doc["module_key"]] = {
+                "session_id": doc["bound_session_id"],
+                "vendor": "antigravity",
+                "id_kind": "conversationId",
+                "original_title": doc.get("title") or f"[{doc['module_key']}专题] 核心功能维护 & 记忆沉淀",
+                "suggested_module_key": doc["module_key"],
+                "suggested_topic_name": doc.get("title") or f"[{doc['module_key']}专题] 核心功能维护 & 记忆沉淀",
+                "suggested_tags": [doc["module_key"], "topic"],
+                "suggested_memory_doc": doc["relative_path"],
+                "resumable": True,
+                "physical_session": True,
+                "lifecycle_status": state_store.SESSION_STATUS["BOUND"],
+                "is_main_candidate": False
+            }
+            assigned_session_ids.add(state_store.session_identity("antigravity", doc["bound_session_id"]))
 
     return assignments
 

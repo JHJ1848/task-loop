@@ -1,0 +1,40 @@
+{
+  "matrix": {
+    "antigravity": {
+      "discover_session": true,
+      "create_session": true,
+      "resume_session": true,
+      "automatic_hook": true,
+      "pre_tool_hook": true,
+      "subagent_orchestration": true,
+      "question_ui": "ask_question"
+    },
+    "zcode": {
+      "discover_session": true,
+      "create_session": true,
+      "resume_session": true,
+      "automatic_hook": true,
+      "pre_tool_hook": true,
+      "subagent_orchestration": false,
+      "question_ui": "native_dialog"
+    },
+    "codex": {
+      "discover_session": true,
+      "create_session": false,
+      "resume_session": true,
+      "automatic_hook": false,
+      "pre_tool_hook": false,
+      "subagent_orchestration": true,
+      "question_ui": "compact_number"
+    },
+    "claude": {
+      "discover_session": true,
+      "create_session": true,
+      "resume_session": true,
+      "automatic_hook": true,
+      "pre_tool_hook": false,
+      "subagent_orchestration": true,
+      "question_ui": "terminal_confirm"
+    }
+  }
+}

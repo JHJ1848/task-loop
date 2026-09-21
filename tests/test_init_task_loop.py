@@ -33,7 +33,7 @@ class TestInitSkill(unittest.TestCase):
         self.assertEqual(mapped_subagent["module_key"], "subagent")
         self.assertEqual(mapped_subagent["topic_name"], "[子代理专题] Subagent机制 & 动态模板")
 
-        mock_dashboard = {"session_id": "b86d3f08-fd8d-4dc9-aaeb-8ed1608f674d", "title": "控制面板状态监控与拖拽", "summary": "dashboard web"}
+        mock_dashboard = {"session_id": "52345678-0000-0000-0000-000000000000", "title": "控制面板状态监控与拖拽", "summary": "dashboard web"}
         mapped_dashboard = infer_topic_mapping(mock_dashboard)
         self.assertEqual(mapped_dashboard["module_key"], "dashboard")
         self.assertEqual(mapped_dashboard["topic_name"], "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)")

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TaskLoopPolicySchema",
+  "type": "object",
+  "required": [
+    "schema_version"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer"
+    },
+    "active_vendor": {
+      "type": "string"
+    },
+    "enable_file_state_machine": {
+      "type": "boolean"
+    },
+    "lease_timeout_sec": {
+      "type": "integer"
+    },
+    "verification_gate": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}

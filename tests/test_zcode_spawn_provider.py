@@ -153,7 +153,10 @@ def test_new_topic_session_vendor_aware():
     os.environ.update(env)
     try:
         result = mod.spawn_root_conversation("[测试专题] x", "初始化", tempfile.gettempdir())
-        assert result is None, "unauthenticated spawn must degrade to None"
+        assert result is not None, "unauthenticated spawn must return status object"
+        assert result.get("status") in ("UNSUPPORTED", "NOT_LOGGED_IN", "CREATION_FAILED"), f"unexpected status: {result}"
+        assert result.get("submitted") is False
+        assert result.get("bound") is False
     finally:
         os.environ.clear()
         os.environ.update(old_env)

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VendorPrecedenceConformanceFixture",
+  "description": "Golden conformance test cases for vendor resolution precedence, aliases normalization and conflict detection",
+  "cases": [
+    {
+      "name": "explicit_vendor_precedence_over_all",
+      "description": "Explicit vendor has highest precedence (Level 1)",
+      "input": {
+        "vendor": "agy",
+        "session": { "vendor": "codex" },
+        "sessionId": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+        "env": { "ZCODE_SESSION_ID": "zcode-1" }
+      },
+      "expected": {
+        "vendor": "antigravity",
+        "precedence": 1,
+        "matched_by": "explicit_vendor"
+      }
+    },
+    {
+      "name": "vendor_aliases_normalization_zcode",
+      "description": "Alias 'z-code' normalizes to 'zcode'",
+      "input": {
+        "vendor": "z-code"
+      },
+      "expected": {
+        "vendor": "zcode",
+        "precedence": 1,
+        "matched_by": "explicit_vendor"
+      }
+    },
+    {
+      "name": "vendor_aliases_normalization_claude",
+      "description": "Alias 'claude-code' normalizes to 'claude'",
+      "input": {
+        "vendor": "claude-code"
+      },
+      "expected": {
+        "vendor": "claude",
+        "precedence": 1,
+        "matched_by": "explicit_vendor"
+      }
+    },
+    {
+      "name": "explicit_session_payload_precedence",
+      "description": "Explicit session payload vendor has second precedence (Level 2)",
+      "input": {
+        "session": { "vendor": "zcode" },
+        "sessionId": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+        "env": { "CODEX_THREAD_ID": "codex-th-1" }
+      },
+      "expected": {
+        "vendor": "zcode",
+        "precedence": 2,
+        "matched_by": "explicit_session_payload"
+      }
+    },
+    {
+      "name": "registered_session_identity_precedence",
+      "description": "Registered session ID lookup has third precedence (Level 3)",
+      "input": {
+        "sessionId": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+        "env": { "CODEX_THREAD_ID": "codex-th-1" }
+      },
+      "expected": {
+        "vendor": "antigravity",
+        "precedence": 3,
+        "matched_by": "registered_session_identity"
+      }
+    },
+    {
+      "name": "runtime_environment_codex",
+      "description": "Runtime native env detection when only Codex is present (Level 4)",
+      "input": {
+        "env": { "CODEX_THREAD_ID": "codex-th-99" }
+      },
+      "expected": {
+        "vendor": "codex",
+        "precedence": 4,
+        "matched_by": "runtime_environment"
+      }
+    },
+    {
+      "name": "runtime_environment_antigravity",
+      "description": "Runtime native env detection when only Antigravity is present (Level 4)",
+      "input": {
+        "env": { "ANTIGRAVITY_CONVERSATION_ID": "agy-sess-99" }
+      },
+      "expected": {
+        "vendor": "antigravity",
+        "precedence": 4,
+        "matched_by": "runtime_environment"
+      }
+    },
+    {
+      "name": "runtime_environment_zcode",
+      "description": "Runtime native env detection when only ZCode is present (Level 4)",
+      "input": {
+        "env": { "ZCODE_SESSION_ID": "zcode-sess-99" }
+      },
+      "expected": {
+        "vendor": "zcode",
+        "precedence": 4,
+        "matched_by": "runtime_environment"
+      }
+    },
+    {
+      "name": "runtime_environment_claude",
+      "description": "Runtime native env detection when only Claude is present (Level 4)",
+      "input": {
+        "env": { "CLAUDE_CONVERSATION_ID": "claude-sess-99" }
+      },
+      "expected": {
+        "vendor": "claude",
+        "precedence": 4,
+        "matched_by": "runtime_environment"
+      }
+    },
+    {
+      "name": "runtime_environment_ambiguous_conflict",
+      "description": "Multiple conflicting runtime environments without higher precedence triggers TL_VENDOR_AMBIGUOUS",
+      "input": {
+        "env": {
+          "CODEX_THREAD_ID": "codex-th-1",
+          "ZCODE_SESSION_ID": "zcode-sess-1"
+        }
+      },
+      "expected_error": {
+        "code": "TL_VENDOR_AMBIGUOUS",
+        "vendor": "UNKNOWN"
+      }
+    },
+    {
+      "name": "fallback_to_unknown",
+      "description": "Empty input and env falls back to UNKNOWN (Level 5)",
+      "input": {
+        "env": {}
+      },
+      "expected": {
+        "vendor": "UNKNOWN",
+        "precedence": 5,
+        "matched_by": "UNKNOWN"
+      }
+    }
+  ]
+}

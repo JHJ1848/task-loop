@@ -1,0 +1,26 @@
+{
+  "complexity_levels": {
+    "1": {
+      "tier": "Level 1",
+      "description": "极简任务 / 单点只读探索或就地修复",
+      "dispatch_mode": "direct_or_local",
+      "subagents_allowed": false,
+      "verification": "self_check"
+    },
+    "2": {
+      "tier": "Level 2",
+      "description": "标准专题研发 / 单模块修改与单测闭环",
+      "dispatch_mode": "sidebus_topic",
+      "subagents_allowed": false,
+      "verification": "automated_tests"
+    },
+    "3": {
+      "tier": "Level 3",
+      "description": "复杂跨模块重构 / 多分支并发协作",
+      "dispatch_mode": "sidebus_topic_with_subagents",
+      "subagents_allowed": true,
+      "min_concurrency": 2,
+      "verification": "critical_gate_and_reviewer"
+    }
+  }
+}
