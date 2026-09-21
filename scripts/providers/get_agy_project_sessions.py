@@ -22,6 +22,10 @@ def normalize_path(path_str: str) -> str:
 
 def scan_agy_sessions(project_root_str: str = ".", custom_brain_path: str = None, inspect_activity: bool = True) -> list:
     project_root = normalize_path(project_root_str)
+    raw_norm = str(project_root_str).replace("\\", "/").rstrip("/").lower()
+    match_targets = [project_root, project_root.replace(":", "%3a")]
+    if raw_norm and raw_norm != project_root:
+        match_targets.extend([raw_norm, raw_norm.replace(":", "%3a")])
     
     if custom_brain_path:
         brain_dir = Path(custom_brain_path)
@@ -60,13 +64,10 @@ def scan_agy_sessions(project_root_str: str = ".", custom_brain_path: str = None
 
         try:
             with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-                for line in f:
-                    line_str = line.strip()
-                    if not line_str:
-                        continue
+                for line_str in f:
                     try:
                         record = json.loads(line_str)
-                    except Exception as e:
+                    except Exception:
                         sys.stderr.write(f"[agy-provider] schema mismatch in {conv_id}: malformed json line: {line_str[:80]}\n")
                         continue
 
@@ -75,7 +76,7 @@ def scan_agy_sessions(project_root_str: str = ".", custom_brain_path: str = None
                         continue
 
                     line_lower = line_str.lower()
-                    if not is_match and (project_root in line_lower or project_root.replace(":", "%3a") in line_lower):
+                    if not is_match and any(t in line_lower for t in match_targets):
                         is_match = True
                     
                     # Extract user input prompts
@@ -91,8 +92,17 @@ def scan_agy_sessions(project_root_str: str = ".", custom_brain_path: str = None
                         file_matches = re.findall(r'"(?:AbsolutePath|TargetFile|SearchPath)"\s*:\s*"([^"]+)"', line_str)
                         for fm in file_matches:
                             clean_fm = fm.replace('\\\\', '/').replace('\\', '/')
-                            if clean_fm.lower().startswith(project_root):
+                            norm_fm = normalize_path(fm)
+                            if norm_fm.startswith(project_root):
+                                rel_path = norm_fm[len(project_root):].lstrip('/')
+                                if rel_path:
+                                    touched_files.add(rel_path)
+                            elif clean_fm.lower().startswith(project_root):
                                 rel_path = clean_fm[len(project_root):].lstrip('/')
+                                if rel_path:
+                                    touched_files.add(rel_path)
+                            elif raw_norm and clean_fm.lower().startswith(raw_norm):
+                                rel_path = clean_fm[len(raw_norm):].lstrip('/')
                                 if rel_path:
                                     touched_files.add(rel_path)
                             elif not clean_fm.startswith(('http://', 'https://')):

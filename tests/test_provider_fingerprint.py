@@ -33,7 +33,7 @@ from scripts.find_project_sessions import find_sessions
 
 class TestProviderFingerprint(unittest.TestCase):
     def test_agy_fingerprint_and_corrupt_line(self):
-        temp_dir = tempfile.mkdtemp(prefix="test_fingerprint_agy_py_")
+        temp_dir = str(Path(tempfile.mkdtemp(prefix="test_fingerprint_agy_py_")).resolve())
         try:
             mock_brain = os.path.join(temp_dir, "brain")
             project_root = os.path.join(temp_dir, "project")
@@ -70,7 +70,7 @@ class TestProviderFingerprint(unittest.TestCase):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_codex_fingerprint_and_corrupt_line(self):
-        temp_dir = tempfile.mkdtemp(prefix="test_fingerprint_codex_py_")
+        temp_dir = str(Path(tempfile.mkdtemp(prefix="test_fingerprint_codex_py_")).resolve())
         try:
             mock_codex_home = Path(temp_dir) / "codex_home"
             project_root = os.path.join(temp_dir, "project")
@@ -110,7 +110,7 @@ class TestProviderFingerprint(unittest.TestCase):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_claude_fingerprint(self):
-        temp_dir = tempfile.mkdtemp(prefix="test_fingerprint_claude_py_")
+        temp_dir = str(Path(tempfile.mkdtemp(prefix="test_fingerprint_claude_py_")).resolve())
         try:
             mock_claude_home = Path(temp_dir) / "claude_home"
             project_root = os.path.join(temp_dir, "project")
@@ -136,7 +136,7 @@ class TestProviderFingerprint(unittest.TestCase):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_find_project_sessions_safe_isolation(self):
-        temp_dir = tempfile.mkdtemp(prefix="test_find_sessions_py_")
+        temp_dir = str(Path(tempfile.mkdtemp(prefix="test_find_sessions_py_")).resolve())
         try:
             project_root = os.path.join(temp_dir, "project")
             os.makedirs(project_root, exist_ok=True)

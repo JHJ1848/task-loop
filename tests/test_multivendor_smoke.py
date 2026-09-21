@@ -35,7 +35,7 @@ from scripts.find_project_sessions import find_sessions
 
 class TestMultivendorSmoke(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.mkdtemp(prefix="test_smoke_env_py_")
+        self.temp_dir = str(Path(tempfile.mkdtemp(prefix="test_smoke_env_py_")).resolve())
         self.project_root = os.path.join(self.temp_dir, "workspace")
         os.makedirs(self.project_root, exist_ok=True)
         with open(os.path.join(self.project_root, "AGENTS.md"), "w", encoding="utf-8") as f:

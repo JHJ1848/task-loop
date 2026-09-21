@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "AllowlistConformanceFixture",
   "description": "Golden conformance test cases for surgical Allowlist boundary checking, prefix collisions, path traversal and exemptions",
-  "workspace_root": "d:/jhj/projects/task-loop",
+  "workspace_root": "${WS_ROOT}",
   "cases": [
     {
       "name": "exact_file_match_allowed",
@@ -52,7 +52,7 @@
     {
       "name": "unc_prefix_normalized_allowed",
       "description": "Windows UNC extended path prefix \\\\?\\ must be stripped and matched correctly",
-      "target_file": "\\\\?\\d:\\jhj\\projects\\task-loop\\scripts\\task_loop_state.js",
+      "target_file": "\\\\?\\${WS_ROOT}\\scripts\\task_loop_state.js",
       "allowlist": [
         "scripts/task_loop_state.js"
       ],
@@ -61,11 +61,12 @@
     {
       "name": "case_insensitive_drive_letter_allowed",
       "description": "Drive letter D: vs d: matches on Windows",
-      "target_file": "D:/jhj/projects/task-loop/scripts/task_loop_state.js",
+      "target_file": "D:/mock/drive/scripts/task_loop_state.js",
       "allowlist": [
-        "d:/jhj/projects/task-loop/scripts/task_loop_state.js"
+        "d:/mock/drive/scripts/task_loop_state.js"
       ],
-      "expected_decision": "allow"
+      "expected_decision": "allow",
+      "platform": "win32"
     },
     {
       "name": "exempt_docs_path_allowed",

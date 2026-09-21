@@ -37,8 +37,8 @@ def _write_fixture(home_dir: Path, project_dir: Path):
 
 
 def test_claude_scanner():
-    project_dir = Path(tempfile.mkdtemp(prefix="claude_scan_proj_"))
-    home_dir = Path(tempfile.mkdtemp(prefix="claude_scan_home_"))
+    project_dir = Path(tempfile.mkdtemp(prefix="claude_scan_proj_")).resolve()
+    home_dir = Path(tempfile.mkdtemp(prefix="claude_scan_home_")).resolve()
     try:
         (project_dir / "src").mkdir()
         (project_dir / "CLAUDE.md").write_text("# rules", encoding="utf-8")
@@ -58,7 +58,7 @@ def test_claude_scanner():
         assert any(p.replace("\\", "/").endswith("CLAUDE.md") for p in s["rule_files"])
 
         # cwd mismatch (session resumed from another workspace) must be rejected
-        other_home = Path(tempfile.mkdtemp(prefix="claude_scan_other_"))
+        other_home = Path(tempfile.mkdtemp(prefix="claude_scan_other_")).resolve()
         try:
             munged = munge_project_dir(project_dir.as_posix())
             other_dir = other_home / "projects" / munged

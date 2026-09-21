@@ -44,12 +44,33 @@ _CURRENT_DIR = Path(__file__).resolve().parent
 if str(_CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(_CURRENT_DIR))
 
-from task_loop_state import atomic_write_json, read_json, normalize_vendor
+from task_loop_state import atomic_write_json, normalize_vendor
 
 DEFAULT_LEASE_FILE = _CURRENT_DIR.parent / ".agents" / "task-loop" / "lease.json"
 DEFAULT_TTL_MS = 5 * 60 * 1000  # 5 分钟
 DEFAULT_LOCK_TIMEOUT_S = 10.0
 STALE_LOCK_THRESHOLD_S = 10.0
+
+
+def read_json(file_path):
+    """读取 JSON 文件，针对 Windows 高并发原子替换瞬时访问冲突增加退避微重试"""
+    path_obj = Path(file_path)
+    for attempt in range(8):
+        try:
+            if not path_obj.exists():
+                if attempt < 3 and path_obj.parent.exists():
+                    time.sleep(0.005 + random.uniform(0.001, 0.004))
+                    if not path_obj.exists():
+                        return None
+                else:
+                    return None
+            with open(path_obj, "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except (PermissionError, OSError, json.JSONDecodeError):
+            if attempt == 7:
+                return None
+            time.sleep(0.005 + random.uniform(0.001, 0.004))
+    return None
 
 
 def _now_iso():

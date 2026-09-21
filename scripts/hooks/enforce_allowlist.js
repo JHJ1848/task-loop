@@ -38,7 +38,10 @@ function normalizePath(p) {
 
 function resolveRealPathSafely(p) {
   if (!p) return '';
-  const absPath = path.resolve(stripUncPrefix(p));
+  const cleaned = process.platform !== 'win32'
+    ? stripUncPrefix(p).replace(/\\/g, '/')
+    : stripUncPrefix(p);
+  const absPath = path.resolve(cleaned);
   try {
     if (fs.existsSync(absPath)) {
       return fs.realpathSync(absPath);
@@ -59,8 +62,14 @@ function resolveRealPathSafely(p) {
 
 function isPathInside(candidate, parent) {
   if (!candidate || !parent) return false;
-  const absParent = path.resolve(stripUncPrefix(parent));
-  const absCandidate = path.resolve(stripUncPrefix(candidate));
+  const cClean = process.platform !== 'win32'
+    ? stripUncPrefix(candidate).replace(/\\/g, '/')
+    : stripUncPrefix(candidate);
+  const pClean = process.platform !== 'win32'
+    ? stripUncPrefix(parent).replace(/\\/g, '/')
+    : stripUncPrefix(parent);
+  const absParent = path.resolve(pClean);
+  const absCandidate = path.resolve(cClean);
 
   let p1 = absParent;
   let p2 = absCandidate;
@@ -253,7 +262,10 @@ function isPathAllowed(targetFile, allowlist, wsRoot) {
   if (!targetFile || !Array.isArray(allowlist)) return false;
 
   const rawWsRoot = resolveWorkspaceRoot([wsRoot]);
-  const absTarget = path.isAbsolute(targetFile) ? path.resolve(stripUncPrefix(targetFile)) : path.resolve(rawWsRoot, stripUncPrefix(targetFile));
+  const cleanTarget = process.platform !== 'win32'
+    ? stripUncPrefix(targetFile).replace(/\\/g, '/')
+    : stripUncPrefix(targetFile);
+  const absTarget = path.isAbsolute(cleanTarget) ? path.resolve(cleanTarget) : path.resolve(rawWsRoot, cleanTarget);
   const realTarget = resolveRealPathSafely(absTarget);
 
   // 1. 豁免路径直接放行 (Desktop, docs, scratch, temp, brain, task-loop state)
@@ -268,7 +280,10 @@ function isPathAllowed(targetFile, allowlist, wsRoot) {
     if (cleanEntry.endsWith('/**')) cleanEntry = cleanEntry.slice(0, -3);
     else if (cleanEntry.endsWith('/*')) cleanEntry = cleanEntry.slice(0, -2);
 
-    const absEntry = path.isAbsolute(cleanEntry) ? path.resolve(stripUncPrefix(cleanEntry)) : path.resolve(rawWsRoot, stripUncPrefix(cleanEntry));
+    const cleanEntryBase = process.platform !== 'win32'
+      ? stripUncPrefix(cleanEntry).replace(/\\/g, '/')
+      : stripUncPrefix(cleanEntry);
+    const absEntry = path.isAbsolute(cleanEntryBase) ? path.resolve(cleanEntryBase) : path.resolve(rawWsRoot, cleanEntryBase);
     const realEntry = resolveRealPathSafely(absEntry);
 
     // 逻辑路径与真实路径双重严格子路径校验，防止前缀碰撞与软链接逃逸

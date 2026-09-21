@@ -49,7 +49,8 @@ def normalize_path(p):
 def resolve_real_path_safely(p):
     if not p:
         return ""
-    abs_path = os.path.abspath(strip_unc_prefix(p))
+    cleaned = strip_unc_prefix(p).replace("\\", "/") if sys.platform != "win32" else strip_unc_prefix(p)
+    abs_path = os.path.abspath(cleaned)
     try:
         if os.path.exists(abs_path):
             return os.path.realpath(abs_path)
@@ -70,8 +71,10 @@ def is_path_inside(candidate, parent):
     if not candidate or not parent:
         return False
     try:
-        abs_parent = os.path.abspath(strip_unc_prefix(parent))
-        abs_candidate = os.path.abspath(strip_unc_prefix(candidate))
+        c_clean = strip_unc_prefix(candidate).replace("\\", "/") if sys.platform != "win32" else strip_unc_prefix(candidate)
+        p_clean = strip_unc_prefix(parent).replace("\\", "/") if sys.platform != "win32" else strip_unc_prefix(parent)
+        abs_parent = os.path.abspath(p_clean)
+        abs_candidate = os.path.abspath(c_clean)
         if sys.platform == "win32" or (len(abs_parent) > 1 and abs_parent[1] == ":") or (len(abs_candidate) > 1 and abs_candidate[1] == ":"):
             abs_parent = abs_parent.lower()
             abs_candidate = abs_candidate.lower()
@@ -257,7 +260,8 @@ def is_path_allowed(target_file, allowlist, ws_root):
         return False
 
     raw_ws_root = resolve_workspace_root([ws_root])
-    abs_target = os.path.abspath(strip_unc_prefix(target_file)) if os.path.isabs(target_file) else os.path.abspath(os.path.join(raw_ws_root, strip_unc_prefix(target_file)))
+    clean_target = strip_unc_prefix(target_file).replace("\\", "/") if sys.platform != "win32" else strip_unc_prefix(target_file)
+    abs_target = os.path.abspath(clean_target) if os.path.isabs(clean_target) else os.path.abspath(os.path.join(raw_ws_root, clean_target))
     real_target = resolve_real_path_safely(abs_target)
 
     # 1. 豁免路径直接放行 (Desktop, docs, scratch, temp, brain, task-loop state)
@@ -274,7 +278,8 @@ def is_path_allowed(target_file, allowlist, ws_root):
         elif clean_entry.endswith("/*"):
             clean_entry = clean_entry[:-2]
 
-        abs_entry = os.path.abspath(strip_unc_prefix(clean_entry)) if os.path.isabs(clean_entry) else os.path.abspath(os.path.join(raw_ws_root, strip_unc_prefix(clean_entry)))
+        clean_entry_base = strip_unc_prefix(clean_entry).replace("\\", "/") if sys.platform != "win32" else strip_unc_prefix(clean_entry)
+        abs_entry = os.path.abspath(clean_entry_base) if os.path.isabs(clean_entry_base) else os.path.abspath(os.path.join(raw_ws_root, clean_entry_base))
         real_entry = resolve_real_path_safely(abs_entry)
 
         # 逻辑路径与真实路径双重严格子路径校验，防止前缀碰撞与软链接逃逸

@@ -30,6 +30,7 @@ def munge_project_dir(path_str: str) -> str:
 
 def scan_claude_sessions(project_root_str: str = ".", custom_claude_home: str = None, inspect_activity: bool = True) -> list:
     project_root = normalize_path(project_root_str)
+    raw_norm = str(project_root_str).replace("\\", "/").rstrip("/").lower()
 
     if custom_claude_home:
         projects_dir = Path(custom_claude_home) / "projects"
@@ -60,7 +61,7 @@ def scan_claude_sessions(project_root_str: str = ".", custom_claude_home: str = 
             if session_id in seen_ids:
                 continue
 
-            parsed = _parse_transcript(log_file, project_root, inspect_activity)
+            parsed = _parse_transcript(log_file, project_root, inspect_activity, raw_norm)
             if parsed is not None:
                 seen_ids.add(session_id)
                 parsed["rule_files"] = rule_files
@@ -70,7 +71,7 @@ def scan_claude_sessions(project_root_str: str = ".", custom_claude_home: str = 
     return sessions
 
 
-def _parse_transcript(log_file: Path, project_root: str, inspect_activity: bool):
+def _parse_transcript(log_file: Path, project_root: str, inspect_activity: bool, raw_project_root: str = ""):
     stat = log_file.stat()
     last_active = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
     created = datetime.fromtimestamp(stat.st_ctime, tz=timezone.utc).isoformat()
@@ -100,7 +101,10 @@ def _parse_transcript(log_file: Path, project_root: str, inspect_activity: bool)
                 cwd_match = re.search(r'"cwd"\s*:\s*"([^"]+)"', line)
                 if cwd_match:
                     cwd_seen = True
-                    if normalize_path(cwd_match.group(1)) == project_root:
+                    cwd_val = cwd_match.group(1)
+                    cwd_norm = normalize_path(cwd_val)
+                    cwd_raw = cwd_val.replace("\\", "/").rstrip("/").lower()
+                    if cwd_norm == project_root or (raw_project_root and (cwd_norm == raw_project_root or cwd_raw == raw_project_root or cwd_raw == project_root)):
                         cwd_confirmed = True
 
                 summary_match = re.search(r'"type"\s*:\s*"summary"', line)
@@ -120,8 +124,17 @@ def _parse_transcript(log_file: Path, project_root: str, inspect_activity: bool)
                 if inspect_activity:
                     for fm in re.findall(r'"(?:file_path|notebook_path)"\s*:\s*"([^"]+)"', line):
                         clean_fm = fm.replace('\\\\', '/').replace('\\', '/')
-                        if clean_fm.lower().startswith(project_root):
+                        norm_fm = normalize_path(fm)
+                        if norm_fm.startswith(project_root):
+                            rel_path = norm_fm[len(project_root):].lstrip('/')
+                            if rel_path:
+                                touched_files.add(rel_path)
+                        elif clean_fm.lower().startswith(project_root):
                             rel_path = clean_fm[len(project_root):].lstrip('/')
+                            if rel_path:
+                                touched_files.add(rel_path)
+                        elif raw_project_root and clean_fm.lower().startswith(raw_project_root):
+                            rel_path = clean_fm[len(raw_project_root):].lstrip('/')
                             if rel_path:
                                 touched_files.add(rel_path)
                         elif not clean_fm.startswith(('http://', 'https://')):

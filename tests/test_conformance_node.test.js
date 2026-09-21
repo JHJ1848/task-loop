@@ -93,9 +93,31 @@ function testAllowlistConformance() {
   console.log(`- Running ${fixture.cases.length} allowlist boundary conformance cases...`);
 
   for (const tc of fixture.cases) {
-    const isAllowed = isPathAllowed(tc.target_file, tc.allowlist, wsRoot);
+    if (tc.platform && tc.platform !== process.platform) {
+      // Skip platform-specific test cases on other platforms
+      continue;
+    }
+
+    let targetFile = tc.target_file;
+    const allowlist = tc.allowlist.map(entry => entry.replace(/\$\{WS_ROOT\}/g, wsRoot));
+
+    if (targetFile.includes('${WS_ROOT}')) {
+      if (process.platform === 'win32') {
+        const normWs = wsRoot.replace(/\//g, '\\');
+        targetFile = targetFile.replace(/\$\{WS_ROOT\}/g, normWs);
+      } else {
+        // POSIX / Linux
+        if (tc.name === 'unc_prefix_normalized_allowed') {
+          targetFile = '\\\\?\\' + path.join(wsRoot, 'scripts', 'task_loop_state.js');
+        } else {
+          targetFile = targetFile.replace(/\$\{WS_ROOT\}/g, wsRoot).replace(/\\\\/g, '/').replace(/\\/g, '/');
+        }
+      }
+    }
+
+    const isAllowed = isPathAllowed(targetFile, allowlist, wsRoot);
     const expectedAllowed = tc.expected_decision === 'allow';
-    assert.strictEqual(isAllowed, expectedAllowed, `[${tc.name}] target '${tc.target_file}' expected decision '${tc.expected_decision}', but got '${isAllowed ? 'allow' : 'deny'}'`);
+    assert.strictEqual(isAllowed, expectedAllowed, `[${tc.name}] target '${targetFile}' expected decision '${tc.expected_decision}', but got '${isAllowed ? 'allow' : 'deny'}'`);
   }
 
   console.log('  ✔ Allowlist Boundary Conformance PASSED!');

@@ -263,13 +263,16 @@ function testHooks() {
     assert.strictEqual(safeTravRes.decision, 'allow', 'Safe traversal inside allowlist must be allowed');
 
     // 2.7 Security v2: Mixed Slashes & Windows Drive Case Insensitivity
+    const mixedTarget = process.platform === 'win32'
+      ? tempDir.toUpperCase() + '/scripts\\hooks/mixed\\case.js'
+      : tempDir + '/scripts//hooks///mixed/case.js';
     const mixedSlashPayload = {
       conversationId: 'hook-topic-uuid-5678',
       workspacePaths: [tempDir],
       toolCall: {
         name: 'write_to_file',
         args: {
-          TargetFile: tempDir.toUpperCase() + '/scripts\\hooks/mixed\\case.js',
+          TargetFile: mixedTarget,
           CodeContent: '// mixed'
         }
       }

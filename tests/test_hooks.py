@@ -264,7 +264,10 @@ class TestAntigravityHooks(unittest.TestCase):
         self.assertEqual(res_good["decision"], "allow")
 
     def test_pre_tool_use_mixed_slashes_and_case(self):
-        mixed_target = self.temp_dir.upper() + "/scripts\\hooks/mixed\\case.py"
+        if sys.platform == "win32":
+            mixed_target = self.temp_dir.upper() + "/scripts\\hooks/mixed\\case.py"
+        else:
+            mixed_target = self.temp_dir + "/scripts//hooks///mixed/case.py"
         payload = {
             "vendor": "antigravity",
             "conversationId": "hook-topic-uuid-5678",

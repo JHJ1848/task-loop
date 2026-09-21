@@ -108,11 +108,24 @@ class TestConformancePython(unittest.TestCase):
         fixture = load_fixture("allowlist/allowlist-cases.json")
         ws_root = str(PROJECT_ROOT)
         for tc in fixture["cases"]:
+            if "platform" in tc and tc["platform"] != sys.platform:
+                continue
+
             name = tc["name"]
             target_file = tc["target_file"]
-            allowlist = tc["allowlist"]
-            expected_allowed = tc["expected_decision"] == "allow"
+            allowlist = [entry.replace("${WS_ROOT}", ws_root) for entry in tc["allowlist"]]
 
+            if "${WS_ROOT}" in target_file:
+                if sys.platform == "win32":
+                    norm_ws = ws_root.replace("/", "\\")
+                    target_file = target_file.replace("${WS_ROOT}", norm_ws)
+                else:
+                    if name == "unc_prefix_normalized_allowed":
+                        target_file = "\\\\?\\" + os.path.join(ws_root, "scripts", "task_loop_state.js")
+                    else:
+                        target_file = target_file.replace("${WS_ROOT}", ws_root).replace("\\\\", "/").replace("\\", "/")
+
+            expected_allowed = tc["expected_decision"] == "allow"
             decision = is_path_allowed(target_file, allowlist, ws_root)
             self.assertEqual(
                 decision,
