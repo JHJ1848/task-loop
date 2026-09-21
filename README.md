@@ -64,40 +64,80 @@ task-loop/
 
 ---
 
-## [Quick Start] 快速上手
+### [Quick Start & Multi-Vendor Installation] 多厂商一键集成指南
 
-## [Codex Compatibility]
+`task-loop` 提供了业界最通用的多厂商插件规范，全面支持 **Claude Code**、**Google Antigravity**、**ZCode (Z.ai)** 与 **OpenAI Codex** 四大主流宿主。支持直接通过 GitHub 仓库地址 (`https://github.com/JHJ1848/task-loop`) 或本地一键脚本完成安装。
 
-Codex 使用稳定降级 Provider：默认调用 `codex queue --thread <id> --message <text>`，只有显式 `--resume` 才使用 `codex exec resume <id> -` 并通过 stdin 传递 prompt。仅 exit code 0 标为 `SUBMITTED`；CLI 不可用或失败均为 `PREPARED_ONLY`。Desktop thread 工具必须由当前运行时明确暴露；Codex 不接入 AGY/ZCode 的 PreInvocation 或 PreToolUse Hook，MCP `mcp-server` 已弃用，App Server 仍属实验能力。
+```json
+[
+  {
+    "vendor": "Claude Code",
+    "method": "Git 市场一键添加",
+    "command": "claude plugin marketplace add https://github.com/JHJ1848/task-loop.git\nclaude plugin install task-loop@task-loop",
+    "notes": "原生读取 .claude-plugin/marketplace.json 与 marketplace.json 清单"
+  },
+  {
+    "vendor": "Google Antigravity (AGY)",
+    "method": "一键脚本同步 / agy CLI",
+    "command": "node scripts/install_agy_plugin.js\n# 或 agy plugin install https://github.com/JHJ1848/task-loop.git",
+    "notes": "自动清理历史双副本死锁并校验 6 Skills + 2 Hooks 完整性"
+  },
+  {
+    "vendor": "ZCode (GLM)",
+    "method": "一键导出与本地市场加载",
+    "command": "node scripts/install_zcode_plugin.js",
+    "notes": "快照同步至 ~/.zcode/plugin-workspace/task-loop 并生成专属本地市场"
+  },
+  {
+    "vendor": "OpenAI Codex",
+    "method": "Codex CLI / Desktop 插件",
+    "command": "codex plugin add task-loop@personal --json",
+    "notes": "读取 .codex-plugin/plugin.json，提供稳定的降级与 CLI 分派能力"
+  }
+]
+```
 
-Codex 会话说明书见 [`references/sdk/codex.md`](references/sdk/codex.md)，其中区分已验证 CLI、运行时注入的 Desktop/SDK/API 适配器，以及尚待实验的 App Server/MCP 协议。安装插件后该文件随 `references/` 一并提供。
+### 1. Claude Code 一键安装
+Claude Code 原生支持基于 Git 的通用插件市场规范（依赖仓库根目录与 `.claude-plugin/` 下的 `marketplace.json`）：
+```bash
+# 1. 添加 task-loop 插件市场源
+claude plugin marketplace add https://github.com/JHJ1848/task-loop.git
 
-重复安装与验证（不手改 marketplace）：
+# 2. 安装并启用 task-loop 插件
+claude plugin install task-loop@task-loop
+```
 
+### 2. Google Antigravity (AGY) 一键安装与同步
+Antigravity 官方用户插件目录位于 `~/.gemini/config/plugins/task-loop/`。使用内置安装器可自动排查并清理历史死锁冲突：
+```bash
+# 一键安装与同步 (Node.js 18+, 推荐)
+node scripts/install_agy_plugin.js
+
+# 或 Python 3.8+ 备选
+python scripts/install_agy_plugin.py
+
+# 仅预览安装计划与死锁检测 (Dry Run)
+node scripts/install_agy_plugin.js --check
+```
+
+### 3. ZCode (Z.ai) 一键导出与安装
+ZCode 采用快照物理隔离机制，安装脚本自动完成白名单复制并生成 `~/.zcode/plugin-workspace/task-loop/` 本地市场：
+```bash
+# 一键导出与同步
+node scripts/install_zcode_plugin.js
+
+# 打开 ZCode Settings -> Plugin Management -> Discover -> [+] 添加本地目录 ~/.zcode/plugin-workspace/task-loop
+```
+
+### 4. OpenAI Codex 插件集成
+Codex 支持通过 `.codex-plugin/plugin.json` 作为个人插件引入：
 ```powershell
-node -e "const fs=require('fs'); const p='.agents/plugins/task-loop/.codex-plugin/plugin.json'; const x=JSON.parse(fs.readFileSync(p,'utf8')); if(x.name!=='task-loop'||x.skills!=='./skills/'||Object.keys(x).length!==3) process.exit(1); console.log('manifest OK')"
 codex plugin add task-loop@personal --json
 codex plugin list --marketplace personal --json
 ```
 
-新线程检查需要在 Codex Desktop 中新建该项目线程并调用 `task-loop` Skill；确认 Skill 可见即可。当前宿主未暴露稳定的 `create_thread`/`send_message_to_thread`/`wait_threads` 工具，因此不能用脚本伪造该项通过，也不应期待 AGY Hook 注入。
+---
 
-### 1. 作为 Antigravity Plugin 插件使用 (推荐)
-- **工作区级安装**：将本项目目录软链接或放置于工作区 `.agents/plugins/task-loop/`；
-- **全局用户级安装**：放置于 `~/.gemini/config/plugins/task-loop/`；
-- 系统自动加载 `plugin.json`、`hooks.json`、`rules/` 与 `SKILL.md`，实现零 Token 开销的会话感知与物理安全门禁。
-
-### 2. 作为独立脚本库运行
-```bash
-# 推荐优先使用 Node.js 18+ (零 npm 依赖)
-node scripts/find_project_sessions.js
-
-# 或使用 Python 3.8+ 备用 (零 pip 依赖)
-python scripts/find_project_sessions.py
-```
-
-### 3. 作为 Agent Skill 使用
-在 Antigravity / Codex / Claude Code 中加载本项目目录或将其作为 Skill 引入后，通过 `/task-loop` 指令触发调度流转。
 
 ---
 
