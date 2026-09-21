@@ -1,6 +1,7 @@
 {
   "version": "1.0.0",
   "main_session_policy": {
+    "_enforcement_boundary": "本文件为提示级偏好：由 AI 按 AGENTS.md Tier 2 按需读取，仅影响其编排、派单与输出判断，不参与机器裁决。PreToolUse 硬门禁 (scripts/hooks/enforce_allowlist.js / .py) 不读取本文件，两者冲突时一律以硬门禁为准。",
     "default_vendor": "zcode",
     "_default_vendor_description": "默认活动的 AI 厂商平台。可选值：zcode（ZCode/Z.ai）、antigravity（Google Antigravity）、codex（OpenAI Codex）、claude（Anthropic Claude Code）。运行时按宿主环境变量自动覆写。",
     "enable_file_state_machine": false,
@@ -8,7 +9,7 @@
     "explainable_reasoning": true,
     "_explainable_reasoning_description": "是否开启透明思考与决策推演卡输出（派单或质检时在回复中输出决策理由与白名单分析）",
     "allow_simple_direct_edits": true,
-    "_allow_simple_direct_edits_description": "是否允许主会话直接执行简单微调（Level 1 单点修改无需派发子代理，直接极速闭环）",
+    "_allow_simple_direct_edits_description": "是否允许主会话直接执行简单微调（Level 1 单点修改无需派发子代理，直接极速闭环）。注意：本项为提示级偏好，无法覆盖 PreToolUse 硬门禁。主会话对业务代码的写入在任何取值下都会被拦截并要求派单；无论本项取值如何，可直接写入的只有治理类路径（.agents/ docs/ rules/ templates/ references/ config/ 及 AGENTS.md、hooks.json、plugin.json、SKILL.md）。",
     "complexity_bias": "balanced",
     "_complexity_bias_description": "复杂度裁决倾向。可选值：conservative（保守，倾向拆分子代理）、balanced（均衡，客观判定）、aggressive（激进，倾向单线程快修）",
     "model_selection_policy": {

@@ -65,6 +65,8 @@
 
 ### 1. `main_session_policy` (主会话行为策略)
 
+> **执行边界 (Enforcement Boundary)**：本文件全部配置项均为**提示级偏好**，由 AI 依据 `AGENTS.md` 的 Tier 2 渐进式披露机制按需读取，仅影响 AI 的编排、派单与输出判断。PreToolUse 硬门禁 (`scripts/hooks/enforce_allowlist.js` / `.py`) **不读取本文件**，机器裁决与提示偏好冲突时一律以硬门禁为准。
+
 * **`default_vendor`**：默认活动的 AI 厂商平台
   * **选项**：`<antigravity / codex / claude>`
   * **说明**：指定 task-loop 的默认调度底层平台。
@@ -79,6 +81,7 @@
 * **`allow_simple_direct_edits`**：简单任务单线程直修权限
   * **选项**：`<true / false>`
   * **说明**：Level 1 简单任务是否允许主会话就地闭环，无需强制派分子代理。
+  * **⚠ 无法覆盖硬门禁**：本项仅在提示层生效。主会话对**业务代码**的写入在任何取值下都会被 PreToolUse 硬门禁拦截（并返回派单指引）；无论取值如何，可直接写入的只有治理类路径 —— `.agents/` `docs/` `rules/` `templates/` `references/` `config/` 及 `AGENTS.md`、`hooks.json`、`plugin.json`、`SKILL.md`。
 * **`complexity_bias`**：复杂度裁决分级倾向
   * **选项**：`<conservative / balanced / aggressive>`
   * **说明**：
