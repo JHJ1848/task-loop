@@ -78,39 +78,7 @@ def normalize_tool_call(payload):
 
 
 def process_payload(payload, env=None, argv=None):
-    try:
-        tool_call = normalize_tool_call(payload)
-        if not tool_call:
-            # Non-file-write tools (or unparseable payloads): strict-schema no-op pass.
-            return {}
-
-        ws_root = resolve_workspace(payload, env)
-        conversation_id = extract_session_id(payload, env)
-
-        result = core.process_payload({
-            'toolCall': tool_call,
-            'conversationId': conversation_id,
-            'workspacePaths': [ws_root],
-            'vendor': host_vendor.resolve_vendor(payload, env, argv),
-        })
-
-        if result and result.get('decision') == 'deny':
-            return {
-                'suppressOutput': True,
-                'systemMessage': '[task-loop Allowlist Guard] blocked an out-of-allowlist write.',
-                'hookSpecificOutput': {
-                    'hookEventName': 'PreToolUse',
-                    'permissionDecision': 'deny',
-                    'permissionDecisionReason': result.get('reason') or (
-                        'Target file is outside the dispatched task allowlist.'
-                    ),
-                },
-            }
-
-        return {}  # allow: silent pass (empty output + exit 0)
-    except Exception:
-        # Fail-open on adapter errors; never wedge the host's edit pipeline.
-        return {}
+    return core.process_payload(payload, env, argv)
 
 
 def main():

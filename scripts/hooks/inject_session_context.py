@@ -18,6 +18,13 @@ import sys
 import json
 import re
 
+try:
+    from . import host_vendor
+except ImportError:
+    import host_vendor
+
+UUID_SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
 if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -345,8 +352,10 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
             lines.append("  7. 缺失专题与不明确流转铁律: 若无可用专题会话或不清楚如何新建/请求会话，必须先查阅文档指导 (references/sdk/README.md, skills/new-session/SKILL.md, skills/session-control/SKILL.md)，若仍需确认必须主动向用户请求指引并询问，绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理;")
             lines.append("  8. 任务派单流转与权责核验 (Dispatch Workflow & Seam Gate): 寻找专题 -> 没有则按规范创建顶层专题会话 -> 派单前必须在思维链中核验拟下发 Allowlist 物理文件是否 100% 属于目标专题权责 (严禁搭便车派单) -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;")
             lines.append("  9. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 专题会话内 Subagent 并行协作;")
-            lines.append("  10. 批判性门禁核验与质检分流 (Critical Verification Gate & Verification Triage): 严禁充当传声筒盲目轻信专题汇报！主会话必须执行质检核验：① 针对底层协议、核心算法、状态机及偏后端稳定计算，独立执行自动化单测/构建命令获取 Exit Code 0 证据；针对强前端交互、UI 渲染及轻量展示接口，免除新建冗余单测，执行编译/构建与语法检查，并向用户出具明确的【页面刷新验证指引卡】；② 真实 Diff 审查，走查改动是否严格在 Allowlist 内且无冗余代码与格式污染；③ 必要时派遣 reviewer 子代理交叉走查；④ 验收通过方可更新状态，未通过强制下发 DELIVERABLE_REJECTED 驳回重修 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md);")
-            lines.append("  11. 双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks): 派单后挂载 30s 进度监测器 (schedule DurationSeconds=30)。30s 触发时必须执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <session_id> 检查真活跃 (thread_running/is_working)。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 巡检任务！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 进度监测器循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 巡检任务 (参考 references/dispatch-contract.md)。")
+            # [task-026 对齐] 落实 task-025 架构重塑：四大绝对门禁与双轮驱动质检 (轮1需求逆向比对 + 轮2宏观上下文深度质检)
+            lines.append("  10. 四大绝对门禁与双轮驱动质检 (Dual-Engine Verification & Loop Rejection): 严禁充当传声筒盲目轻信放行！主会话必须严格执行双轮驱动质检与四大绝对门禁：① 门禁1 (原有逻辑破坏防御): 逐行逆向审视 Diff，严禁专题擅自删除或弱化旧有 if 校验、业务门禁、前置条件或提前落盘，发现违规必须下发 DELIVERABLE_REJECTED 驳回重修；② 门禁2 (最小改动自证与注释溯源): 核验《最小改动自证说明》与代码改动原因注释，超出 Allowlist 或无关重构一律驳回；③ 门禁3 (双轮驱动质检与全局风险评估): 执行【轮1: 需求清单逐项逆向比对】(排查遗漏与假交付 GOTCHA-001/003) 与【轮2: 宏观上下文深度质检】(防误伤误改/防分支冲突/推演状态机乱序/边界空值/并发原子性风险)；④ 门禁4 (Loop 闭环仲裁与主动打回): 门禁未 100% 全过时主动打回专题修复，杜绝让用户充当质检员 (参考 references/dispatch-contract.md 与 gotchas.md);")
+            # [task-026 对齐] 动态监督与双阶梯巡检
+            lines.append("  11. 双阶梯进度监测与动态监督机制 (Dynamic Progress Supervision & Inspection): 派单后挂载 30s 进度监测器 (schedule DurationSeconds=30)。30s 触发时执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <session_id> 检查真活跃 (thread_running/is_working)；定期审视目标专题的思考链 (Thinking) 与工具调用 (Tool Calls)，识别死循环、走弯路或消极退化特征并主动纠偏，杜绝消极挂起。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 巡检任务！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 进度监测器循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 巡检任务 (参考 references/dispatch-contract.md 与 gotchas.md)。")
     elif details.get("module_key") == "session_control":
         sess_rules = plugin_rules.get("session_control")
         if sess_rules and isinstance(sess_rules, list):
@@ -383,15 +392,17 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
             lines.append("  1. 物理实体与领域深耕: 作为长期常驻 IDE 侧边栏的物理会话实体，持续沉淀领域上下文并最大化大模型 KV Cache 命中率;")
             lines.append("  2. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;")
             lines.append("  3. 专题内子代理协同门槛: 仅在满足并发度 >= 2 (多分支并发加速) 或物理强隔离沙箱时才允许拉起子代理，严禁单子代理串行让专题干等，单线任务一律由专题自身直接实施闭环;")
-            lines.append("  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (稳定计算单测 Exit Code 0 vs 交互界面构建自测+刷新指引) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。")
+            # [task-026 对齐] 专题自主语法检查与功能自测，并提供最小改动自证与注释溯源
+            lines.append("  4. 标准执行与自查流程: 承接锁定 -> 边界实施 (附带代码注释溯源) -> 专题自主语法检查与功能自测 -> 记忆沉淀 (docs/memory/*.md) -> 强制提供包含最小改动自证、注释溯源、原有逻辑自查与自测证据的规范交付物并通过 sidebus 汇报。")
 
     # 专题会话收尾强制发信契约注入 (对于所有非主会话的已注册专题会话生效，且目标主会话不能为自身，杜绝自发自收死循环)
     if not details.get("is_main"):
         target_main_id = main_thread_id or "<main_thread_id>"
         if target_main_id != details.get("session_id"):
             lines.append("- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:")
-            lines.append("  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后 (根据任务性质分流：稳定计算单测自证 vs 交互界面构建自测+提供刷新验证指引)，严禁仅在当前窗口输出文本结束！")
-            lines.append(f"  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient=\"{target_main_id}\", message=\"[专题交付: WORK]...\") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！")
+            # [task-026 对齐] 任务收尾自主自测通过后，必须反向发信向主会话汇报交付物
+            lines.append("  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自主自测通过后，严禁仅在当前窗口输出文本结束！")
+            lines.append(f"  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient=\"{target_main_id}\", message=\"[专题交付: WORK]...\") 向主治理中枢汇报包含【核心摘要、最小改动自证、代码注释溯源、原有逻辑审查、改动清单与自主自测证据】的结构化交付报告，触发主会话双轮驱动质检与四大绝对门禁验收！")
 
     # 检查是否手动开启 Hook 提示词 dump 调试开关 (默认 false)
     is_hook_dump_enabled = (os.environ.get("ENABLE_HOOK_PROMPT_DUMP") == "true") or \
@@ -402,7 +413,132 @@ def get_plugin_topic_rules(details, templates, main_thread_id=None):
     return lines
 
 
-def generate_injection_message(conversation_id, session_data, active_todo, templates=None, vendor=None):
+def extract_session_id(payload, env=None):
+    if env is None:
+        env = os.environ
+    return (
+        payload.get("conversationId")
+        or payload.get("conversation_id")
+        or payload.get("sessionId")
+        or payload.get("session_id")
+        or env.get("ANTIGRAVITY_CONVERSATION_ID")
+        or env.get("CLAUDE_CODE_SESSION_ID")
+        or env.get("CLAUDE_SESSION_ID")
+        or env.get("ZCODE_SESSION_ID")
+        or None
+    )
+
+
+def resolve_workspace(payload, env=None):
+    if env is None:
+        env = os.environ
+    workspace_paths = payload.get("workspacePaths")
+    if isinstance(workspace_paths, list) and len(workspace_paths) > 0:
+        return workspace_paths[0]
+    cwd = payload.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        return cwd
+    return env.get("ZCODE_PROJECT_DIR") or env.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+
+
+def extract_event_name(payload):
+    raw = payload.get("hook_event_name") or payload.get("hookEventName") or ""
+    if raw in ("SessionStart", "UserPromptSubmit"):
+        return raw
+    return "UserPromptSubmit"
+
+
+def compute_lifecycle_state(details, active_todo):
+    if active_todo:
+        status = active_todo.get("status") or "in_progress"
+        if status in ("in_progress", "dispatched"):
+            return {
+                "label": "[⚡ 工作中 (WORKING)]",
+                "code": "WORKING",
+                "desc": f"当前指派任务 [{active_todo.get('id', 'Task')}]: {active_todo.get('title', '')}"
+            }
+        elif status == "rejected":
+            return {
+                "label": "[⚠️ 质检打回重修中 (REVISING)]",
+                "code": "REVISING",
+                "desc": f"任务 [{active_todo.get('id', 'Task')}] 被驳回重修，请重点审查驳回清单中的逻辑破坏项"
+            }
+        elif status == "awaiting_approval":
+            return {
+                "label": "[⏳ 等待审批中 (AWAITING_APPROVAL)]",
+                "code": "AWAITING_APPROVAL",
+                "desc": "当前正在等待主会话白名单或方案审批"
+            }
+        else:
+            return {
+                "label": f"[⚡ 任务中 ({status.upper()})]",
+                "code": status.upper(),
+                "desc": f"当前任务 [{active_todo.get('id', 'Task')}]"
+            }
+
+    if details.get("is_main"):
+        return {
+            "label": "[🧭 治理与调度中 (ORCHESTRATING)]",
+            "code": "ORCHESTRATING",
+            "desc": "作为主治理中枢，仅限只读探索与任务编排，严禁自身修改业务代码"
+        }
+
+    if not details.get("is_unregistered"):
+        return {
+            "label": "[🟢 空闲待命 (IDLE)]",
+            "code": "IDLE",
+            "desc": "当前无挂起任务，处于待命状态；请等待主会话派单，禁止擅自修改业务代码"
+        }
+
+    return {
+        "label": "[⚪ 未注册 (UNREGISTERED)]",
+        "code": "UNREGISTERED",
+        "desc": "未在 task-loop 状态机中注册"
+    }
+
+
+def compute_fleet_overview(session_data, ws_root, target_vendor=None):
+    if not session_data or not isinstance(session_data, dict):
+        return None
+    effective_vendor = normalize_vendor(target_vendor)
+    modules = None
+    if isinstance(session_data.get("vendors"), dict) and effective_vendor and effective_vendor in session_data["vendors"]:
+        modules = session_data["vendors"][effective_vendor].get("modules")
+    elif isinstance(session_data.get("modules"), dict):
+        modules = session_data["modules"]
+    if not modules or not isinstance(modules, dict):
+        return None
+
+    active_todos = []
+    todo_path = os.path.join(ws_root, ".agents", "task-loop", "todo.json")
+    if os.path.exists(todo_path):
+        try:
+            with open(todo_path, "r", encoding="utf-8") as f:
+                todo_data = json.load(f)
+            if isinstance(todo_data.get("items"), list):
+                for item in todo_data["items"]:
+                    if item.get("status") in ("in_progress", "dispatched"):
+                        active_todos.append(item)
+        except Exception:
+            pass
+
+    parts = []
+    for mod_key, mod_val in modules.items():
+        if not mod_val or not isinstance(mod_val, dict):
+            continue
+        sess_id = mod_val.get("session_id")
+        matched_todo = next((t for t in active_todos if t.get("assignee_thread_id") == sess_id or t.get("assignee") == mod_key), None)
+        if matched_todo:
+            parts.append(f"{mod_key} [⚡ WORKING: {matched_todo.get('id', 'Task')}]")
+        else:
+            parts.append(f"{mod_key} [🟢 IDLE]")
+
+    return " | ".join(parts) if parts else None
+
+
+def generate_injection_message(conversation_id, session_data, active_todo, templates=None, vendor=None, dynamic_context=None):
+    if dynamic_context is None:
+        dynamic_context = {}
     details = get_session_details(conversation_id, session_data, vendor)
     header_namespace = (templates.get("header_namespace") if templates else None) or (templates.get("plugin_namespace") if templates else None) or "[Plugin: task-loop | 会话上下文感知]"
     
@@ -414,6 +550,20 @@ def generate_injection_message(conversation_id, session_data, active_todo, templ
     else:
         parts.append(f"- 是否主会话: {'是 (Main Thread)' if details['is_main'] else '否 (Topic Session)'}")
     parts.append(f"- 专题主题: {details['title']}")
+
+    # 动态运行状态注入
+    lifecycle = compute_lifecycle_state(details, active_todo)
+    parts.append(f"- 运行状态: {lifecycle['label']}")
+
+    invocation_num = dynamic_context.get("invocationNum") or dynamic_context.get("invocation_num")
+    if invocation_num is not None:
+        parts.append(f"- 交互轮次: 第 {invocation_num} 轮推理 (Turn #{invocation_num})")
+
+    if details.get("is_main"):
+        ws_root = dynamic_context.get("wsRoot") or resolve_workspace_root([])
+        fleet = compute_fleet_overview(session_data, ws_root, vendor)
+        if fleet:
+            parts.append(f"- 专题集群态势: {fleet}")
 
     if not details.get("is_unregistered") and details.get("module_key") and details["module_key"] != "unknown":
         parts.append(f"- 所属模块: {details['module_key']}")
@@ -441,6 +591,8 @@ def generate_injection_message(conversation_id, session_data, active_todo, templ
             parts.append(f"- 物理文件白名单 (Allowlist): [{', '.join(allowlist)}]")
         if active_todo.get("complexity"):
             parts.append(f"- 任务复杂度: Level {active_todo.get('complexity')}")
+    elif not details.get("is_main") and not details.get("is_unregistered"):
+        parts.append("- 待命指引: 当前无进行中任务，处于空闲待命状态；请等待主会话派单，严禁擅自修改业务代码。")
 
     # 专属专题规则与约束 (全部带有 [Plugin: task-loop | 前缀)
     main_thread_id = extract_main_thread_id(session_data, vendor)
@@ -449,11 +601,71 @@ def generate_injection_message(conversation_id, session_data, active_todo, templ
     return "\n".join(parts)
 
 
-def process_payload(payload):
+def process_payload(payload, env=None, argv=None):
     try:
-        conversation_id = payload.get("conversationId") or payload.get("conversation_id") or payload.get("sessionId") or payload.get("session_id")
-        target_vendor = resolve_target_vendor(payload, conversation_id)
+        if env is None:
+            env = os.environ
+        if argv is None:
+            argv = sys.argv
+        if not isinstance(payload, dict):
+            payload = {}
 
+        conversation_id = extract_session_id(payload, env)
+        ws_root = resolve_workspace(payload, env)
+        declared_vendor = host_vendor.resolve_vendor(payload, env, argv)
+
+        is_zcode_protocol = bool(
+            payload.get("requested_vendor") == "zcode"
+            or payload.get("hook_event_name")
+            or payload.get("hookEventName")
+            or payload.get("requested_event")
+            or ("--event" in argv)
+            or (payload.get("cwd") and not isinstance(payload.get("workspacePaths"), list))
+            or env.get("CLAUDE_SESSION_ID")
+            or env.get("CLAUDE_CODE_SESSION_ID")
+            or env.get("ZCODE_SESSION_ID")
+            or env.get("ZCODE_PROJECT_DIR")
+            or env.get("CLAUDE_PROJECT_DIR")
+            or (conversation_id and conversation_id.startswith("sess_"))
+            or declared_vendor in ("zcode", "claude")
+        )
+
+        if is_zcode_protocol:
+            if not conversation_id:
+                return {}
+            if not declared_vendor and not conversation_id.startswith("sess_") and UUID_SESSION_ID.match(conversation_id):
+                return {}
+            vendor = declared_vendor or "zcode"
+
+            should_dedupe = not payload.get("isTest") and not payload.get("skipDedupe")
+            if should_dedupe and not check_and_acquire_dedupe_lock(conversation_id):
+                return {}
+
+            event_name = extract_event_name(payload)
+            if payload.get("requested_event") == "SessionStart" or ("SessionStart" in argv):
+                event_name = "SessionStart"
+
+            session_data = find_sessions_registry(ws_root, vendor)
+            templates = find_prompt_templates(ws_root)
+            active_todo = find_active_todo(ws_root, conversation_id)
+
+            dynamic_context = {
+                "wsRoot": ws_root,
+                "invocationNum": payload.get("invocationNum") or payload.get("invocation_num") or payload.get("turn")
+            }
+
+            additional_context = generate_injection_message(conversation_id, session_data, active_todo, templates, vendor, dynamic_context)
+
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": event_name,
+                    "additionalContext": additional_context
+                },
+                "suppressOutput": True
+            }
+
+        # 默认 AGY 协议
+        target_vendor = resolve_target_vendor(payload, conversation_id)
         if target_vendor == "codex":
             return {
                 "supported": False,
@@ -464,24 +676,26 @@ def process_payload(payload):
                 "reason": "Codex automatic PreInvocation hook is unsupported; no context injection was performed."
             }
 
-        if not conversation_id and "ANTIGRAVITY_CONVERSATION_ID" in os.environ:
-            conversation_id = os.environ["ANTIGRAVITY_CONVERSATION_ID"]
+        if not conversation_id and "ANTIGRAVITY_CONVERSATION_ID" in env:
+            conversation_id = env["ANTIGRAVITY_CONVERSATION_ID"]
 
         if not conversation_id or not target_vendor:
             return {"injectSteps": []}
 
-        # 避免工作区插件与全局用户插件同时触发 PreInvocation 产生重复注入 (只要非测试模式即执行 2000ms 独占排他去重)
         should_dedupe = not payload.get("isTest") and not payload.get("skipDedupe")
-
         if should_dedupe and not check_and_acquire_dedupe_lock(conversation_id):
             return {"injectSteps": []}
 
-        ws_root = resolve_workspace_root(payload.get("workspacePaths"))
         session_data = find_sessions_registry(ws_root, target_vendor)
         templates = find_prompt_templates(ws_root)
         active_todo = find_active_todo(ws_root, conversation_id)
 
-        ephemeral_text = generate_injection_message(conversation_id, session_data, active_todo, templates, target_vendor)
+        dynamic_context = {
+            "wsRoot": ws_root,
+            "invocationNum": payload.get("invocationNum") if payload.get("invocationNum") is not None else payload.get("invocation_num")
+        }
+
+        ephemeral_text = generate_injection_message(conversation_id, session_data, active_todo, templates, target_vendor, dynamic_context)
 
         return {
             "injectSteps": [
@@ -516,9 +730,20 @@ def main():
             except Exception:
                 payload = {}
 
-    result = process_payload(payload)
+    if "--event" in sys.argv:
+        try:
+            idx = sys.argv.index("--event")
+            if idx + 1 < len(sys.argv) and sys.argv[idx + 1] == "SessionStart":
+                payload["hook_event_name"] = "SessionStart"
+        except Exception:
+            pass
+
+    result = process_payload(payload, os.environ, sys.argv)
+    if not result:
+        return
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     main()
+

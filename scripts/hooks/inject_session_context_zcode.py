@@ -70,45 +70,9 @@ def extract_event_name(payload):
 
 
 def process_payload(payload, env=None, argv=None):
-    try:
-        session_id = extract_session_id(payload, env)
-        if not session_id:
-            return {}
-
-        # Host attribution: a host that declares itself is authoritative. The id-shape
-        # check below is only a fallback for hosts that never declared themselves, where
-        # sess_* is ZCode's shape and a bare UUID is ambiguous (Claude Code uses UUIDs
-        # too), so an unattributed UUID is left alone rather than misread as ZCode.
-        declared_vendor = host_vendor.resolve_vendor(payload, env, argv)
-        if not declared_vendor and not session_id.startswith('sess_') and UUID_SESSION_ID.match(session_id):
-            return {}
-        vendor = declared_vendor or 'zcode'
-
-        # 去重检查
-        should_dedupe = not payload.get('isTest') and not payload.get('skipDedupe')
-        if should_dedupe and hasattr(core, 'check_and_acquire_dedupe_lock') and not core.check_and_acquire_dedupe_lock(session_id):
-            return {}
-
-        event_name = extract_event_name(payload)
-        ws_root = resolve_workspace(payload, env)
-        session_data = core.find_sessions_registry(ws_root, vendor)
-        templates = core.find_prompt_templates(ws_root)
-        active_todo = core.find_active_todo(ws_root, session_id)
-
-        additional_context = core.generate_injection_message(
-            session_id, session_data, active_todo, templates, vendor
-        )
-
-        return {
-            'hookSpecificOutput': {
-                'hookEventName': event_name,
-                'additionalContext': additional_context,
-            },
-            'suppressOutput': True,
-        }
-    except Exception:
-        # Fail-open: never break the host session because of injection errors.
-        return {}
+    p = dict(payload) if isinstance(payload, dict) else {}
+    p.setdefault("requested_vendor", "zcode")
+    return core.process_payload(p, env, argv)
 
 
 def main():

@@ -15,6 +15,9 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const hostVendor = require('./host_vendor.js');
+
+const UUID_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const VENDOR_ALIASES = {
   agy: 'antigravity',
@@ -338,8 +341,8 @@ function getPluginTopicRules(details, templates, mainThreadId) {
       lines.push(`  7. 缺失专题与不明确流转铁律: 若无可用专题会话或不清楚如何新建/请求会话，必须先查阅文档指导 (references/sdk/README.md, skills/new-session/SKILL.md, skills/session-control/SKILL.md)，若仍需确认必须主动向用户请求指引并询问，绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理;`);
       lines.push(`  8. 任务派单流转与权责核验 (Dispatch Workflow & Seam Gate): 寻找专题 -> 没有则按规范创建顶层专题会话 -> 派单前必须在思维链中核验拟下发 Allowlist 物理文件是否 100% 属于目标专题权责 (严禁搭便车派单) -> sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;`);
       lines.push(`  9. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 专题会话内 Subagent 并行协作;`);
-      lines.push(`  10. 批判性门禁核验与质检分流 (Critical Verification Gate & Verification Triage): 严禁充当传声筒盲目轻信专题汇报！主会话必须执行质检核验：① 针对底层协议、核心算法、状态机及偏后端稳定计算，独立执行自动化单测/构建命令获取 Exit Code 0 证据；针对强前端交互、UI 渲染及轻量展示接口，免除新建冗余单测，执行编译/构建与语法检查，并向用户出具明确的【页面刷新验证指引卡】；② 真实 Diff 审查，走查改动是否严格在 Allowlist 内且无冗余代码与格式污染；③ 必要时派遣 reviewer 子代理交叉走查；④ 验收通过方可更新状态，未通过强制下发 DELIVERABLE_REJECTED 驳回重修 (参考 references/dispatch-contract.md 与 skills/task-loop/SKILL.md);`);
-      lines.push(`  11. 双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks): 派单后挂载 30s 进度监测器 (schedule DurationSeconds=30)。30s 触发时必须执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <session_id> 检查真活跃 (thread_running/is_working)。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 巡检任务！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 进度监测器循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 巡检任务 (参考 references/dispatch-contract.md)。`);
+      lines.push(`  10. 四大绝对门禁与双轮驱动质检 (Dual-Engine Verification & Loop Rejection): 严禁充当传声筒盲目轻信放行！主会话必须严格执行双轮驱动质检与四大绝对门禁：① 门禁1 (原有逻辑破坏防御): 逐行逆向审视 Diff，严禁专题擅自删除或弱化旧有 if 校验、业务门禁、前置条件或提前落盘，发现违规必须下发 DELIVERABLE_REJECTED 驳回重修；② 门禁2 (最小改动自证与注释溯源): 核验《最小改动自证说明》与代码改动原因注释，超出 Allowlist 或无关重构一律驳回；③ 门禁3 (双轮驱动质检与全局风险评估): 执行【轮1: 需求清单逐项逆向比对】(排查遗漏与假交付 GOTCHA-001/003) 与【轮2: 宏观上下文深度质检】(防误伤误改/防分支冲突/推演状态机乱序/边界空值/并发原子性风险)；④ 门禁4 (Loop 闭环仲裁与主动打回): 门禁未 100% 全过时主动打回专题修复，杜绝让用户充当质检员 (参考 references/dispatch-contract.md 与 gotchas.md);`);
+      lines.push(`  11. 双阶梯进度监测与动态监督机制 (Dynamic Progress Supervision & Inspection): 派单后挂载 30s 进度监测器 (schedule DurationSeconds=30)。30s 触发时执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <session_id> 检查真活跃 (thread_running/is_working)；定期审视目标专题的思考链 (Thinking) 与工具调用 (Tool Calls)，识别死循环、走弯路或消极退化特征并主动纠偏，杜绝消极挂起。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 巡检任务！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 进度监测器循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 巡检任务 (参考 references/dispatch-contract.md 与 gotchas.md)。`);
     }
   } else if (details.module_key === 'session_control') {
     if (Array.isArray(pluginRules.session_control) && pluginRules.session_control.length > 0) {
@@ -376,7 +379,7 @@ function getPluginTopicRules(details, templates, mainThreadId) {
       lines.push(`  1. 物理实体与领域深耕: 作为长期常驻 IDE 侧边栏的物理会话实体，持续沉淀领域上下文并最大化大模型 KV Cache 命中率;`);
       lines.push(`  2. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;`);
       lines.push(`  3. 专题内子代理协同门槛: 仅在满足并发度 >= 2 (多分支并发加速) 或物理强隔离沙箱时才允许拉起子代理，严禁单子代理串行让专题干等，单线任务一律由专题自身直接实施闭环;`);
-      lines.push(`  4. 标准执行流程: 承接锁定 -> 边界实施 -> 本地自测 (稳定计算单测 Exit Code 0 vs 交互界面构建自测+刷新指引) -> 记忆沉淀 (docs/memory/*.md) -> 强制调用 send_message 完成交付汇报。`);
+      lines.push(`  4. 标准执行与自查流程: 承接锁定 -> 边界实施 (附带代码注释溯源) -> 专题自主语法检查与功能自测 -> 记忆沉淀 (docs/memory/*.md) -> 强制提供包含最小改动自证、注释溯源、原有逻辑自查与自测证据的规范交付物并通过 sidebus 汇报。`);
     }
   }
 
@@ -385,8 +388,8 @@ function getPluginTopicRules(details, templates, mainThreadId) {
     const targetMainId = mainThreadId || '<main_thread_id>';
     if (targetMainId !== details.session_id) {
       lines.push(`- [Plugin: task-loop | 专题强制收尾与反向汇报契约]:`);
-      lines.push(`  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自测通过后 (根据任务性质分流：稳定计算单测自证 vs 交互界面构建自测+提供刷新验证指引)，严禁仅在当前窗口输出文本结束！`);
-      lines.push(`  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient="${targetMainId}", message="[专题交付: WORK]...") 向主治理中枢汇报结构化交付报告 (Summary, Changes, Evidence)，触发主会话门禁验收！`);
+      lines.push(`  1. 任务收尾必发信: 当在本专题会话中完成功能开发、修复或自主自测通过后，严禁仅在当前窗口输出文本结束！`);
+      lines.push(`  2. 强制调用 send_message: 必须且强制在最后一轮调用 send_message(recipient="${targetMainId}", message="[专题交付: WORK]...") 向主治理中枢汇报包含【核心摘要、最小改动自证、代码注释溯源、原有逻辑审查、改动清单与自主自测证据】的结构化交付报告，触发主会话双轮驱动质检与四大绝对门禁验收！`);
     }
   }
 
@@ -400,10 +403,149 @@ function getPluginTopicRules(details, templates, mainThreadId) {
   return lines;
 }
 
+function extractSessionId(payload, env) {
+  env = env || process.env;
+  return (
+    payload.conversationId ||
+    payload.conversation_id ||
+    payload.sessionId ||
+    payload.session_id ||
+    (env && env.ANTIGRAVITY_CONVERSATION_ID) ||
+    (env && env.CLAUDE_CODE_SESSION_ID) ||
+    (env && env.CLAUDE_SESSION_ID) ||
+    (env && env.ZCODE_SESSION_ID) ||
+    null
+  );
+}
+
+function resolveWorkspace(payload, env) {
+  env = env || process.env;
+  if (Array.isArray(payload.workspacePaths) && payload.workspacePaths.length > 0) {
+    return payload.workspacePaths[0];
+  }
+  if (payload.cwd && typeof payload.cwd === 'string') {
+    return payload.cwd;
+  }
+  return (
+    (env && env.ZCODE_PROJECT_DIR) ||
+    (env && env.CLAUDE_PROJECT_DIR) ||
+    process.cwd()
+  );
+}
+
+function extractEventName(payload) {
+  const raw = payload.hook_event_name || payload.hookEventName || '';
+  if (raw === 'SessionStart' || raw === 'UserPromptSubmit') {
+    return raw;
+  }
+  return 'UserPromptSubmit';
+}
+
+/**
+ * 动态计算当前会话运行态 (Lifecycle State)
+ */
+function computeLifecycleState(details, activeTodo) {
+  if (activeTodo) {
+    const status = activeTodo.status || 'in_progress';
+    if (status === 'in_progress' || status === 'dispatched') {
+      return {
+        label: '[⚡ 工作中 (WORKING)]',
+        code: 'WORKING',
+        desc: `当前指派任务 [${activeTodo.id || 'Task'}]: ${activeTodo.title || ''}`
+      };
+    } else if (status === 'rejected') {
+      return {
+        label: '[⚠️ 质检打回重修中 (REVISING)]',
+        code: 'REVISING',
+        desc: `任务 [${activeTodo.id || 'Task'}] 被驳回重修，请重点审查驳回清单中的逻辑破坏项`
+      };
+    } else if (status === 'awaiting_approval') {
+      return {
+        label: '[⏳ 等待审批中 (AWAITING_APPROVAL)]',
+        code: 'AWAITING_APPROVAL',
+        desc: `当前正在等待主会话白名单或方案审批`
+      };
+    } else {
+      return {
+        label: `[⚡ 任务中 (${status.toUpperCase()})]`,
+        code: status.toUpperCase(),
+        desc: `当前任务 [${activeTodo.id || 'Task'}]`
+      };
+    }
+  }
+
+  if (details.is_main) {
+    return {
+      label: '[🧭 治理与调度中 (ORCHESTRATING)]',
+      code: 'ORCHESTRATING',
+      desc: '作为主治理中枢，仅限只读探索与任务编排，严禁自身修改业务代码'
+    };
+  }
+
+  if (!details.is_unregistered) {
+    return {
+      label: '[🟢 空闲待命 (IDLE)]',
+      code: 'IDLE',
+      desc: '当前无挂起任务，处于待命状态；请等待主会话派单，禁止擅自修改业务代码'
+    };
+  }
+
+  return {
+    label: '[⚪ 未注册 (UNREGISTERED)]',
+    code: 'UNREGISTERED',
+    desc: '未在 task-loop 状态机中注册'
+  };
+}
+
+/**
+ * 针对主会话计算集群全局态势 (Fleet Overview)
+ */
+function computeFleetOverview(sessionData, wsRoot, targetVendor) {
+  if (!sessionData) return null;
+  const effectiveVendor = normalizeVendor(targetVendor);
+  let modules = null;
+  if (sessionData.vendors && effectiveVendor && sessionData.vendors[effectiveVendor]) {
+    modules = sessionData.vendors[effectiveVendor].modules;
+  } else if (sessionData.modules) {
+    modules = sessionData.modules;
+  }
+  if (!modules || typeof modules !== 'object') return null;
+
+  const activeTodos = [];
+  const todoPath = path.join(wsRoot, '.agents', 'task-loop', 'todo.json');
+  if (fs.existsSync(todoPath)) {
+    try {
+      const todoData = JSON.parse(fs.readFileSync(todoPath, 'utf8'));
+      if (Array.isArray(todoData.items)) {
+        for (const item of todoData.items) {
+          if (['in_progress', 'dispatched'].includes(item.status)) {
+            activeTodos.push(item);
+          }
+        }
+      }
+    } catch {}
+  }
+
+  const parts = [];
+  for (const [modKey, modVal] of Object.entries(modules)) {
+    if (!modVal || typeof modVal !== 'object') continue;
+    const sessId = modVal.session_id;
+    const matchedTodo = activeTodos.find(t => t.assignee_thread_id === sessId || t.assignee === modKey);
+    if (matchedTodo) {
+      parts.push(`${modKey} [⚡ WORKING: ${matchedTodo.id}]`);
+    } else {
+      parts.push(`${modKey} [🟢 IDLE]`);
+    }
+  }
+
+  return parts.length > 0 ? parts.join(' | ') : null;
+}
+
 /**
  * 构造瞬态注入上下文内容 (100% 纯粹属于 [Plugin: task-loop | 命名空间)
  */
-function generateInjectionMessage(conversationId, sessionData, activeTodo, templates, vendor) {
+function generateInjectionMessage(conversationId, sessionData, activeTodo, templates, vendor, dynamicContext) {
+  dynamicContext = dynamicContext || {};
   const details = getSessionDetails(conversationId, sessionData, vendor);
   const parts = [];
 
@@ -417,6 +559,22 @@ function generateInjectionMessage(conversationId, sessionData, activeTodo, templ
     parts.push(`- 是否主会话: ${details.is_main ? '是 (Main Thread)' : '否 (Topic Session)'}`);
   }
   parts.push(`- 专题主题: ${details.title}`);
+
+  // 动态运行状态注入
+  const lifecycle = computeLifecycleState(details, activeTodo);
+  parts.push(`- 运行状态: ${lifecycle.label}`);
+
+  if (dynamicContext.invocationNum !== undefined && dynamicContext.invocationNum !== null) {
+    parts.push(`- 交互轮次: 第 ${dynamicContext.invocationNum} 轮推理 (Turn #${dynamicContext.invocationNum})`);
+  }
+
+  if (details.is_main) {
+    const wsRoot = dynamicContext.wsRoot || resolveWorkspaceRoot([]);
+    const fleet = computeFleetOverview(sessionData, wsRoot, vendor);
+    if (fleet) {
+      parts.push(`- 专题集群态势: ${fleet}`);
+    }
+  }
 
   if (!details.is_unregistered && details.module_key && details.module_key !== 'unknown') {
     parts.push(`- 所属模块: ${details.module_key}`);
@@ -451,6 +609,8 @@ function generateInjectionMessage(conversationId, sessionData, activeTodo, templ
     if (activeTodo.complexity) {
       parts.push(`- 任务复杂度: Level ${activeTodo.complexity}`);
     }
+  } else if (!details.is_main && !details.is_unregistered) {
+    parts.push(`- 待命指引: 当前无进行中任务，处于空闲待命状态；请等待主会话派单，严禁擅自修改业务代码。`);
   }
 
   // 专属专题规则与约束 (全部带有 [Plugin: task-loop | 前缀)
@@ -460,12 +620,68 @@ function generateInjectionMessage(conversationId, sessionData, activeTodo, templ
   return parts.join('\n');
 }
 
-function processPayload(payload) {
+function processPayload(payload, env, argv) {
   try {
-    let conversationId = payload.conversationId || payload.conversation_id || payload.sessionId || payload.session_id;
+    env = env || process.env;
+    payload = payload || {};
+    let conversationId = extractSessionId(payload, env);
 
+    const wsRoot = resolveWorkspace(payload, env);
+    const declaredVendor = hostVendor.resolveVendor(payload, env, argv);
+
+    // 协议识别: 若存在 hook_event_name 或 hookEventName 或 CLI 参数含 --event 或 session_id 形如 sess_*，或传入 cwd 且无 workspacePaths，判定为 ZCode/Claude Code 模式
+    const isZcodeProtocol = Boolean(
+      payload.requested_vendor === 'zcode' ||
+      payload.hook_event_name ||
+      payload.hookEventName ||
+      payload.requested_event ||
+      (argv && argv.includes('--event')) ||
+      (payload.cwd && !Array.isArray(payload.workspacePaths)) ||
+      (env && (env.CLAUDE_SESSION_ID || env.CLAUDE_CODE_SESSION_ID || env.ZCODE_SESSION_ID || env.ZCODE_PROJECT_DIR || env.CLAUDE_PROJECT_DIR)) ||
+      (conversationId && conversationId.startsWith('sess_')) ||
+      declaredVendor === 'zcode' ||
+      declaredVendor === 'claude'
+    );
+
+    if (isZcodeProtocol) {
+      if (!conversationId) return {};
+      if (!declaredVendor && !conversationId.startsWith('sess_') && UUID_SESSION_ID.test(conversationId)) {
+        return {};
+      }
+      const vendor = declaredVendor || 'zcode';
+
+      const shouldDedupe = !payload.isTest && !payload.skipDedupe;
+      if (shouldDedupe && checkAndAcquireDedupeLock && !checkAndAcquireDedupeLock(conversationId)) {
+        return {};
+      }
+
+      let eventName = extractEventName(payload);
+      if (payload.requested_event === 'SessionStart' || (argv && argv.includes('SessionStart'))) {
+        eventName = 'SessionStart';
+      }
+
+      const sessionData = findSessionsRegistry(wsRoot, vendor);
+      const templates = findPromptTemplates(wsRoot);
+      const activeTodo = findActiveTodo(wsRoot, conversationId);
+
+      const dynamicContext = {
+        wsRoot,
+        invocationNum: payload.invocationNum !== undefined ? payload.invocationNum : (payload.invocation_num !== undefined ? payload.invocation_num : null)
+      };
+
+      const additionalContext = generateInjectionMessage(conversationId, sessionData, activeTodo, templates, vendor, dynamicContext);
+
+      return {
+        hookSpecificOutput: {
+          hookEventName: eventName,
+          additionalContext: additionalContext
+        },
+        suppressOutput: true
+      };
+    }
+
+    // 默认 AGY 协议
     const targetVendor = resolveTargetVendor(payload, conversationId);
-
     if (targetVendor === 'codex') {
       return {
         supported: false,
@@ -477,8 +693,8 @@ function processPayload(payload) {
       };
     }
 
-    if (!conversationId && process.env.ANTIGRAVITY_CONVERSATION_ID) {
-      conversationId = process.env.ANTIGRAVITY_CONVERSATION_ID;
+    if (!conversationId && env.ANTIGRAVITY_CONVERSATION_ID) {
+      conversationId = env.ANTIGRAVITY_CONVERSATION_ID;
     }
 
     if (!conversationId || !targetVendor) {
@@ -492,12 +708,16 @@ function processPayload(payload) {
       return { injectSteps: [] };
     }
 
-    const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
     const sessionData = findSessionsRegistry(wsRoot, targetVendor);
     const templates = findPromptTemplates(wsRoot);
     const activeTodo = findActiveTodo(wsRoot, conversationId);
 
-    const ephemeralText = generateInjectionMessage(conversationId, sessionData, activeTodo, templates, targetVendor);
+    const dynamicContext = {
+      wsRoot,
+      invocationNum: payload.invocationNum !== undefined ? payload.invocationNum : (payload.invocation_num !== undefined ? payload.invocation_num : null)
+    };
+
+    const ephemeralText = generateInjectionMessage(conversationId, sessionData, activeTodo, templates, targetVendor, dynamicContext);
 
     return {
       injectSteps: [
@@ -538,7 +758,16 @@ function main() {
       }
     }
 
-    const result = processPayload(payload);
+    // CLI --event flag (ZCode compatibility)
+    const eventIdx = process.argv.indexOf('--event');
+    if (eventIdx !== -1 && process.argv[eventIdx + 1] === 'SessionStart') {
+      payload.hook_event_name = payload.hook_event_name || 'SessionStart';
+    }
+
+    const result = processPayload(payload, process.env, process.argv);
+    if (Object.keys(result).length === 0) {
+      return;
+    }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   });
 }
@@ -550,6 +779,7 @@ if (require.main === module) {
 module.exports = {
   normalizePath,
   resolveWorkspaceRoot,
+  resolveWorkspace,
   findSessionsRegistry,
   findPromptTemplates,
   findActiveTodo,
@@ -558,8 +788,14 @@ module.exports = {
   resolveTargetVendor,
   checkAndAcquireDedupeLock,
   extractMainThreadId,
+  extractSessionId,
+  extractEventName,
+  computeLifecycleState,
+  computeFleetOverview,
   getSessionDetails,
   getPluginTopicRules,
   generateInjectionMessage,
-  processPayload
+  processPayload,
+  main
 };
+

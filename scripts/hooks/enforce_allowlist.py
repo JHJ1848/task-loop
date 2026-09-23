@@ -17,6 +17,11 @@ import json
 import tempfile
 import re
 
+try:
+    from . import host_vendor
+except ImportError:
+    import host_vendor
+
 # 影响边界: 宿主级 Agent 状态根目录由各厂商自行读写, 承载 Agent 的记忆、配置、凭据与技能,
 # 属于宿主状态而非项目业务文件。按目录列举而非按厂商分支, 接入新宿主只需追加一行,
 # 不为每个厂商增加维护点。
@@ -438,58 +443,148 @@ def extract_main_thread_id(session_data, vendor):
     return vendor_data.get("main_thread_id") if isinstance(vendor_data, dict) else None
 
 
-def process_payload(payload):
+def extract_session_id(payload, env=None):
+    if env is None:
+        env = os.environ
+    return (
+        payload.get("conversationId")
+        or payload.get("conversation_id")
+        or payload.get("session_id")
+        or payload.get("sessionId")
+        or env.get("CLAUDE_CODE_SESSION_ID")
+        or env.get("CLAUDE_SESSION_ID")
+        or env.get("ZCODE_SESSION_ID")
+        or None
+    )
+
+
+def resolve_workspace(payload, env=None):
+    if env is None:
+        env = os.environ
+    workspace_paths = payload.get("workspacePaths")
+    if isinstance(workspace_paths, list) and len(workspace_paths) > 0:
+        return workspace_paths[0]
+    cwd = payload.get("cwd")
+    if isinstance(cwd, str) and cwd:
+        return cwd
+    return env.get("ZCODE_PROJECT_DIR") or env.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+
+
+def normalize_tool_call(payload):
+    if isinstance(payload.get("toolCall"), dict):
+        return payload["toolCall"]
+    raw_args = payload.get("tool_input") if payload.get("tool_input") is not None else payload.get("toolInput")
+    if not isinstance(raw_args, dict):
+        return None
+
+    tool_name = payload.get("tool_name") or payload.get("toolName")
+    if not isinstance(tool_name, str) or not tool_name:
+        return None
+
+    args = dict(raw_args)
+    target = (
+        args.get("TargetFile")
+        if args.get("TargetFile") is not None
+        else args.get("FilePath")
+        if args.get("FilePath") is not None
+        else args.get("file_path")
+        if args.get("file_path") is not None
+        else args.get("filePath")
+        if args.get("filePath") is not None
+        else args.get("target_file")
+        if args.get("target_file") is not None
+        else args.get("target_path")
+        if args.get("target_path") is not None
+        else args.get("path")
+    )
+    args.pop("file_path", None)
+    args.pop("filePath", None)
+    args["TargetFile"] = target
+
+    return {"name": tool_name, "args": args}
+
+
+def format_deny(reason, is_zcode_protocol):
+    if is_zcode_protocol:
+        return {
+            "suppressOutput": True,
+            "systemMessage": "[task-loop Allowlist Guard] blocked an out-of-allowlist write.",
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason or "Target file is outside the dispatched task allowlist."
+            }
+        }
+    return {"decision": "deny", "reason": reason}
+
+
+def process_payload(payload, env=None, argv=None):
+    is_zcode_protocol = False
     try:
-        tool_call = payload.get("toolCall")
+        if env is None:
+            env = os.environ
+        if argv is None:
+            argv = sys.argv
+        if not isinstance(payload, dict):
+            payload = {}
+
+        is_zcode_protocol = bool(
+            payload.get("tool_name")
+            or payload.get("toolName")
+            or payload.get("hook_event_name") == "PreToolUse"
+            or payload.get("hookEventName") == "PreToolUse"
+            or (payload.get("cwd") and not payload.get("toolCall") and not isinstance(payload.get("workspacePaths"), list))
+        )
+
+        tool_call = normalize_tool_call(payload)
         if not tool_call or not isinstance(tool_call, dict):
-            return {"decision": "allow"}
+            return {} if is_zcode_protocol else {"decision": "allow"}
 
         tool_name = tool_call.get("name")
         if not tool_name:
-            return {"decision": "allow"}
+            return {} if is_zcode_protocol else {"decision": "allow"}
 
         target_file = extract_target_file(tool_name, tool_call.get("args"))
         if not target_file:
-            return {"decision": "allow"}
+            return {} if is_zcode_protocol else {"decision": "allow"}
 
-        ws_root = resolve_workspace_root(payload.get("workspacePaths"))
-        conversation_id = payload.get("conversationId") or payload.get("conversation_id") or payload.get("sessionId") or payload.get("session_id")
+        ws_root = resolve_workspace(payload, env)
+        conversation_id = extract_session_id(payload, env)
 
-        # 0. 影响边界: 门禁只治理「已接入 task-loop 或已显式派发白名单的工作区」内的业务文件。
-        #    工作区外(宿主 Agent 状态目录、临时目录、桌面)不是项目业务文件, 继续拦截会连带
-        #    切断宿主自身的记忆与上下文注入通道; 无治理依据的项目没有 sessions.json、白名单
-        #    与派单契约, fail-closed 只会把治理强加到与 task-loop 无关的项目上。
         norm_target = normalize_path(target_file if os.path.isabs(target_file) else os.path.join(ws_root, target_file))
         norm_ws_root = normalize_path(ws_root)
         if not has_governance_basis(ws_root) or is_project_external_path(norm_target, norm_ws_root):
-            return {"decision": "allow"}
+            return {} if is_zcode_protocol else {"decision": "allow"}
 
-        # 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
-        vendor = detect_vendor(conversation_id, payload.get("vendor"))
+        declared_vendor = host_vendor.resolve_vendor(payload, env, argv) if hasattr(host_vendor, "resolve_vendor") else None
+        vendor = detect_vendor(conversation_id, payload.get("vendor") or declared_vendor)
         session_data = find_sessions_registry(ws_root, vendor)
         if not payload.get("vendor") and not vendor and conversation_id and is_registered_for_vendor(session_data, conversation_id, "antigravity"):
             vendor = "antigravity"
         if vendor == "codex":
-            return {"decision": "deny", "reason": "[task-loop PreToolUse DENY] Codex automatic file interception is unsupported; use Skills, Provider, and pre-dispatch allowlist validation."}
+            reason = "[task-loop PreToolUse DENY] Codex automatic file interception is unsupported; use Skills, Provider, and pre-dispatch allowlist validation."
+            return format_deny(reason, is_zcode_protocol)
         if not vendor or vendor not in ["antigravity", "zcode", "claude"]:
-            return {"decision": "deny", "reason": f"[task-loop PreToolUse DENY] Unknown or missing vendor '{payload.get('vendor') or 'unknown'}' cannot write files."}
+            reason = f"[task-loop PreToolUse DENY] Unknown or missing vendor '{payload.get('vendor') or 'unknown'}' cannot write files."
+            return format_deny(reason, is_zcode_protocol)
         if not conversation_id:
-            return {"decision": "deny", "reason": f"[task-loop PreToolUse DENY] Vendor '{vendor}' file writes require a registered session."}
+            reason = f"[task-loop PreToolUse DENY] Vendor '{vendor}' file writes require a registered session."
+            return format_deny(reason, is_zcode_protocol)
         if conversation_id and (not vendor or not is_registered_for_vendor(session_data, conversation_id, vendor)):
-            return {"decision": "deny", "reason": f"[task-loop PreToolUse DENY] Session '{conversation_id}' is missing, unregistered, or mismatched for vendor '{vendor or 'unknown'}'."}
+            reason = f"[task-loop PreToolUse DENY] Session '{conversation_id}' is missing, unregistered, or mismatched for vendor '{vendor or 'unknown'}'."
+            return format_deny(reason, is_zcode_protocol)
         is_main_session = check_is_main_session(session_data, conversation_id, vendor)
 
         if is_main_session:
             if not is_governance_or_state_file(norm_target, norm_ws_root):
-                return {
-                    "decision": "deny",
-                    "reason": f"[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 ({target_file})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。"
-                }
-            return {"decision": "allow"}
+                reason = f"[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 ({target_file})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。"
+                return format_deny(reason, is_zcode_protocol)
+            return {} if is_zcode_protocol else {"decision": "allow"}
 
         allowlist = find_allowlist_for_session(ws_root, conversation_id)
         if not allowlist:
-            return {"decision": "deny", "reason": "[task-loop PreToolUse DENY] File writes require a non-empty dispatched allowlist."}
+            reason = "[task-loop PreToolUse DENY] File writes require a non-empty dispatched allowlist."
+            return format_deny(reason, is_zcode_protocol)
 
         if not is_path_allowed(target_file, allowlist, ws_root):
             main_thread_id = extract_main_thread_id(session_data, vendor) or "<main_thread_id>"
@@ -498,22 +593,21 @@ def process_payload(payload):
                 "target_files": [target_file],
                 "reason": "<请在此详细阐述需要修改该文件的理由与影响分析>"
             }, indent=2, ensure_ascii=False)
-            return {
-                "decision": "deny",
-                "reason": f"[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '{target_file}' 不在当前任务白名单 (Allowlist: [{', '.join(allowlist)}]) 范围内，严禁越界修改！若确需修改此文件，必须向主治理中枢发起标准化白名单扩展申请 (ALLOWLIST_EXPANSION_REQUEST)：\nsend_message('{main_thread_id}', '{req_json}')"
-            }
+            reason = f"[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '{target_file}' 不在当前任务白名单 (Allowlist: [{', '.join(allowlist)}]) 范围内，严禁越界修改！若确需修改此文件，必须向主治理中枢发起标准化白名单扩展申请 (ALLOWLIST_EXPANSION_REQUEST)：\nsend_message('{main_thread_id}', '{req_json}')"
+            return format_deny(reason, is_zcode_protocol)
 
-        return {"decision": "allow"}
+        return {} if is_zcode_protocol else {"decision": "allow"}
     except Exception:
-        return {"decision": "deny", "reason": "[task-loop PreToolUse DENY] File write validation failed."}
+        reason = "[task-loop PreToolUse DENY] File write validation failed."
+        return format_deny(reason, is_zcode_protocol)
 
 
 def main():
-    raw_input = sys.stdin.read().strip()
+    raw_input_data = sys.stdin.read().strip()
     payload = {}
-    if raw_input:
+    if raw_input_data:
         try:
-            payload = json.loads(raw_input)
+            payload = json.loads(raw_input_data)
         except Exception:
             payload = {}
     else:
@@ -524,9 +618,12 @@ def main():
             except Exception:
                 payload = {}
 
-    result = process_payload(payload)
+    result = process_payload(payload, os.environ, sys.argv)
+    if not result:
+        return
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
     main()
+

@@ -1,112 +1,17 @@
 #!/usr/bin/env node
 /**
  * [Hook Script] Inject Session Context for ZCode (SessionStart / UserPromptSubmit)
- *
- * ZCode protocol adapter over the shared AGY core logic
- * (scripts/hooks/inject_session_context.js). Difference matrix:
- *
- *   Dimension      | AGY PreInvocation            | ZCode (this adapter)
- *   ---------------+------------------------------+---------------------------------
- *   Input channel  | stdin { conversationId, ... }| stdin Claude-Code-style payload
- *   Session ID key | conversationId               | session_id | sessionId | $CLAUDE_CODE_SESSION_ID | $ZCODE_SESSION_ID
- *   Workspace root | workspacePaths[0]            | cwd | $ZCODE_PROJECT_DIR | $CLAUDE_PROJECT_DIR
- *   Output shape   | { injectSteps:[{ephemeralMessage}] } | { hookSpecificOutput:{ hookEventName, additionalContext } }
- *   Trigger events | PreInvocation (every turn)   | SessionStart + UserPromptSubmit (per-turn parity)
- *
- * The injected message body (sessions.json awareness + [Plugin: task-loop |
- * topic rules) is 100% reused from the shared core, so both hosts render the
- * exact same context contract.
- *
- * Output JSON is strictly schema-validated by the ZCode hook runner:
- * only `hookSpecificOutput` (+ optional suppressOutput/systemMessage) are
- * accepted at top level. On any internal error this adapter fails open with
- * empty output and exit code 0.
+ * 
+ * @deprecated All ZCode / Claude Code adaptation logic has been natively merged into
+ * `scripts/hooks/inject_session_context.js`. This file is preserved as a lightweight
+ * forwarder for backward compatibility with existing configs and tests.
  */
 
-const core = require('./inject_session_context.js');
-const hostVendor = require('./host_vendor.js');
-
-const UUID_SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function extractSessionId(payload, env) {
-  return (
-    payload.session_id ||
-    payload.sessionId ||
-    (env && env.CLAUDE_CODE_SESSION_ID) ||
-    (env && env.CLAUDE_SESSION_ID) ||
-    (env && env.ZCODE_SESSION_ID) ||
-    null
-  );
-}
-
-function resolveWorkspace(payload, env) {
-  if (payload.cwd && typeof payload.cwd === 'string') {
-    return payload.cwd;
-  }
-  if (Array.isArray(payload.workspacePaths) && payload.workspacePaths.length > 0) {
-    return payload.workspacePaths[0];
-  }
-  return (
-    (env && env.ZCODE_PROJECT_DIR) ||
-    (env && env.CLAUDE_PROJECT_DIR) ||
-    process.cwd()
-  );
-}
-
-function extractEventName(payload) {
-  const raw = payload.hook_event_name || payload.hookEventName || '';
-  if (raw === 'SessionStart' || raw === 'UserPromptSubmit') {
-    return raw;
-  }
-  return 'UserPromptSubmit';
-}
+const universal = require('./inject_session_context.js');
 
 function processPayload(payload, env, argv) {
-  try {
-    env = env || process.env;
-    const sessionId = extractSessionId(payload, env);
-    if (!sessionId) {
-      return {};
-    }
-
-    // Host attribution: a host that declares itself is authoritative. The id-shape
-    // check below is only a fallback for hosts that never declared themselves, where
-    // sess_* is ZCode's shape and a bare UUID is ambiguous (Claude Code uses UUIDs
-    // too), so an unattributed UUID is left alone rather than misread as ZCode.
-    const declaredVendor = hostVendor.resolveVendor(payload, env, argv);
-    if (!declaredVendor && !sessionId.startsWith('sess_') && UUID_SESSION_ID.test(sessionId)) {
-      return {};
-    }
-    const vendor = declaredVendor || 'zcode';
-
-    // 去重检查
-    const shouldDedupe = !payload.isTest && !payload.skipDedupe;
-    if (shouldDedupe && core.checkAndAcquireDedupeLock && !core.checkAndAcquireDedupeLock(sessionId)) {
-      return {};
-    }
-
-    // Event-specific requested event (CLI --event overrides, e.g. SessionStart dispatch)
-    let eventName = extractEventName(payload);
-    if (payload.requested_event === 'SessionStart') eventName = 'SessionStart';
-
-    const wsRoot = resolveWorkspace(payload, env);
-    const sessionData = core.findSessionsRegistry(wsRoot, vendor);
-    const templates = core.findPromptTemplates(wsRoot);
-    const activeTodo = core.findActiveTodo(wsRoot, sessionId);
-
-    const additionalContext = core.generateInjectionMessage(sessionId, sessionData, activeTodo, templates, vendor);
-
-    return {
-      hookSpecificOutput: {
-        hookEventName: eventName,
-        additionalContext: additionalContext
-      },
-      suppressOutput: true
-    };
-  } catch (err) {
-    // Fail-open: never break the host session because of injection errors.
-    return {};
-  }
+  const p = Object.assign({ requested_vendor: 'zcode' }, payload);
+  return universal.processPayload(p, env, argv);
 }
 
 function main() {
@@ -136,27 +41,29 @@ function main() {
       }
     }
 
-    // CLI --event flag lifts SessionStart dispatches whose stdin may be minimal.
     const eventIdx = process.argv.indexOf('--event');
     if (eventIdx !== -1 && process.argv[eventIdx + 1] === 'SessionStart') {
       payload.hook_event_name = payload.hook_event_name || 'SessionStart';
     }
 
-    const result = processPayload(payload, null, process.argv);
+    const result = processPayload(payload, process.env, process.argv);
     if (Object.keys(result).length === 0) {
-      return; // empty output + exit 0 = healthy no-op for strict schema
+      return;
     }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   });
 }
 
+module.exports = {
+  processPayload,
+  extractSessionId: universal.extractSessionId,
+  resolveWorkspace: universal.resolveWorkspace,
+  extractEventName: universal.extractEventName,
+  main
+};
+
 if (require.main === module) {
   main();
 }
 
-module.exports = {
-  processPayload,
-  extractSessionId,
-  resolveWorkspace,
-  extractEventName
-};
+

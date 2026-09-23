@@ -62,7 +62,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
     "type_name": "修改落地 / 编码 / 修复",
     "file_write_permission": true,
     "allowlist_nature": "严格物理修改白名单 (Allowlist)",
-    "execution_constraints": "仅允许在 Allowlist 白名单内修改，严禁跨模块泛化修改；必须执行本地单测/编译验证 (Exit Code 0)；改动必须经过 Diff 质检与记忆回写。"
+    "execution_constraints": "仅允许在 Allowlist 白名单内修改，严禁跨模块泛化修改；专题全权负责自身语法检查、编译通过与功能有效性自测；交付物必须提供《最小改动自证说明》并经由 Main 会话双轮驱动质检验收与记忆回写。"
   }
 ]
 ```
@@ -83,7 +83,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
     "complexity": 2,
     "tier_name": "Level 2 (Standard)",
     "scenario": "模块内功能扩展、受控逻辑重构、跨 2~4 个关联文件修改",
-    "dispatch_action": "派发至对应专题会话标准开发，执行本地自测与单测门禁。"
+    "dispatch_action": "派发至对应专题会话标准开发，执行自主语法检查、功能自测与边界约束。"
   },
   {
     "complexity": 3,
@@ -115,21 +115,53 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 五、质检门禁与交付标准 (Verification Gate)
+## 五、四大绝对门禁与双轮驱动质检体系 (Dual-Engine Verification & Four Gates)
+
+### 1. 破除形式主义单测与编译强假设
+* **本质定位**: `task-loop` 是面向任意非 Web 项目、纯脚本、数据/ETL 或嵌入式项目的通用插件。严禁机械强求编写测试类或强行要求自动化单测 Exit Code 0 (GOTCHA-003)；
+* **专题会话法定职责**: 专题全权负责自身代码的语法检查、编译通过（若有）与基本功能有效性自测，并在交付时提供《最小改动自证说明》；
+* **Main 会话法定核心职责 (双轮驱动质检体系 Dual-Engine Verification)**:
+  - **轮 1 (需求清单逐项逆向比对)**: 按照最初需求清单结合改动代码逐项逆向核对，排查遗漏、偷换概念与假交付 (Zero-Diff)；
+  - **轮 2 (宏观全面上下文深度质检)**: 发挥 Main 会话宏观全局记忆优势，深入检测历史分支冲突、防功能误改误伤 (Non-Regression)、排查逻辑漏洞与过度修改/多改夹带私货，并严格审查外科手术最小有效更改与代码注释溯源（改动原因清晰可溯源）。
+
+### 2. 四大绝对门禁体系 (The Four Absolute Verification Gates)
 
 专题会话交付必须满足 5 步标准流：
-`1. 承接锁定 -> 2. 边界实施 -> 3. 本地自测 -> 4. 记忆沉淀 -> 5. 标准交付`。
+`1. 承接锁定 -> 2. 边界实施 -> 3. 专题自主语法与功能自测 (含代码注释溯源) -> 4. 记忆沉淀 -> 5. 标准交付 (含最小自证、代码注释溯源与旧逻辑自查)`。
 
-* **测试与质检分流准则 (Verification Triage)**：
-  - **后端算力与稳定算法 (`unit_test`)**：必须提供自动化单元测试通过与构建 Exit Code 0 的真实物理证据；
-  - **强前端交互与UI渲染 (`ui_reload`)**：严禁形式主义强行编写大量脆弱后端 mock 单测，执行构建/编译与语法检查，并向用户出具直观明确的【页面刷新验证指引卡】（包含重启服务、刷新路径与操作核验动作）；
-  - **全栈协作任务 (`hybrid`)**：后端算法出具单测证据，前端呈现出具交互验证指引。
+主会话收到交付后，**严禁充当传声筒盲目放行**，必须逐一执行四大绝对门禁审查：
 
-交付报告通过 sidebus 结构化回传，必须包含：**Summary (核心摘要)**、**Changes (改动清单)**、**Evidence (单测/构建/刷新验证证据)** 以及人机混合验证操作指引。
+```json
+[
+  {
+    "gate": "门禁 1: 原有逻辑破坏防御 (Non-Regression Defense, 最高优先级)",
+    "rule": "逐行逆向审视 Diff，严禁专题擅自删除或弱化任何既有 if 校验、业务门禁、前置条件或提前落盘！发现删除旧逻辑且未获授权的，绝对严禁放行，必须强制触发 DELIVERABLE_REJECTED 驳回重修。"
+  },
+  {
+    "gate": "门禁 2: 外科手术式最小改动自证与代码注释溯源 (Surgical Minimality & Comment Traceability)",
+    "rule": "专题交付物必须包含《最小改动自证说明》，逐项映射需求；代码中修改必须具备清晰可溯源的注释说明改动原因；改动超出 Allowlist 白名单或存在无关重构者一律驳回。"
+  },
+  {
+    "gate": "门禁 3: 双轮驱动质检与多维全局风险评估 (Dual-Engine Review & Risk Assessment)",
+    "rule": "严禁仅凭表面口头声称放行！主会话必须出具【全局风险漏洞评估卡】，执行需求清单逐项逆向比对，并系统性推演状态机乱序、未就绪提前落盘、边界空值与并发原子性风险。"
+  },
+  {
+    "gate": "门禁 4: Loop 闭环仲裁与主动打回 (Loop Rejection)",
+    "rule": "四大门禁未 100% 全过时，主会话必须主动调用 send_message 下发 DELIVERABLE_REJECTED 驳回指令包打回专题重修，直至门禁全过，杜绝让用户充当质检员。"
+  }
+]
+```
+
+### 3. 专题自主自测与验证分流准则 (Verification Triage)
+- **通用脚本/数据管道/非Web/通用模块 (`script_or_general`)**：专题自主执行语法检查（如 node/python 语法校验）、基本输入输出自测与核心功能有效性验证，免除强行套写脆弱测试类；
+- **已有单测体系的项目 (`unit_test`)**：专题执行既有自动化单测获取物理通过证据；
+- **强前端交互与UI渲染 (`ui_reload`)**：免除新建脆弱 mock 单测，执行构建/编译与语法检查，并向用户出具直观明确的【页面刷新验证指引卡】；
+- **全栈协作任务 (`hybrid`)**：核心功能自主自测，前端呈现出具交互验证指引。
 
 ---
 
 ## 六、关联文档与受控记忆 (References)
-* **深度派发契约**: [`references/dispatch-contract.md`](../../references/dispatch-contract.md)
+* **深度派发与质检契约**: [`references/dispatch-contract.md`](../../references/dispatch-contract.md)
 * **治理总规范**: [`AGENTS.md`](../../AGENTS.md)
 * **受控记忆主索引**: [`docs/MEMORY.md`](../../docs/MEMORY.md)
+

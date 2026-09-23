@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const hostVendor = require('./host_vendor.js');
 
 // 影响边界: 宿主级 Agent 状态根目录由各厂商自行读写, 承载 Agent 的记忆、配置、凭据与技能,
 // 属于宿主状态而非项目业务文件。按目录列举而非按厂商分支, 接入新宿主只需追加一行,
@@ -439,84 +440,167 @@ function extractMainThreadId(sessionData, vendor) {
   return vendorData && vendorData.main_thread_id ? vendorData.main_thread_id : null;
 }
 
-function processPayload(payload) {
+function extractSessionId(payload, env) {
+  env = env || process.env;
+  return (
+    payload.conversationId ||
+    payload.conversation_id ||
+    payload.session_id ||
+    payload.sessionId ||
+    (env && env.CLAUDE_CODE_SESSION_ID) ||
+    (env && env.CLAUDE_SESSION_ID) ||
+    (env && env.ZCODE_SESSION_ID) ||
+    null
+  );
+}
+
+function resolveWorkspace(payload, env) {
+  env = env || process.env;
+  if (Array.isArray(payload.workspacePaths) && payload.workspacePaths.length > 0) {
+    return payload.workspacePaths[0];
+  }
+  if (payload.cwd && typeof payload.cwd === 'string') {
+    return payload.cwd;
+  }
+  return (
+    (env && env.ZCODE_PROJECT_DIR) ||
+    (env && env.CLAUDE_PROJECT_DIR) ||
+    process.cwd()
+  );
+}
+
+function normalizeToolCall(payload) {
+  if (payload.toolCall && typeof payload.toolCall === 'object') {
+    return payload.toolCall;
+  }
+  const rawArgs =
+    payload.tool_input !== undefined ? payload.tool_input : payload.toolInput;
+  if (!rawArgs || typeof rawArgs !== 'object') {
+    return null;
+  }
+
+  const toolName = payload.tool_name || payload.toolName;
+  if (!toolName || typeof toolName !== 'string') {
+    return null;
+  }
+
+  const args = Object.assign({}, rawArgs);
+  const target =
+    args.TargetFile !== undefined ? args.TargetFile :
+    args.FilePath !== undefined ? args.FilePath :
+    args.file_path !== undefined ? args.file_path :
+    args.filePath !== undefined ? args.filePath :
+    args.target_file !== undefined ? args.target_file :
+    args.target_path !== undefined ? args.target_path :
+    args.path;
+  delete args.file_path;
+  delete args.filePath;
+  args.TargetFile = target;
+
+  return { name: toolName, args: args };
+}
+
+function formatDeny(reason, isZcodeProtocol) {
+  if (isZcodeProtocol) {
+    return {
+      suppressOutput: true,
+      systemMessage: '[task-loop Allowlist Guard] blocked an out-of-allowlist write.',
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: reason || 'Target file is outside the dispatched task allowlist.'
+      }
+    };
+  }
+  return { decision: 'deny', reason: reason };
+}
+
+function processPayload(payload, env, argv) {
+  let isZcodeProtocol = false;
   try {
-    const toolCall = payload.toolCall;
+    env = env || process.env;
+    payload = payload || {};
+
+    isZcodeProtocol = Boolean(
+      payload.tool_name ||
+      payload.toolName ||
+      payload.hook_event_name === 'PreToolUse' ||
+      payload.hookEventName === 'PreToolUse' ||
+      (payload.cwd && !payload.toolCall && !Array.isArray(payload.workspacePaths))
+    );
+
+    const toolCall = normalizeToolCall(payload);
     if (!toolCall || typeof toolCall !== 'object') {
-      return { decision: 'allow' };
+      return isZcodeProtocol ? {} : { decision: 'allow' };
     }
 
     const toolName = toolCall.name;
     if (!toolName) {
-      return { decision: 'allow' };
+      return isZcodeProtocol ? {} : { decision: 'allow' };
     }
 
     const targetFile = extractTargetFile(toolName, toolCall.args);
     if (!targetFile) {
       // 非文件写入工具，放行
-      return { decision: 'allow' };
+      return isZcodeProtocol ? {} : { decision: 'allow' };
     }
 
-    const wsRoot = resolveWorkspaceRoot(payload.workspacePaths);
-    const conversationId = payload.conversationId || payload.conversation_id || payload.sessionId || payload.session_id;
+    const wsRoot = resolveWorkspace(payload, env);
+    const conversationId = extractSessionId(payload, env);
 
-    // 0. 影响边界: 门禁只治理「已接入 task-loop 或已显式派发白名单的工作区」内的业务文件。
-    //    工作区外(宿主 Agent 状态目录、临时目录、桌面)不是项目业务文件, 继续拦截会连带
-    //    切断宿主自身的记忆与上下文注入通道; 无治理依据的项目没有 sessions.json、白名单
-    //    与派单契约, fail-closed 只会把治理强加到与 task-loop 无关的项目上。
     const normTarget = normalizePath(path.isAbsolute(targetFile) ? targetFile : path.resolve(wsRoot, targetFile));
     const normWsRoot = normalizePath(wsRoot);
     if (!hasGovernanceBasis(wsRoot) || isProjectExternalPath(normTarget, normWsRoot)) {
-      return { decision: 'allow' };
+      return isZcodeProtocol ? {} : { decision: 'allow' };
     }
 
-    // 1. 主会话行为硬性红线拦截 (Explore-Only Hard Gate)
-    let vendor = detectVendor(conversationId, payload.vendor);
+    let vendor = detectVendor(conversationId, payload.vendor || (hostVendor.resolveVendor ? hostVendor.resolveVendor(payload, env, argv) : null));
     const sessionData = findSessionsRegistry(wsRoot, vendor);
     if (!payload.vendor && !vendor && conversationId && isRegisteredForVendor(sessionData, conversationId, 'antigravity')) vendor = 'antigravity';
     if (vendor === 'codex') {
-      return { decision: 'deny', reason: '[task-loop PreToolUse DENY] Codex automatic file interception is unsupported; use Skills, Provider, and pre-dispatch allowlist validation.' };
+      const reason = '[task-loop PreToolUse DENY] Codex automatic file interception is unsupported; use Skills, Provider, and pre-dispatch allowlist validation.';
+      return formatDeny(reason, isZcodeProtocol);
     }
     if (!vendor || !['antigravity', 'zcode', 'claude'].includes(vendor)) {
-      return { decision: 'deny', reason: `[task-loop PreToolUse DENY] Unknown or missing vendor '${payload.vendor || 'unknown'}' cannot write files.` };
+      const reason = `[task-loop PreToolUse DENY] Unknown or missing vendor '${payload.vendor || 'unknown'}' cannot write files.`;
+      return formatDeny(reason, isZcodeProtocol);
     }
     if (!conversationId) {
-      return { decision: 'deny', reason: `[task-loop PreToolUse DENY] Vendor '${vendor}' file writes require a registered session.` };
+      const reason = `[task-loop PreToolUse DENY] Vendor '${vendor}' file writes require a registered session.`;
+      return formatDeny(reason, isZcodeProtocol);
     }
     if (conversationId && (!vendor || !isRegisteredForVendor(sessionData, conversationId, vendor))) {
-      return { decision: 'deny', reason: `[task-loop PreToolUse DENY] Session '${conversationId}' is missing, unregistered, or mismatched for vendor '${vendor || 'unknown'}'.` };
+      const reason = `[task-loop PreToolUse DENY] Session '${conversationId}' is missing, unregistered, or mismatched for vendor '${vendor || 'unknown'}'.`;
+      return formatDeny(reason, isZcodeProtocol);
     }
     const isMain = checkIsMainSession(sessionData, conversationId, vendor);
 
     if (isMain) {
       if (!isGovernanceOrStateFile(normTarget, normWsRoot)) {
-        return {
-          decision: 'deny',
-          reason: `[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 (${targetFile})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。`
-        };
+        const reason = `[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 (${targetFile})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。`;
+        return formatDeny(reason, isZcodeProtocol);
       }
-      return { decision: 'allow' };
+      return isZcodeProtocol ? {} : { decision: 'allow' };
     }
 
     const allowlist = findAllowlistForSession(wsRoot, conversationId);
 
-    // Any write without a dispatched allowlist is fail-closed.
     if (!allowlist || allowlist.length === 0) {
-      return { decision: 'deny', reason: '[task-loop PreToolUse DENY] File writes require a non-empty dispatched allowlist.' };
+      const reason = '[task-loop PreToolUse DENY] File writes require a non-empty dispatched allowlist.';
+      return formatDeny(reason, isZcodeProtocol);
     }
 
     const allowed = isPathAllowed(targetFile, allowlist, wsRoot);
     if (!allowed) {
       const mainThreadId = extractMainThreadId(sessionData, vendor) || '<main_thread_id>';
-      return {
-        decision: 'deny',
-        reason: `[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '${targetFile}' 不在当前任务白名单 (Allowlist: [${allowlist.join(', ')}]) 范围内，严禁越界修改！若确需修改此文件，必须向主治理中枢发起标准化白名单扩展申请 (ALLOWLIST_EXPANSION_REQUEST)：\nsend_message('${mainThreadId}', JSON.stringify({\n  "type": "ALLOWLIST_EXPANSION_REQUEST",\n  "target_files": ["${targetFile}"],\n  "reason": "<请在此详细阐述需要修改该文件的理由与影响分析>"\n}, null, 2))`
-      };
+      const reason = `[task-loop Allowlist Guard] 工具调用被拦截！目标文件 '${targetFile}' 不在当前任务白名单 (Allowlist: [${allowlist.join(', ')}]) 范围内，严禁越界修改！若确需修改此文件，必须向主治理中枢发起标准化白名单扩展申请 (ALLOWLIST_EXPANSION_REQUEST)：\nsend_message('${mainThreadId}', JSON.stringify({\n  "type": "ALLOWLIST_EXPANSION_REQUEST",\n  "target_files": ["${targetFile}"],\n  "reason": "<请在此详细阐述需要修改该文件的理由与影响分析>"\n}, null, 2))`;
+      return formatDeny(reason, isZcodeProtocol);
     }
 
-    return { decision: 'allow' };
+    return isZcodeProtocol ? {} : { decision: 'allow' };
   } catch (err) {
-    return { decision: 'deny', reason: '[task-loop PreToolUse DENY] File write validation failed.' };
+    const reason = '[task-loop PreToolUse DENY] File write validation failed.';
+    return formatDeny(reason, isZcodeProtocol);
   }
 }
 
@@ -547,7 +631,10 @@ function main() {
       }
     }
 
-    const result = processPayload(payload);
+    const result = processPayload(payload, process.env, process.argv);
+    if (Object.keys(result).length === 0) {
+      return;
+    }
     process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   });
 }
@@ -558,6 +645,9 @@ if (require.main === module) {
 
 module.exports = {
   processPayload,
+  normalizeToolCall,
+  extractSessionId,
+  resolveWorkspace,
   extractTargetFile,
   isPathAllowed,
   findAllowlistForSession,
@@ -567,5 +657,7 @@ module.exports = {
   normalizePath,
   resolveRealPathSafely,
   stripUncPrefix,
-  VENDOR_ALIASES
+  VENDOR_ALIASES,
+  main
 };
+

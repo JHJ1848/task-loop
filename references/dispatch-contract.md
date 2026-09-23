@@ -41,7 +41,7 @@
     "type_name": "修改落地 / 编码 / 修复 (Surgical Work)",
     "file_write_permission": true,
     "allowlist_nature": "严格物理修改白名单 (Surgical Write Allowlist)",
-    "execution_constraints": "仅允许在 Allowlist 白名单内修改，严禁跨模块泛化修改；必须执行本地单测/编译验证 (Exit Code 0)；改动必须经过 Diff 质检与记忆回写。"
+    "execution_constraints": "仅允许在 Allowlist 白名单内修改，严禁跨模块泛化修改；专题全权负责自身语法检查、编译通过与功能有效性自测；交付物必须提供《最小改动自证说明》并经由 Main 会话双轮驱动质检验收与记忆回写。"
   }
 ]
 ```
@@ -68,7 +68,7 @@
     "tier_name": "Level 2 (Standard)",
     "scenario": "模块内常规特性开发、多文件协作改动、标准重构",
     "subagent_policy": "optional",
-    "execution_rule": "标准派发：专题在边界（Allowlist）内执行标准开发、单元测试与所属记忆回写。"
+    "execution_rule": "标准派发：专题在边界（Allowlist）内执行标准开发、自主语法与功能自测与所属记忆回写。"
   },
   {
     "complexity": 3,
@@ -82,102 +82,164 @@
 
 ---
 
-## 三、质检与人机混合验证模型（Hybrid Verification）
+## 四、质检与人机混合验证模型（Hybrid & Dual-Engine Verification）
 
 ```mermaid
 flowchart TD
-    Report[专题会话提交改动证据] --> AutoCheck{自动化硬性门禁}
-    AutoCheck -->|优先调用现有 Skill| CodeReview[code-review / systematic-debugging]
-    CodeReview --> DiffCheck[Diff 核验: 是否严守 Allowlist]
-    DiffCheck --> TriageCheck{验证分流矩阵裁决}
-
-    TriageCheck -->|unit_test: 稳定算法/底层状态机| LogCheck[物理单测日志: Exit Code 0]
-    TriageCheck -->|ui_reload: 强前端交互/展示接口| BuildCheck[编译构建/语法通过 + 刷新指引卡]
-    TriageCheck -->|hybrid: 全栈任务| HybridCheck[核心单测 + 交互指引]
+    Report[专题会话提交交付物<br/>含最小改动自证、代码注释溯源与旧逻辑自查] --> MainDualReview[Main 会话双轮驱动质检体系]
     
-    LogCheck --> Pass[主会话批准并通过]
+    subgraph DualEngine[Main 会话双轮驱动质检 Dual-Engine Review]
+      Engine1[轮 1: 需求清单逐项逆向比对<br/>排查遗漏/偷换概念/假交付]
+      Engine2[轮 2: 宏观上下文深度质检<br/>防误伤误改/防分支冲突/排查逻辑漏洞/审查注释溯源]
+    end
+    
+    MainDualReview --> DualEngine
+    DualEngine --> AutoCheck{四大绝对门禁审查}
+    AutoCheck --> Gate1[门禁1: 原有逻辑破坏与非预期改动防御]
+    Gate1 --> Gate2[门禁2: 外科手术式最小改动自证与注释溯源]
+    Gate2 --> Gate3[门禁3: 双轮驱动质检与多维全局风险评估]
+    Gate3 --> Gate4{门禁4: 四大门禁是否 100% 通过}
+
+    Gate4 -->|存在缺陷/破坏/越界/漏洞| Reject[强制触发 DELIVERABLE_REJECTED 驳回重修<br/>主会话绝不充当盲目放行传声筒]
+    Reject --> TopicFix[专题会话重修与自主自测] --> Report
+
+    Gate4 -->|全量通过| TriageCheck{项目特征与验证分流}
+    TriageCheck -->|通用脚本/数据管道/非Web/后端算法| ScriptCheck[专题自主语法/功能自测通过]
+    TriageCheck -->|强前端交互/展示接口/页面渲染| BuildCheck[专题构建检查 + 向用户出具刷新指引卡]
+    TriageCheck -->|全栈协作任务| HybridCheck[核心功能自测 + 交互指引]
+    
+    ScriptCheck --> Pass[主会话批准并通过 -> 用户最终交付]
     BuildCheck --> PromptUser[向用户出具【页面刷新验证指引卡】<br/>提示用户重启服务与刷新核验]
     HybridCheck --> PromptUser
     PromptUser --> UserConfirm[用户交互确认] --> Pass
 ```
 
-### 1. 三层验证分流矩阵 (Verification Mode Matrix JSON)
-为杜绝一刀切要求“任何改动都必须新建单测”的形式主义倾向，质检门禁与执行端自测强制按照任务技术特征分流：
+### 1. 破除形式主义单测与编译强假设 (Anti-Dogmatic Verification)
+* **本质定位**: `task-loop` 是面向任意非 Web 项目、纯脚本、数据/ETL 或嵌入式项目的通用插件。在原型开发、需求频繁变动或无测试框架的项目中，**严禁机械强求编写测试类或强行要求自动化单测 Exit Code 0**，杜绝形式主义空单测反模式 (GOTCHA-003)；
+* **专题会话法定职责**: 专题会话自主全权负责自身代码的语法检查、编译通过（若有编译体系）与基本功能有效性自测，并在交付时提供《外科手术式最小改动自证说明》；
+* **Main 会话法定核心职责 (双轮驱动质检体系 Dual-Engine Verification)**:
+  - **轮 1 (需求清单逐项逆向比对 - Requirements Traceability Engine)**: 按照最初需求清单结合改动代码逐项逆向比对，排查遗漏、偷换概念、隐式降级与假交付 (Zero-Diff)；
+  - **轮 2 (宏观全面上下文深度质检 - Global Context & Anti-Regression Engine)**: 发挥 Main 会话宏观全局记忆优势，深入检测历史分支冲突、防功能误改误伤 (Non-Regression)、排查逻辑漏洞与过度修改/多改夹带私货，并严格审查外科手术最小有效更改与代码注释溯源（改动原因清晰可溯源）。
+
+### 2. 四大绝对门禁体系 (The Four Absolute Verification Gates)
+
+主会话收到专题交付汇报后，**绝不充当传声筒盲目放行或直接更新状态**，必须逐项执行四大绝对门禁审查：
 
 ```json
 [
   {
+    "gate_id": "Gate 1",
+    "gate_name": "原有逻辑破坏与非预期改动防御 (Non-Regression Defense, 最高优先级)",
+    "core_rule": "主会话必须逐行逆向审视 Diff，严禁专题擅自删除或弱化旧有的任何 if 校验、业务门禁、前置条件或持久化约束！凡发现删除旧业务校验、提前写库时机或破坏已有状态流转的，绝对严禁静默放行，必须强制触发 DELIVERABLE_REJECTED 驳回重修；若确属业务授权调整，必须显式提供《旧逻辑变更决策说明》并在质检卡中 ⚠️ 标红提醒用户。",
+    "check_points": [
+      "是否存在被静默删除/注释的既有 if 判断、参数校验、合法性检查或防御门禁",
+      "状态持久化时机是否被非预期提前或延迟（如未完成前置校验即写库/落盘）",
+      "是否破坏了历史已验证的既有接口签名、返回值结构或状态机生命周期流转"
+    ]
+  },
+  {
+    "gate_id": "Gate 2",
+    "gate_name": "外科手术式最小改动自证与代码注释溯源 (Surgical Minimality & Comment Traceability)",
+    "core_rule": "专题交付物必须强制包含《最小改动自证说明》，逐项说明每一处改动与当前需求的直接映射；代码中修改必须具备清晰可溯源的注释说明改动原因；任何超出 Allowlist 或夹带无关重构者一律 DELIVERABLE_REJECTED 驳回。",
+    "check_points": [
+      "修改文件是否 100% 局限在派单 Allowlist 白名单之内",
+      "是否存在顺带重构无关代码、批量格式化、更改编码格式或引入多余依赖",
+      "代码改动处是否包含清晰的注释说明改动原因与上下文",
+      "每一处函数/变量增删是否具有不可替代的刚性理由"
+    ]
+  },
+  {
+    "gate_id": "Gate 3",
+    "gate_name": "双轮驱动质检与多维全局风险评估 (Dual-Engine Review & Risk Assessment)",
+    "core_rule": "严禁仅凭表面口头声称放行！主会话必须独立出具【全局风险漏洞评估卡】，执行需求逐项逆向比对并系统性推演潜在工程漏洞与边界风险。",
+    "check_points": [
+      "需求逐项逆向比对：是否 100% 覆盖需求清单，是否存在漏做、偷换概念或假交付",
+      "状态机乱序与未就绪提前落盘风险（如异常中断时产生半持久化脏数据）",
+      "边界与空值安全（如 null/undefined、空数组、大字段截断、异常分支捕获）",
+      "并发脏写与持久化原子性（如文件排他锁争用、多会话同时写盘冲突）",
+      "旧版本与多厂商兼容性（如 Schema 升级过渡与异构平台路径差异）"
+    ]
+  },
+  {
+    "gate_id": "Gate 4",
+    "gate_name": "Loop 闭环仲裁与主动打回重修 (Loop Arbitration & Mandatory DELIVERABLE_REJECTED)",
+    "core_rule": "主会话的核心职责是充当严苛架构师与质检中枢，发现任何问题必须主动调用 send_message 下发 DELIVERABLE_REJECTED 驳回指令包打回专题修复，直至四大门禁 100% 全过，彻底杜绝把半成品或破坏性代码推给用户、让用户充当质检员。",
+    "check_points": [
+      "门禁未全过时严禁向用户输出“已完成”",
+      "打回时必须明确指出 failed_gates、破坏点详情与具体重修行动要求",
+      "专题必须在白名单内重新修复、自测通过后二次交付"
+    ]
+  }
+]
+```
+
+### 3. 专题自主自测与验证分流矩阵 (Pragmatic Verification Matrix JSON)
+专题执行端自测与交付验证务实适配不同项目类型：
+
+```json
+[
+  {
+    "mode": "script_or_general",
+    "target_scope": "纯脚本工具、数据处理/ETL、通用非 Web 模块、底层基础设施及快速迭代原型",
+    "verification_policy": "专题自主执行语法检查（如 node/python 语法校验）、基本输入输出自测与核心功能有效性验证，免除强行套写脆弱的测试类",
+    "rationale": "通用工程场景多样，以极简轻量、功能可运行与语法无错为务实验收准则"
+  },
+  {
     "mode": "unit_test",
-    "target_scope": "偏后端稳定计算、底层协议状态机、核心算法、数据编解码与持久化状态逻辑",
-    "verification_policy": "必须独立执行自动化单测/构建命令，获取真实的 Exit Code 0 物理通过证据",
+    "target_scope": "已有完备单测体系的项目、偏后端稳定计算、底层协议状态机、核心算法与持久化状态逻辑",
+    "verification_policy": "专题执行既有自动化单测/构建命令，提供物理通过证据",
     "rationale": "业务逻辑稳定不易频繁变更，回归断言价值高且维护成本低"
   },
   {
     "mode": "ui_reload",
     "target_scope": "强前端交互、UI 样式渲染、视图布局调整以及轻量级数据展示接口",
     "verification_policy": "免除新建冗余且脆弱的单测，执行编译/构建与语法静态检查，并向用户出具明确的【页面刷新验证指引卡】",
-    "rationale": "前端界面多变，强行在后端编写大量 mock 单元测试耗时费力且容易因细节微调脆弱报错，服务重启后页面刷新/点击即验最为务实高效"
+    "rationale": "前端界面多变，服务重启后页面刷新/点击即验最为务实高效"
   },
   {
     "mode": "hybrid",
     "target_scope": "全栈协作任务、前后端一体化特性、复杂数据流水线联动前端呈现",
-    "verification_policy": "后端核心算法与计算逻辑执行单测自证 (Exit Code 0)，前端交互要素附带操作验证指引卡",
+    "verification_policy": "核心功能自主自测，前端交互要素附带操作验证指引卡",
     "rationale": "兼顾深层计算逻辑的确定性与前端视觉交互的灵活性"
   }
 ]
 ```
 
-### 2. 优先复用环境既有代码审查 Skill
+### 4. 优先复用环境既有代码审查 Skill
 质检时优先检测环境中已安装的审查技能（如 `code-review`、`superpowers:code-review`、`receiving-code-review`、`systematic-debugging`），以专业评审标准进行走查。
 
-### 3. 人机混合验证（Human-in-the-Loop）
+### 5. 人机混合验证（Human-in-the-Loop）
 * **客观现实**：图形渲染、UI 审美、跨端交互效果以及超出 AI 上下文的业务体验无法完全由脚本自动化衡量。
 * **规则**：当遇到不可量化或不确定的视觉/业务点时，主会话严禁伪造“完全验证”，必须转为**人机混合验证**——由 AI 负责构建与语法核验，同时向用户输出详尽的**【页面刷新/用户验证指引卡】**（告知用户如何重启服务、访问路由、点击查看何种预期效果），由用户做最终验收。
 
 ---
 
-## 四、走弯路识别与合法 SDK 干预机制
+## 五、专题交付物规范与执行端标准执行流 (Topic Parity & Deliverable Spec)
 
-### 1. 走弯路（Wandering）特征指标
-主会话在监控或收到中间汇报时，通过以下特征研判专题是否偏离正轨：
-* **时间/轮次畸高**：简单任务交互超过预估阈值（如 Level 1 超过 3 轮未收敛）；
-* **范围扩散**：改动扩散到了 Allowlist 之外的文件；
-* **错误震荡**：同一报错在 2 次以上尝试中反复出现且未见收敛趋势。
+专题会话及其内部子代理（Topic Session & Subagents）在完成任务后，**必须按照以下结构化规范汇报交付物**：
 
-### 2. 合法 SDK 干预动作
-* **严禁非法工具调用**，必须使用官方原生 SDK 工具进行干预：
-  * **纠偏指令**：使用 `send_message` 向目标会话发送结构化【纠偏通知】，勒令回滚越界改动并给出收敛路径；
-  * **超时熔断**：在 AGY 环境下使用 `manage_subagents(Action='kill')` 终止失控的子代理树，避免 Token 浪费。
+### 1. 专题交付物结构规范模板 (Topic Deliverable Template)
 
----
+```markdown
+[专题交付: WORK] 专题名称与任务简述
 
-## 五、专题会话与执行端标准执行流 (Topic Session & Worker Workflow Parity)
+### 1. 核心摘要 (Summary)
+- [核心目标与改动效果概述]
 
-无论主会话处于**默认自然语言直接交互模式**还是**可选文件状态机模式**，专题会话及其内部子代理（Topic Session & Subagents）的执行生命周期 100% 保持前后一致：
+### 2. 外科手术式最小改动自证与注释溯源 (Surgical Minimality & Comment Traceability)
+- [文件1]: [修改理由与当前需求的精准映射，代码注释溯源说明，自证无多余扩散]
+- [文件2]: [修改理由与当前需求的精准映射，代码注释溯源说明，自证无多余扩散]
 
-```json
-[
-  {
-    "stage": "1. 承接与边界锁定 (Intake & Boundary)",
-    "action": "解析任务 Objective、Allowlist 白名单、验收准则与 1/2/3 复杂度。"
-  },
-  {
-    "stage": "2. 边界实施 (Surgical Execution)",
-    "action": "仅在 Allowlist 白名单内修改，杜绝跨模块蔓延；项目内持久化 md 禁用表格（强制 JSON 代码块），统一 UTF-8 编码，强制使用原生编辑工具。"
-  },
-  {
-    "stage": "3. 本地自测 (Self-Verification)",
-    "action": "根据技术特征精准分流自测：底层稳定计算与算法执行单元测试 (Exit Code 0)；强前端交互与UI展示严禁套写大量脆弱后端 mock 单测，执行编译/构建检查并出具页面刷新验证卡；Diff 走查核对无越界改动。"
-  },
-  {
-    "stage": "4. 记忆回写 (Topic Memory Put)",
-    "action": "若产生经过证实的新事实/架构决策，回写所属专题文档 docs/memory/*.md。"
-  },
-  {
-    "stage": "5. 强制反向交付 (Mandatory Deliverable via Sidebus)",
-    "action": "自测通过后严禁仅在当前视窗输出文本停下，必须且强制在最后一轮调用 send_message(recipient=\"<main_thread_id>\", message=\"[专题交付: WORK]...\") 向上级汇报：Summary (核心摘要)、Changes (修改清单)、Evidence (单测/构建/刷新验证证据) 与人机混合验证操作卡，触发主中枢验收。"
-  }
-]
+### 3. 原有逻辑与业务约束审查 (Non-Regression Check)
+- **旧有 if 校验与业务门禁**: [✔ 确认未删除/未弱化任何既有校验；或：⚠️ 经授权修改某校验，理由为...]
+- **状态流转与落盘时机**: [✔ 确认状态机落盘时机未被破坏]
+
+### 4. 改动清单 (Changes)
+- [MODIFY/NEW/DELETE] [文件绝对/相对路径]: [改动详情]
+
+### 5. 自主自测与验证证据 (Evidence)
+- [专题自主语法检查输出 / 编译构建输出 / 功能自测日志]
+- [人机混合验证指引 (若含 UI/视觉要素)]
 ```
 
 ---
@@ -247,34 +309,11 @@ flowchart TD
 
 ---
 
-## 七、主会话批判性门禁验收标准四步法与驳回协议 (Critical Verification Gate & Rejection Protocol)
+## 七、主会话批判性门禁验收与主动驳回重修协议 (Gate Verdict & Loop Rejection Protocol)
 
-主会话收到专题会话发起的交付汇报（`send_message`）后，**严禁充当传声筒盲目轻信、透传或直接更新 todo.json 状态**。主会话必须严格执行以下四步独立质检闭环：
+主会话收到专题交付汇报后，必须严格对照四大绝对门禁进行独立推演与质检。发现任何问题必须立即下发 `DELIVERABLE_REJECTED` 驳回重修指令包：
 
-### 1. 门禁验收标准四步法 (4-Step Gate Checklist)
-
-```json
-[
-  {
-    "step": "Step 1. 独立执行验证命令 (Independent Execution)",
-    "description": "主会话必须在自身终端亲自/独立运行全量自动化单测或编译构建命令，亲眼确认 Exit Code 0 与真实输出日志，严禁仅听信专题文字总结。"
-  },
-  {
-    "step": "Step 2. 真实 Diff 审查 (Diff & Allowlist Inspection)",
-    "description": "严格走查本地 Git Diff 与工作区修改文件，确认 100% 严格落在派单 Allowlist 范围内，无多余文件、无编码/格式污染、无意外死代码。"
-  },
-  {
-    "step": "Step 3. 必要时派遣 Reviewer 审查 (Proactive Reviewer Subagent)",
-    "description": "针对 Level 2/3、核心底层改动或高风险逻辑，主会话可按需拉起 reviewer 子代理进行代码走查与架构交叉核验。"
-  },
-  {
-    "step": "Step 4. 门禁裁决与闭环处理 (Gate Verdict & Closeout)",
-    "description": "四步核验全绿方可更新 todo.json 为 completed 并向用户交付；发现任何单测失败、越界修改或逻辑缺陷，强制下发 DELIVERABLE_REJECTED 驳回重修。"
-  }
-]
-```
-
-### 2. 交付驳回与重修报文协议 (DELIVERABLE_REJECTED Schema JSON)
+### 1. 交付驳回与重修指令包模板 (DELIVERABLE_REJECTED Template)
 
 ```json
 [
@@ -282,20 +321,32 @@ flowchart TD
     "stage": "主中枢门禁驳回 (DELIVERABLE_REJECTED)",
     "sender": "Main Session",
     "recipient": "Topic Session",
-    "condition": "主会话独立质检时发现单测失败、越界修改、编译报错或审查未通过",
+    "condition": "四大绝对门禁任一未通过（如发现原有校验被删除、越界改动、单测失败、存在严重工程风险）",
     "payload_example": {
       "type": "DELIVERABLE_REJECTED",
-      "task_id": "task_20260902_001",
+      "task_id": "task_20260921_001",
       "failed_gates": [
-        "Gate 1 (独立测试失败): node tests/test_hooks_pipeline.test.js 抛出 ReferenceError",
-        "Gate 2 (Diff 越界): 检测到修改了未授权文件 src/extra_util.js"
+        "Gate 1 (原有逻辑破坏): 检测到 checkAllFieldsCompleted 前置校验被擅自删除，破坏了业务完整性门禁",
+        "Gate 2 (最小改动越界): 修改了未授权的无关配置文件 config/settings.json"
       ],
-      "rejection_reason": "主会话独立执行单测未通过，且检测到非白名单文件修改。",
-      "action_required": "请立即回滚未授权文件修改，修复单测异常并重新自测后再次交付。"
+      "rejection_reason": "专题擅自删除了核心前置业务校验，且存在非白名单文件修改，破坏了系统不变量。",
+      "action_required": "1. 恢复 checkAllFieldsCompleted 校验；2. 回滚 config/settings.json 变动；3. 重新执行全量自测后再次交付。"
     }
   }
 ]
 ```
+
+### 2. 主会话全局风险漏洞评估卡模板 (Global Risk Assessment Card)
+
+```markdown
+### [Risk Assessment] 主会话全局风险漏洞评估卡
+- **状态机与落盘时机安全**：[✔ 已核验：无未就绪提前写盘风险 / ⚠️ 存在乱序隐患，已驳回]
+- **边界与空值安全**：[✔ 已核验：null/undefined 与边界分支均有完备保护]
+- **并发与持久化原子性**：[✔ 已核验：文件锁与并发写入满足原子隔离]
+- **多版本与厂商兼容性**：[✔ 已核验：异构平台与旧版本配置完全向后兼容]
+- **综合质检结论**：[PASSED 准予放行 / REJECTED 驳回重修]
+```
+
 
 ---
 
