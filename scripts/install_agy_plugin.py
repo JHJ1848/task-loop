@@ -15,7 +15,7 @@
    - dirs : skills, rules, scripts, templates, references, config, assets, .claude-plugin
    - files: plugin.json, hooks.json, marketplace.json, SKILL.md, README.md, LICENSE
 3. 插件健康校验 (Validation):
-   - 验证 6 大核心 Skill (task-loop, session-control, subagent, hook, init, new-session);
+   - 验证 5 大核心 Skill (task-loop, session-control, subagent, init, new-session);
    - 验证 2 大核心 Hook (session-context-injector, allowlist-safety-gate);
    - 若系统已安装 agy CLI，尝试调用 agy plugin validate 进行官方验证。
 """
@@ -38,7 +38,7 @@ COPY_DIRS = [
     'config', 'assets', '.claude-plugin'
 ]
 COPY_FILES = ['plugin.json', 'hooks.json', 'marketplace.json', 'SKILL.md', 'README.md', 'LICENSE']
-REQUIRED_SKILLS = ['task-loop', 'session-control', 'subagent', 'hook', 'init', 'new-session']
+REQUIRED_SKILLS = ['task-loop', 'session-control', 'subagent', 'init', 'new-session']
 JUNK_ENTRY_NAMES = {'__pycache__', '.idea', '.DS_Store', 'tests'}
 
 
@@ -148,7 +148,7 @@ def validate_installed_plugin(dest):
         except Exception as e:
             issues.append(f"hooks.json 语法损坏: {str(e)}")
 
-    # 3. 验证 6 大 Skills
+    # 3. 验证 5 大 Skills
     for skill in REQUIRED_SKILLS:
         skill_md = os.path.join(dest, 'skills', skill, 'SKILL.md')
         if not os.path.exists(skill_md):
@@ -306,7 +306,7 @@ def print_report(res):
 
     print('\n[插件健康校验 (Plugin Health Check)]:')
     if res['validation']['valid']:
-        print('  ✔ 核心 Manifest、2 大 Hooks 与 6 大 Skills 结构完整无损！')
+        print('  ✔ 核心 Manifest、2 大 Hooks 与 5 大 Skills 结构完整无损！')
     else:
         print('  ✖ 发现异常项:')
         for issue in res['validation']['issues']:

@@ -8,7 +8,6 @@
       "skills/task-loop",
       "skills/session-control",
       "skills/subagent",
-      "skills/hook",
       "skills/init",
       "skills/new-session"
     ],

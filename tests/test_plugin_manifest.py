@@ -28,7 +28,7 @@ class TestPluginManifest(unittest.TestCase):
         self.assertTrue(os.path.exists(rules_path), "rules/task-loop-governance.md must exist")
 
     def test_independent_skills_exist(self):
-        expected_skills = ["task-loop", "session-control", "subagent", "hook", "init", "new-session"]
+        expected_skills = ["task-loop", "session-control", "subagent", "init", "new-session"]
         for skill_name in expected_skills:
             skill_path = os.path.join(self.root_dir, "skills", skill_name, "SKILL.md")
             self.assertTrue(os.path.exists(skill_path), f"skills/{skill_name}/SKILL.md must exist")
@@ -36,6 +36,7 @@ class TestPluginManifest(unittest.TestCase):
                 content = f.read()
             self.assertTrue(content.startswith("---"), f"skills/{skill_name}/SKILL.md must have YAML frontmatter")
             self.assertTrue('description: "[task-loop]' in content, f"skills/{skill_name}/SKILL.md description must start with [task-loop]")
+        self.assertFalse(os.path.exists(os.path.join(self.root_dir, "skills", "hook")), "skills/hook must NOT exist as an exposed skill")
 
     def test_zcode_plugin_manifest_exists_and_valid(self):
         manifest_path = os.path.join(self.root_dir, ".zcode-plugin", "plugin.json")
