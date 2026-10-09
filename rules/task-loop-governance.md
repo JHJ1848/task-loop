@@ -53,9 +53,12 @@
 * **主会话行为硬性红线 (Explore Only & Sidebus Delegation)**: 主会话仅限执行只读探索与架构诊断 (EXPLORE)，**严禁在自身会话中直接修改业务代码 (WORK)**；所有具体编码与 BugFix 必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派单至对应的专题会话 (Topic Session) 实施，各专题会话承接任务后才可在其内部按需拉起子代理 (subagents) 落地，彻底杜绝主会话直接动手或擅自派遣临时 Worker 造成的治理失控。
 * **主会话子代理派遣权限限制 (Reviewer & Explorer Only)**: 主会话严禁派遣 Worker (落地/写代码子代理)，主会话只能派遣 `reviewer` (代码审查/走查) 和 `explorer` / `research` (架构只读探索) 子代理；
 * **无可用会话与防擅自派发铁律 (Strict Topic Governance & No Unauthorized Worker)**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
+* **派单完整背景与信息梳理下发铁律 (Full Context Dispatching Iron Law)**:
+  - **严禁简略派单与只甩步骤**: 严禁主会话在派单时仅给出孤立的改动指令与文件列表，必须彻底消除导致专题信息严重不对称、盲人摸象与走弯路的不良惯性；
+  - **强制四大法定板块**: 主会话派单消息必须且强制包含【一、完整业务背景与原始需求 (Background & Full Requirements)】(Why & Context)、【二、全局信息梳理与技术推演 (Information Breakdown & Rationale)】(链路/影响面/风险)、【三、实施范围与手术级落地细节 (Objective & Implementation)】(目标与代码级步骤)、【四、严格物理白名单与验收门禁 (Allowlist & Verification Gate)】(白名单/复杂度/验收准则/记忆回写) 四大法定板块。
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
 2. **没有则新建**: 若为全新领域，按规范调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"` 创建真实持久顶层专题会话并注册；若不知如何创建则先查阅文档或向用户询问；
-3. **Sidebus 定向发信**: 通过 sidebus 管道调用 `send_message(recipient, message)` 下发任务，严禁主会话擅自拉起临时子代理代劳。
+3. **Sidebus 定向发信**: 按照四大法定板块组织完整派单报文，通过 sidebus 管道调用 `send_message(recipient, message)` 下发任务，严禁主会话擅自拉起临时子代理代劳。
 
 ---
 

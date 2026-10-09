@@ -44,7 +44,71 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 ]
 ```
 
+### 3. 派单完整背景与信息梳理法定契约 (Full Context Dispatching Protocol)
+主会话向专题会话派单时，**严禁省略业务背景只甩修改步骤与白名单清单**！
+若仅提供孤立的改动指令（How），会导致专题会话严重缺乏全局视角（Why & Global Context），极易产生信息孤岛、断章取义、破坏隐式业务制约甚至反复走弯路。
+因此，主会话派单必须严格遵守【派单完整背景与信息梳理法定契约】，任何派单必须且强制包含以下**四大法定板块**：
+
+```json
+[
+  {
+    "section_id": "Section 1",
+    "section_name": "【一、完整业务背景与原始需求 (Background & Full Requirements)】",
+    "required_content": "核心痛点、事故反思、原始用户指令全貌还原、业务期望达成形态，解答 Why & Context。"
+  },
+  {
+    "section_id": "Section 2",
+    "section_name": "【二、全局信息梳理与技术推演 (Information Breakdown & Rationale)】",
+    "required_content": "调用链路梳理、跨模块影响面分析、架构决策与设计权衡、潜在隐式制约与技术风险推演。"
+  },
+  {
+    "section_id": "Section 3",
+    "section_name": "【三、实施范围与手术级落地细节 (Objective & Implementation)】",
+    "required_content": "精确到文件与函数级别的单一职责目标、具体实施步骤清单、代码改动溯源注释要求。"
+  },
+  {
+    "section_id": "Section 4",
+    "section_name": "【四、严格物理白名单与验收门禁 (Allowlist & Verification Gate)】",
+    "required_content": "明确任务类型 ([EXPLORE] 或 [WORK])、严格 Allowlist 物理文件白名单、复杂度定级、自测与质检验收准则 (单测/构建/UI刷新)、原有逻辑破坏防御检查与受控记忆回写要求。"
+  }
+]
+```
+
+* **标准派单示范模板 (Standard 4-Section Dispatch Template)**:
+```markdown
+[主会话派单: WORK] task-xxx: 简明任务标题
+
+【一、完整业务背景与原始需求 (Background & Full Requirements)】
+* 核心业务痛点与现状：...
+* 原始用户指令与诉求全貌还原：...
+* 期望达成的最终架构与功能形态：...
+
+【二、全局信息梳理与技术推演 (Information Breakdown & Rationale)】
+* 调用链路与跨模块影响面梳理：...
+* 架构设计决策与技术权衡理由：...
+* 潜在风险推演与隐式边界制约：...
+
+【三、实施范围与手术级落地细节 (Objective & Implementation)】
+1. 模块 A [path/to/fileA]：具体函数修改、新增逻辑与注释溯源...
+2. 模块 B [path/to/fileB]：...
+3. 联动更新 [path/to/fileC]：...
+
+【四、严格物理白名单与验收门禁 (Allowlist & Verification Gate)】
+* 任务类型: WORK (修改落地) / EXPLORE (只读探索)
+* 复杂度分级: Level 1 / Level 2 / Level 3
+* Allowlist 物理白名单:
+  - path/to/fileA
+  - path/to/fileB
+  - docs/memory/topic.md
+* 验收与门禁准则:
+  - 严格限制在 Allowlist 范围内，严禁跨模块越界修改；
+  - 专题全权负责自身语法检查与功能自测 (提供通过日志/证据)；
+  - 严禁擅自删除既有业务校验或破坏状态流转 (门禁1原有逻辑防御)；
+  - 任务完成后回写受控记忆 docs/memory/*.md 并通过 send_message 提交 100~800 字精炼交付报告。
+```
+
 ---
+
 
 ## 二、三层分级工作角色与模型思考深度自决体系 (Three-Tier Work Roles & Autonomous Model/Reasoning Hierarchy)
 
