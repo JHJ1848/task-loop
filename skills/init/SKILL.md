@@ -168,11 +168,11 @@ Codex 缺少脚本层原生 Host Adapter 时，脚本返回并记录 `PENDING_CR
 {
   "reuse": "当前 vendors.codex 中 resumable=true 且 id_kind=threadId 的物理绑定优先复用",
   "create_when": "仅 missing 或 resumable=false 的专题逐项创建；同一 module_key 不重复创建",
-  "model_precedence": ["用户显式选择", "既有 session.model_config", "role 默认"],
-  "role_defaults": {
-    "main": { "model": "gpt-6-astra", "thinking": "medium" },
-    "topic": { "model": "gpt-5.6-terra", "thinking": "xhigh" },
-    "subagent": { "model": "gpt-5.6-luna", "thinking": "max" }
+  "model_precedence": ["用户显式选择", "既有 session.model_config", "三层角色定位驱动 (Agent 自决)"],
+  "role_model_philosophy": {
+    "main": { "model_nature": "大上下文、高统筹规划与强决策推理模型", "thinking_depth": "由 Agent 结合决策复杂度自决 (Autonomous Determination)" },
+    "topic": { "model_nature": "高严密、强逻辑与代码生成优异的主力模型", "thinking_depth": "充沛，由 Agent 结合工程复杂度自决" },
+    "subagent": { "model_nature": "高性价比、轻量敏捷、高吞吐模型", "thinking_depth": "精炼，由 Agent 结合子任务目标自决" }
   },
   "question_provider": "QuestionProvider 是既有契约支柱，不新增运行时",
   "execution_context": {
@@ -262,6 +262,5 @@ node scripts/query_task_loop_state.js migrate --vendor zcode
 ## 六、受控记忆与关联参考
 * **会话控制专题技能**: `skills/session-control/SKILL.md`
 * **新专题会话开辟技能**: `skills/new-session/SKILL.md`
-* **钩子专题技能**: `skills/hook/SKILL.md`
 * **任务总控技能**: `skills/task-loop/SKILL.md`
 * **受控记忆主索引**: `docs/MEMORY.md`

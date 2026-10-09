@@ -1,10 +1,13 @@
 'use strict';
 
-// Codex-only role defaults. Existing per-session values always win.
+// Codex 3-tier role defaults. Model selection is deferred to Agent or host environment default (model: null).
+// Tier 1: Main (orchestrator) - broad context, global decision & planning, adaptive reasoning
+// Tier 2: Topic (developer) - code rigor, deep development, debugging & test verification
+// Tier 3: Subagent (fast_worker) - targeted subtask, lightweight & high throughput, concise reasoning
 const CODEX_MODEL_DEFAULTS = Object.freeze({
-  main: Object.freeze({ model: 'gpt-6-astra', reasoning_effort: 'medium' }),
-  topic: Object.freeze({ model: 'gpt-5.6-terra', reasoning_effort: 'xhigh' }),
-  subagent: Object.freeze({ model: 'gpt-5.6-luna', reasoning_effort: 'max' })
+  main: Object.freeze({ tier: 'orchestrator', model: null, reasoning_effort: 'medium' }),
+  topic: Object.freeze({ tier: 'developer', model: null, reasoning_effort: 'xhigh' }),
+  subagent: Object.freeze({ tier: 'fast_worker', model: null, reasoning_effort: 'low' })
 });
 const CODEX_ENVIRONMENT_TYPES = Object.freeze(['worktree', 'local']);
 
@@ -24,16 +27,17 @@ function roleForSession(session = {}, fallback = 'topic') {
 function configuredModel(record) {
   if (!record || typeof record !== 'object') return null;
   if (record.model_config && typeof record.model_config === 'object' &&
-      (record.model_config.model || record.model_config.reasoning_effort || record.model_config.thinking)) {
+      (record.model_config.model || record.model_config.reasoning_effort || record.model_config.thinking || record.model_config.tier)) {
     return {
       ...record.model_config,
       reasoning_effort: record.model_config.reasoning_effort || record.model_config.thinking
     };
   }
-  if (record.model || record.reasoning_effort || record.thinking) {
+  if (record.model || record.reasoning_effort || record.thinking || record.tier) {
     const result = { source: 'existing' };
     if (record.model) result.model = record.model;
     if (record.reasoning_effort || record.thinking) result.reasoning_effort = record.reasoning_effort || record.thinking;
+    if (record.tier) result.tier = record.tier;
     return result;
   }
   return null;
@@ -64,8 +68,9 @@ function resolveModelConfig(request = {}, role = 'topic', session = null) {
   const requested = configuredModel(request) || {};
   const result = { ...defaults };
   for (const candidate of [existing, requested]) {
-    if (candidate.model) result.model = candidate.model;
-    if (candidate.reasoning_effort) result.reasoning_effort = candidate.reasoning_effort;
+    if (candidate.model !== undefined && candidate.model !== null) result.model = candidate.model;
+    if (candidate.reasoning_effort !== undefined && candidate.reasoning_effort !== null) result.reasoning_effort = candidate.reasoning_effort;
+    if (candidate.tier !== undefined && candidate.tier !== null) result.tier = candidate.tier;
   }
   return { ...result, role: normalizedRole };
 }
@@ -94,8 +99,8 @@ function buildCreateThreadRequest({ projectId, isGitRepository, environment, tit
   return {
     prompt,
     title,
-    thinking: thinking || resolved.reasoning_effort,
-    model: model || resolved.model,
+    thinking: thinking || resolved.reasoning_effort || null,
+    model: model || resolved.model || null,
     target
   };
 }

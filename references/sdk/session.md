@@ -115,9 +115,9 @@ Codex `create_thread` 属于 Desktop 宿主工具，不由本仓库脚本层伪�
     "codex": {
       "main_thread_id": "thr_main_codex_001",
       "model_policy": {
-        "main": { "model": "gpt-6-astra", "effort": "medium" },
-        "topic": { "model": "gpt-5.6-terra", "effort": "xhigh" },
-        "subagent": { "model": "gpt-5.6-luna", "effort": "max" }
+        "main": { "tier": "orchestrator", "model": null, "effort": "medium" },
+        "topic": { "tier": "developer", "model": null, "effort": "xhigh" },
+        "subagent": { "tier": "fast_worker", "model": null, "effort": "low" }
       },
       "modules": {}
     },
@@ -232,11 +232,11 @@ QuestionProvider 是现有契约支柱，负责需要用户选择或确认的交
     "role model/reasoning",
     "write permission/lifecycle"
   ],
-  "codex_model_precedence": ["用户显式选择", "既有 session.model_config", "role 默认"],
+  "codex_model_precedence": ["用户显式选择", "既有 session.model_config", "role 默认 (null model / 宿主默认)"],
   "codex_role_defaults": {
-    "main": { "model": "gpt-6-astra", "reasoning_effort": "medium" },
-    "topic": { "model": "gpt-5.6-terra", "reasoning_effort": "xhigh" },
-    "subagent": { "model": "gpt-5.6-luna", "reasoning_effort": "max" }
+    "main": { "tier": "orchestrator", "model": null, "reasoning_effort": "medium" },
+    "topic": { "tier": "developer", "model": null, "reasoning_effort": "xhigh" },
+    "subagent": { "tier": "fast_worker", "model": null, "reasoning_effort": "low" }
   }
 }
 ```

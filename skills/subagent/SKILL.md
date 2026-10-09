@@ -11,8 +11,14 @@ description: "[task-loop] Google Antigravity native subagent orchestration and d
 
 ---
 
-## 一、专题核心职责 (Core Responsibilities)
+## 一、三层架构定位与专题职责 (Three-Tier Architecture & Core Responsibilities)
 
+本项目确立清晰的三层工作角色分工：
+* **L1 最上层 Main 会话（全局中枢）**: 信息收集、统揽全局、决策+编排筹划+批判性门禁验收，严禁直接落地修改业务代码；
+* **L2 中层 专题子会话（Topic Session）**: 长期常驻物理实体会话（IDE 侧边栏常驻），负责模块专属落地、深入排障、代码编写与本地自测，最大化大模型 KV Cache 命中率；
+* **L3 最底层 子代理（Subagent / Worker）**: 受限在极其具体、上下文少的单一子任务，作为中层专题按需临时拉起的轻量隔离沙箱，用完即毁。
+
+### 核心专题职责:
 1. **子代理原生工具集封装**:
    - `invoke_subagent`: 动态拉起单一或多个并发子代理，支持 Workspace 隔离模式（`inherit` / `branch` / `share`）与模型分级（`inherit` / `flash_lite` / `flash` / `pro`）。
    - `define_subagent`: 运行时动态定义专属 Worker / Reviewer 模板。
@@ -55,7 +61,28 @@ description: "[task-loop] Google Antigravity native subagent orchestration and d
 
 ---
 
-## 三、实战避坑指南 (Gotchas)
+## 三、L3 最底层子代理定位、任务边界与选型策略 (L3 Subagent Strategy)
+
+```json
+[
+  {
+    "dimension": "1. 严格派遣门槛 (Dispatch Gate)",
+    "rule": "严禁滥用子代理！对于不复杂的单线任务，一律由中层 Topic 专题直接闭环实施；仅在任务繁多 (并发度 >= 2 并行加速) 或存在 Workspace='branch' 物理强隔离沙箱时，才由中层专题按需拉起子代理，彻底杜绝单子代理串行让父会话干等。"
+  },
+  {
+    "dimension": "2. 极窄任务边界 (Narrow Task Boundary)",
+    "rule": "子代理仅承担极窄物理白名单 (Allowlist)、上下文依赖少、单一明确的具体子任务。严禁将整个系统庞大历史或长篇背景灌入子代理，保持轻量纯净与极速收敛。"
+  },
+  {
+    "dimension": "3. 高性价比敏捷模型自决 (Cost-Effective Model Selection)",
+    "rule": "废除任何硬编码具体模型版本！在模型配置上，强制由 Agent 自主选用高性价比、轻量敏捷、高吞吐的模型 (如 Flash / Lite / Mini 级别)，思考深度精炼，兼顾吞吐速度与成本控制；仅在架构复杂审计与全局交叉校验时才按需选用深度推理模型。"
+  }
+]
+```
+
+---
+
+## 四、实战避坑指南 (Gotchas)
 
 ```json
 [
@@ -78,14 +105,20 @@ description: "[task-loop] Google Antigravity native subagent orchestration and d
     "gotcha_id": "Gotcha 10",
     "title": "严禁单子代理干等与并发度门槛",
     "rule": "严禁派发单个 subagent 让父会话干等；必须满足并发度 >= 2（多分支并发加速）或存在 Workspace='branch' 物理强隔离沙箱需求时才允许派发子代理，单线任务一律由专题自身直接执行。"
+  },
+  {
+    "gotcha_id": "Gotcha 11",
+    "title": "L3 子代理高性价比选型与极窄上下文",
+    "rule": "L3 子代理必须选用高性价比敏捷模型 (如 Flash/Lite 等)，严禁塞入冗长非必要历史；严禁为简单单一子任务误用昂贵高延迟大模型。"
   }
 ]
 ```
 
 ---
 
-## 四、关联文档与受控记忆 (References)
+## 五、关联文档与受控记忆 (References)
 * **专题受控记忆**: [`docs/memory/subagent.md`](../../docs/memory/subagent.md)
 * **AGY SDK 原生规范**: [`references/sdk/agy.md`](../../references/sdk/agy.md)
 * **官方规范归档**: [`references/sdk/antigravity-official-docs.md`](../../references/sdk/antigravity-official-docs.md)
 * **受控记忆主索引**: [`docs/MEMORY.md`](../../docs/MEMORY.md)
+* **默认兜底工作流**: [`references/default-fallback-workflow.md`](../../references/default-fallback-workflow.md)

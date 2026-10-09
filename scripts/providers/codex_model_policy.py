@@ -1,9 +1,13 @@
-"""Codex-only model defaults and sticky per-session resolution."""
+"""Codex 3-tier model defaults and sticky per-session resolution."""
 
+# Codex 3-tier role defaults. Model selection is deferred to Agent or host environment default (model: None).
+# Tier 1: Main (orchestrator) - broad context, global decision & planning, adaptive reasoning
+# Tier 2: Topic (developer) - code rigor, deep development, debugging & test verification
+# Tier 3: Subagent (fast_worker) - targeted subtask, lightweight & high throughput, concise reasoning
 CODEX_MODEL_DEFAULTS = {
-    "main": {"model": "gpt-6-astra", "reasoning_effort": "medium"},
-    "topic": {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
-    "subagent": {"model": "gpt-5.6-luna", "reasoning_effort": "max"},
+    "main": {"tier": "orchestrator", "model": None, "reasoning_effort": "medium"},
+    "topic": {"tier": "developer", "model": None, "reasoning_effort": "xhigh"},
+    "subagent": {"tier": "fast_worker", "model": None, "reasoning_effort": "low"},
 }
 CODEX_ENVIRONMENT_TYPES = ("worktree", "local")
 
@@ -30,16 +34,18 @@ def configured_model(record):
     if not isinstance(record, dict):
         return None
     nested = record.get("model_config")
-    if isinstance(nested, dict) and (nested.get("model") or nested.get("reasoning_effort") or nested.get("thinking")):
+    if isinstance(nested, dict) and (nested.get("model") or nested.get("reasoning_effort") or nested.get("thinking") or nested.get("tier")):
         result = dict(nested)
         result["reasoning_effort"] = nested.get("reasoning_effort") or nested.get("thinking")
         return result
-    if record.get("model") or record.get("reasoning_effort") or record.get("thinking"):
+    if record.get("model") or record.get("reasoning_effort") or record.get("thinking") or record.get("tier"):
         result = {"source": "existing"}
         if record.get("model"):
             result["model"] = record["model"]
         if record.get("reasoning_effort") or record.get("thinking"):
             result["reasoning_effort"] = record.get("reasoning_effort") or record.get("thinking")
+        if record.get("tier"):
+            result["tier"] = record["tier"]
         return result
     return None
 
@@ -65,10 +71,12 @@ def resolve_model_config(request=None, role="topic", session=None):
     normalized_role = normalize_role(role or role_for_session(session or {}))
     result = dict(CODEX_MODEL_DEFAULTS[normalized_role])
     for candidate in (configured_model(session) or {}, configured_model(request) or {}):
-        if candidate.get("model"):
+        if candidate.get("model") is not None:
             result["model"] = candidate["model"]
-        if candidate.get("reasoning_effort"):
+        if candidate.get("reasoning_effort") is not None:
             result["reasoning_effort"] = candidate["reasoning_effort"]
+        if candidate.get("tier") is not None:
+            result["tier"] = candidate["tier"]
     result["role"] = normalized_role
     return result
 
@@ -113,7 +121,7 @@ def build_create_thread_request(
     return {
         "prompt": prompt,
         "title": title,
-        "thinking": thinking or resolved["reasoning_effort"],
-        "model": model or resolved["model"],
+        "thinking": thinking or resolved.get("reasoning_effort") or None,
+        "model": model or resolved.get("model") or None,
         "target": target,
     }

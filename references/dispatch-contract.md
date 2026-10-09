@@ -23,7 +23,39 @@
 
 ---
 
-## 二、任务类型明确划分：只读 (Explore) vs 修改 (Work) (JSON 规范)
+## 二、三层分级工作角色与模型思考深度自决体系 (Three-Tier Work Roles & Autonomous Model/Reasoning Hierarchy)
+
+为彻底杜绝大模型硬编码版本陈旧脱节问题，本工作流确立【三层分级工作角色，模型选型与思考深度由 Agent 结合任务属性自决】的核心治理机制：
+
+```json
+[
+  {
+    "layer": "L1 (Top Layer)",
+    "role": "Main Session (全局中枢 / 治理中枢)",
+    "lifecycle_nature": "常驻顶层根会话 (nestingDepth: 0)",
+    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收。严禁自身编写业务代码 (WORK) 或派遣 Worker 子代理。",
+    "model_selection_policy": "选用大上下文、高统筹规划与强决策推理模型；思考深度由 Agent 结合决策复杂度自决 (Autonomous Determination)，杜绝硬编码型号。"
+  },
+  {
+    "layer": "L2 (Middle Layer)",
+    "role": "Topic Session (专题物理实体会话 / 领域负责人)",
+    "lifecycle_nature": "长期常驻物理实体会话 (Permanent Physical Session)，与 docs/memory/*.md 1:1 强绑定",
+    "core_responsibilities": "模块专属落地，负责代码编写、深入排障、语法检查与功能自测。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
+    "model_selection_policy": "选用高严密、强逻辑与代码生成能力优异的主力模型；思考深度充沛，由 Agent 结合工程复杂度自决，杜绝硬编码型号。"
+  },
+  {
+    "layer": "L3 (Bottom Layer)",
+    "role": "Subagent / Worker (临时子代理 / 任务执行沙箱)",
+    "lifecycle_nature": "由 L2 专题会话承接任务后按需拉起，单任务完成即时销毁 (Ephemeral Sandbox)",
+    "core_responsibilities": "受限极窄物理白名单、上下文依赖少的单一子任务（如并发检索、隔离验证、辅助生成）。任务繁多或强隔离时按需派遣；简单任务由中层自身直接闭环。",
+    "model_selection_policy": "强制选用高性价比、轻量敏捷、高吞吐模型；思考深度精炼，兼顾执行速度与资源效率，由 Agent 结合子任务目标自决，杜绝硬编码型号。"
+  }
+]
+```
+
+---
+
+## 三、任务类型明确划分：只读 (Explore) vs 修改 (Work) (JSON 规范)
 
 主会话在下发任务包或跨会话发信时，**必须在指令头部与 Payload 中显式声明任务类型 (`task_type`)**：
 
@@ -52,7 +84,7 @@
 
 ---
 
-## 三、复杂度裁决与派发规则（1 / 2 / 3 做减法 JSON 规范）
+## 四、复杂度裁决与派发规则（1 / 2 / 3 做减法 JSON 规范）
 
 ```json
 [
@@ -82,7 +114,7 @@
 
 ---
 
-## 四、质检与人机混合验证模型（Hybrid & Dual-Engine Verification）
+## 五、质检与人机混合验证模型（Hybrid & Dual-Engine Verification）
 
 ```mermaid
 flowchart TD
@@ -214,7 +246,7 @@ flowchart TD
 
 ---
 
-## 五、专题交付物规范与执行端标准执行流 (Topic Parity & Deliverable Spec)
+## 六、专题交付物规范与执行端标准执行流 (Topic Parity & Deliverable Spec)
 
 专题会话及其内部子代理（Topic Session & Subagents）在完成任务后，**必须取消机械僵化的 Summary+Changes+Evidence 三段式模板，统一采用 100~800 字（非强制字数限制）简洁精炼的话语向主会话汇报交付物**，直奔主题，避免长上下文导致用户注意力涣散：
 
@@ -232,7 +264,7 @@ flowchart TD
 
 ---
 
-## 六、动态白名单申请审批与跨专题冲突控制协议 (Allowlist Expansion & Conflict Control)
+## 七、动态白名单申请审批与跨专题冲突控制协议 (Allowlist Expansion & Conflict Control)
 
 当专题会话在实施过程中发现需要修改未包含在初始派单白名单中的文件时，必须严格遵守以下动态审批与跨专题冲突控制闭环：
 
@@ -297,7 +329,7 @@ flowchart TD
 
 ---
 
-## 七、主会话批判性门禁验收与主动驳回重修协议 (Gate Verdict & Loop Rejection Protocol)
+## 八、主会话批判性门禁验收与主动驳回重修协议 (Gate Verdict & Loop Rejection Protocol)
 
 主会话收到专题交付汇报后，必须严格对照四大绝对门禁进行独立推演与质检。发现任何问题必须立即下发 `DELIVERABLE_REJECTED` 驳回重修指令包：
 
@@ -338,7 +370,7 @@ flowchart TD
 
 ---
 
-## 八、双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
+## 九、双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
 
 为消除专题会话由于后台休眠未触发、陷入死循环或理解偏离目标导致的派单失控，主会话派单后必须严格执行【30s 响应监测器门禁循环与 120s 巡检任务准入机制】（彻底废除固定 30s->120s 无脑递进的旧流水线，严格以真实线程工作态为准）：
 
@@ -373,7 +405,7 @@ flowchart TD
 
 ---
 
-## 九、专题空间防污染与物理路径权责对齐机制 (Topic Space Anti-Pollution & Path Ownership Matrix)
+## 十、专题空间防污染与物理路径权责对齐机制 (Topic Space Anti-Pollution & Path Ownership Matrix)
 
 为彻底解决主会话因路径依赖偏向于在同一个活跃会话持续派单、导致专题空间被无关文件修改严重污染、上下文和 KV Cache 噪音膨胀、法定专题被边缘化的问题，主会话派单前必须严格执行物理路径权责对齐与正交路由：
 
@@ -422,7 +454,7 @@ flowchart TD
 
 ---
 
-## 十、透明思考与决策推演卡模板（Decision Matrix）
+## 十一、透明思考与决策推演卡模板（Decision Matrix）
 
 主会话在每次执行需求分析、派发裁决或质检时，**必须在 Thinking 及最终回复中输出决策推演卡**：
 
@@ -441,8 +473,9 @@ flowchart TD
 
 ---
 
-## 十一、未来演进预留（TODO）
+## 十二、未来演进预留（TODO）
 
 * **TODO：调用链路追溯与项目级轻量持久化（Traceability Journal）**：
   - *规划方向*：未来可在 `.agents/task-loop/trace-journal.jsonl` 中记录 Main 到各 Topic 会话的调用链、派发快照与干预历史，便于排查复杂长周期任务的链路决策。
   - *当前策略*：出于轻量化与运行性能考量，当前版本仅维护核心 `run-journal.jsonl`，待后续按需平滑拓展。
+

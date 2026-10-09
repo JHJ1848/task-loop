@@ -230,11 +230,11 @@ Codex 主会话创建专题时按以下顺序执行，且一次只处理一个 `
     "name": "Execution/Capability/Authority Context",
     "fields": ["host capability", "workspace environment", "role model/reasoning", "write permission/lifecycle"]
   },
-  "codex_model_precedence": ["用户显式选择", "既有 session.model_config", "role 默认"],
-  "codex_role_defaults": {
-    "main": { "model": "gpt-6-astra", "thinking": "medium" },
-    "topic": { "model": "gpt-5.6-terra", "thinking": "xhigh" },
-    "subagent": { "model": "gpt-5.6-luna", "thinking": "max" }
+  "model_selection_precedence": ["用户显式选择", "既有 session.model_config", "三层角色定位驱动 (Agent 自决)"],
+  "role_model_philosophy": {
+    "main": { "model_nature": "大上下文、高统筹规划与强决策推理模型", "thinking_depth": "由 Agent 结合决策复杂度自决 (Autonomous Determination)" },
+    "topic": { "model_nature": "高严密、强逻辑与代码生成优异的主力模型", "thinking_depth": "充沛，由 Agent 结合工程复杂度自决" },
+    "subagent": { "model_nature": "高性价比、轻量敏捷、高吞吐模型", "thinking_depth": "精炼，由 Agent 结合子任务目标自决" }
   }
 }
 ```
@@ -243,7 +243,6 @@ Codex 主会话创建专题时按以下顺序执行，且一次只处理一个 `
 
 ## 六、受控记忆与关联参考
 * **初始化总览技能**: `skills/init/SKILL.md`
-* **钩子专题技能**: `skills/hook/SKILL.md`
 * **会话控制专题技能**: `skills/session-control/SKILL.md`
 * **子代理专题技能**: `skills/subagent/SKILL.md`
 * **任务总控技能**: `skills/task-loop/SKILL.md`

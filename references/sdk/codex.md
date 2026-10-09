@@ -232,40 +232,48 @@ python scripts/find_project_sessions.py --root . --vendor Codex --current
 
 Desktop 工具集合随宿主版本、权限和当前线程环境变化；未暴露的工具不得通过脚本伪造。脚本返回 `PENDING_CREATION` 时必须保留 `creation_request`，而不是把等待中的请求当作已创建。
 
-### 4.3 Codex 专属创建期模型策略
+### 4.3 Codex 专属创建期模型策略与三层角色抽象
 
 该策略只属于 Codex Provider 和 `vendors.codex` 状态分区。AGY、ZCode、Claude 的模型选择与 Hook 行为不读取本节，也不会被本节默认值改写。
+为彻底解耦具体模型版本硬编码，避免模型快速迭代带来的版本过时风险，Codex Provider 确立三层角色定位抽象，模型选择权（`model: null`）完全交由 AI Agent 自身（或宿主当前缺省）决定，仅提供建议的思考深度层次：
+
+1. **最上层 Main 会话（全局中枢 / orchestrator）**：负责收集广泛信息，统揽全局，决策 + 编排筹划 + 验收。由 Agent 自决选择具备大上下文与综合决策能力的主力模型，思考深度自适应（`medium`）；
+2. **中层 专题子会话（Topic Session / developer）**：模块专属落地，负责具体代码改动、深入开发排障与自测。由 Agent 自决选择代码严密性模型，思考深度充沛（`xhigh`）；
+3. **最底层 子代理（Subagent / fast_worker）**：任务量多时由中层按需派遣（简单任务中层直接闭环），局限在单一具体子任务，无需多余上下文。由 Agent 自决选择轻量、高性价比、高吞吐的模型，思考深度精炼（`low`）。
 
 ```json
 {
   "scope": "codex-only",
   "creation_defaults": {
-    "main": {"model": "gpt-6-astra", "reasoning_effort": "medium"},
-    "topic": {"model": "gpt-5.6-terra", "reasoning_effort": "xhigh"},
-    "subagent": {"model": "gpt-5.6-luna", "reasoning_effort": "max"}
+    "main": { "tier": "orchestrator", "model": null, "reasoning_effort": "medium" },
+    "topic": { "tier": "developer", "model": null, "reasoning_effort": "xhigh" },
+    "subagent": { "tier": "fast_worker", "model": null, "reasoning_effort": "low" }
   },
   "precedence": [
     "user explicit selection",
     "existing session model_config",
-    "role creation default"
+    "role creation default (null model / host default)"
   ],
-  "after_creation": "user-controlled"
+  "after_creation": "agent-or-user-controlled"
 }
 ```
 
-实现入口为 `scripts/providers/codex_model_policy.js/.py`。`init` 和 `new_topic_session` 只在 Codex 创建/首次绑定时写入 `model_config`；已有用户配置保持不变。Provider 的后续 `submit` 不自动重新注入默认模型，因此用户在 Desktop `/model` 或 CLI 中的后续切换不会被 task-loop 覆盖。
+实现入口为 `scripts/providers/codex_model_policy.js/.py`。`init` 和 `new_topic_session` 只在 Codex 创建/首次绑定时写入 `model_config`；已有用户配置保持不变。若未显式指定 `model`，不写入硬编码具体版本字符串（默认为 `null`），交由宿主采用当前环境默认或由 Agent 自行选配；Provider 的后续 `submit` 不自动重新注入默认模型，因此用户在 Desktop `/model` 或 CLI 中的后续切换不会被 task-loop 覆盖。
 
-CLI 创建期/续接期可使用 `--model <model>` 与 `--config model_reasoning_effort="<effort>"`。当前 `create_thread` 请求模板输出 `model` 与 `thinking`，其中 `thinking` 是宿主字段候选值；本项目已验证 CLI 参数，尚未把 Desktop 工具 schema 中的思考字段声明为稳定 API。若宿主拒绝该字段，应保留 `model` 并由用户在新任务中选择思考档位，不得修改全局 `~/.codex/config.toml`。
+CLI 创建期/续接期可使用 `--model <model>` 与 `--config model_reasoning_effort="<effort>"`。当前 `create_thread` 请求模板输出 `model` 与 `thinking`，其中未指定 model 时为 null/省略：
 
 ```text
-[创建期]
-create_thread({ prompt, title, target, model: "gpt-5.6-terra", thinking: "xhigh" })
+[创建期 - 缺省由 Agent/宿主自决]
+create_thread({ prompt, title, target, model: null, thinking: "xhigh" })
+
+[创建期 - 显式指定具体模型]
+create_thread({ prompt, title, target, model: "<agent-chosen-model>", thinking: "xhigh" })
 
 [CLI 等价模板]
-codex queue --thread <id> --message "<text>" --model gpt-5.6-terra --config 'model_reasoning_effort="xhigh"'
+codex queue --thread <id> --message "<text>" --config 'model_reasoning_effort="xhigh"'
 
 [创建后]
-由用户通过 Desktop /model 或对应 CLI 参数自行切换；task-loop 不再自动改写。
+由 Agent 或用户通过 Desktop /model 或对应 CLI 参数自行切换；task-loop 不再自动改写。
 ```
 
 ### 4.2 可复制指令模板

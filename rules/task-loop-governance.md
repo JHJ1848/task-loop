@@ -15,7 +15,39 @@
 
 ---
 
-## 2. 主会话编排与三步派单铁律 (Main Session 3-Step Law)
+## 2. 三层分级工作角色与模型选型自决体系 (Three-Tier Work Roles & Autonomous Model/Reasoning Hierarchy)
+
+为彻底杜绝大模型硬编码版本陈旧脱节问题，本工作流确立【三层分级工作角色，模型选型与思考深度由 Agent 结合任务属性自决】的核心治理机制：
+
+```json
+[
+  {
+    "layer": "L1 (Top Layer)",
+    "role": "Main Session (全局中枢 / 治理中枢)",
+    "lifecycle_nature": "常驻顶层根会话 (nestingDepth: 0)",
+    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收。严禁自身编写业务代码 (WORK) 或派遣 Worker 子代理。",
+    "model_selection_policy": "选用大上下文、高统筹规划与强决策推理模型；思考深度由 Agent 结合决策复杂度自决 (Autonomous Determination)，杜绝硬编码型号。"
+  },
+  {
+    "layer": "L2 (Middle Layer)",
+    "role": "Topic Session (专题物理实体会话 / 领域负责人)",
+    "lifecycle_nature": "长期常驻物理实体会话 (Permanent Physical Session)，与 docs/memory/*.md 1:1 强绑定",
+    "core_responsibilities": "模块专属落地，负责代码编写、深入排障、语法检查与功能自测。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
+    "model_selection_policy": "选用高严密、强逻辑与代码生成能力优异的主力模型；思考深度充沛，由 Agent 结合工程复杂度自决，杜绝硬编码型号。"
+  },
+  {
+    "layer": "L3 (Bottom Layer)",
+    "role": "Subagent / Worker (临时子代理 / 任务执行沙箱)",
+    "lifecycle_nature": "由 L2 专题会话承接任务后按需拉起，单任务完成即时销毁 (Ephemeral Sandbox)",
+    "core_responsibilities": "受限极窄物理白名单、上下文依赖少的单一子任务（如并发检索、隔离验证、辅助生成）。任务繁多或强隔离时按需派遣；简单任务由中层自身直接闭环。",
+    "model_selection_policy": "强制选用高性价比、轻量敏捷、高吞吐模型；思考深度精炼，兼顾执行速度与资源效率，由 Agent 结合子任务目标自决，杜绝硬编码型号。"
+  }
+]
+```
+
+---
+
+## 3. 主会话编排与三步派单铁律 (Main Session 3-Step Law)
 
 主会话在接收到用户需求后，专注于需求初加工、任务编排、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
 * **主会话行为硬性红线 (Explore Only & Sidebus Delegation)**: 主会话仅限执行只读探索与架构诊断 (EXPLORE)，**严禁在自身会话中直接修改业务代码 (WORK)**；所有具体编码与 BugFix 必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派单至对应的专题会话 (Topic Session) 实施，各专题会话承接任务后才可在其内部按需拉起子代理 (subagents) 落地，彻底杜绝主会话直接动手或擅自派遣临时 Worker 造成的治理失控。
@@ -27,7 +59,7 @@
 
 ---
 
-## 3. 专题会话与执行端一致性执行流 (Topic Session & Worker Workflow Parity)
+## 4. 专题会话与执行端一致性执行流 (Topic Session & Worker Workflow Parity)
 
 专题会话及其内部子代理（Topic Session & Subagents）执行生命周期 100% 保持前后一致：
 ```json
@@ -57,7 +89,7 @@
 
 ---
 
-## 4. 白名单双向闭环与反向审批机制 (Allowlist Bi-Directional Governance)
+## 5. 白名单双向闭环与反向审批机制 (Allowlist Bi-Directional Governance)
 
 * **PreToolUse 安全拦截与反向审批**: 当专题会话或执行端尝试修改未在任务白名单 (`allowlist`) 内的文件时，PreToolUse 钩子将硬性拦截该写操作，并在拦截提示中直接提供反向审批指令：
   `send_message('<main_thread_id>', '【请求主中枢扩展白名单/审批任务】目标文件: <path>, 变更原因: <理由>')`
@@ -65,7 +97,7 @@
 
 ---
 
-## 5. 主会话批判性门禁验收与双轮驱动质检铁律 (Dual-Engine Verification & Critical Governance)
+## 6. 主会话批判性门禁验收与双轮驱动质检铁律 (Dual-Engine Verification & Critical Governance)
 
 * **破除形式主义单测与编译强假设 (Anti-Dogmatic Verification)**:
   - 明确 `task-loop` 作为通用插件面向任意非 Web 项目、纯脚本、数据/ETL 或嵌入式项目。在需求频繁变动或无测试框架的项目中，**严禁机械强求编写测试类或强行要求自动化单测 Exit Code 0**，杜绝形式主义空单测反模式 (GOTCHA-003)；
@@ -94,7 +126,7 @@
 
 ---
 
-## 6. 主会话派单双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
+## 7. 主会话派单双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
 
 为消除后台专题会话休眠未启动或未响应导致的派单失控与死等，主会话派单后**严禁采用无条件直接进入 120s 的固定流水线**，必须严格执行【30s 响应监测器门禁循环与 120s 巡检任务准入闭环】：
 
@@ -120,7 +152,7 @@
 
 ---
 
-## 7. 强制原生问答交互与杜绝纯文本提问红线 (Mandatory Native Question & Anti-Plaintext Prompt Law)
+## 8. 强制原生问答交互与杜绝纯文本提问红线 (Mandatory Native Question & Anti-Plaintext Prompt Law)
 
 为了消除智能体以纯文本长句提问并强迫用户手动打字确认的不良交互惯性，全量智能体（主会话、专题会话与即时子代理）在关键决策门禁处**强制执行原生问答与选项交互**：
 

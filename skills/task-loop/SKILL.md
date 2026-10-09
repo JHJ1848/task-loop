@@ -46,7 +46,39 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 二、任务类型划分 (Task Type: Explore vs Work)
+## 二、三层分级工作角色与模型思考深度自决体系 (Three-Tier Work Roles & Autonomous Model/Reasoning Hierarchy)
+
+为彻底杜绝大模型硬编码版本陈旧脱节问题，本工作流确立【三层分级工作角色，模型选型与思考深度由 Agent 结合任务属性自决】的核心治理机制：
+
+```json
+[
+  {
+    "layer": "L1 (Top Layer)",
+    "role": "Main Session (全局中枢 / 治理中枢)",
+    "lifecycle_nature": "常驻顶层根会话 (nestingDepth: 0)",
+    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收。严禁自身编写业务代码 (WORK) 或派遣 Worker 子代理。",
+    "model_selection_policy": "选用大上下文、高统筹规划与强决策推理模型；思考深度由 Agent 结合决策复杂度自决 (Autonomous Determination)，杜绝硬编码型号。"
+  },
+  {
+    "layer": "L2 (Middle Layer)",
+    "role": "Topic Session (专题物理实体会话 / 领域负责人)",
+    "lifecycle_nature": "长期常驻物理实体会话 (Permanent Physical Session)，与 docs/memory/*.md 1:1 强绑定",
+    "core_responsibilities": "模块专属落地，负责代码编写、深入排障、语法检查与功能自测。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
+    "model_selection_policy": "选用高严密、强逻辑与代码生成能力优异的主力模型；思考深度充沛，由 Agent 结合工程复杂度自决，杜绝硬编码型号。"
+  },
+  {
+    "layer": "L3 (Bottom Layer)",
+    "role": "Subagent / Worker (临时子代理 / 任务执行沙箱)",
+    "lifecycle_nature": "由 L2 专题会话承接任务后按需拉起，单任务完成即时销毁 (Ephemeral Sandbox)",
+    "core_responsibilities": "受限极窄物理白名单、上下文依赖少的单一子任务（如并发检索、隔离验证、辅助生成）。任务繁多或强隔离时按需派遣；简单任务由中层自身直接闭环。",
+    "model_selection_policy": "强制选用高性价比、轻量敏捷、高吞吐模型；思考深度精炼，兼顾执行速度与资源效率，由 Agent 结合子任务目标自决，杜绝硬编码型号。"
+  }
+]
+```
+
+---
+
+## 三、任务类型划分 (Task Type: Explore vs Work)
 
 ```json
 [
@@ -69,7 +101,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 三、1 / 2 / 3 复杂度做减法规则 (Complexity Tiering)
+## 四、1 / 2 / 3 复杂度做减法规则 (Complexity Tiering)
 
 ```json
 [
@@ -96,7 +128,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 四、双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
+## 五、双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
 
 为消除专题会话休眠未响应或偏离目标的失控，主会话派单后执行【30s 响应监测器门禁循环 + 120s 巡检任务准入】：
 
@@ -115,7 +147,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 五、四大绝对门禁与双轮驱动质检体系 (Dual-Engine Verification & Four Gates)
+## 六、四大绝对门禁与双轮驱动质检体系 (Dual-Engine Verification & Four Gates)
 
 ### 1. 破除形式主义单测与编译强假设
 * **本质定位**: `task-loop` 是面向任意非 Web 项目、纯脚本、数据/ETL 或嵌入式项目的通用插件。严禁机械强求编写测试类或强行要求自动化单测 Exit Code 0 (GOTCHA-003)；
@@ -160,8 +192,34 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 六、关联文档与受控记忆 (References)
+## 七、插件内置生命周期钩子体系 (Plugin Lifecycle Hooks)
+
+本插件内置了轻量跨厂商统一的生命周期 Hook 拦截与上下文注入体系（由 `hook` 专题统一维护开发；**本插件不设独立的 `hook` skill，安装后由宿主环境底层自动加载生效**）：
+
+```json
+[
+  {
+    "hook_name": "PreInvocation",
+    "script": "scripts/hooks/inject_session_context.js (.py)",
+    "lifecycle_point": "每轮模型推理前 (Pre-Invocation / SessionStart)",
+    "core_function": "上下文动态注入与集群态势感知。基于 .agents/task-loop/ 状态机向当前会话注入所属专题职责、治理硬约束、运行状态 (WORKING/IDLE/REVISING) 及当前任务白名单；针对主会话注入全量专题集群态势。"
+  },
+  {
+    "hook_name": "PreToolUse",
+    "script": "scripts/hooks/enforce_allowlist.js (.py)",
+    "lifecycle_point": "工具执行拦截门禁 (Pre-Tool-Use)",
+    "core_function": "物理白名单安全门禁 (Allowlist Guard)。物理拦截专题会话越界写文件行为，防目录前缀碰撞与符号链接逃逸；硬性拦截主会话直接写业务代码，保障派单治理闭环。"
+  }
+]
+```
+
+* **专题与 Skill 解耦机制**: `hook` 专题与实体会话及 `docs/memory/hook.md` 严格 1:1 对齐，但专注于底层生命周期安全与上下文注入钩子的研发与单测维护，不提供面向用户的冗余 Skill；其系统能力直接由本主 Skill 统一概括说明。
+
+---
+
+## 八、关联文档与受控记忆 (References)
 * **深度派发与质检契约**: [`references/dispatch-contract.md`](../../references/dispatch-contract.md)
 * **治理总规范**: [`AGENTS.md`](../../AGENTS.md)
 * **受控记忆主索引**: [`docs/MEMORY.md`](../../docs/MEMORY.md)
+
 
