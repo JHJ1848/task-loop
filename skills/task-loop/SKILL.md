@@ -107,7 +107,29 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
   - 任务完成后回写受控记忆 docs/memory/*.md 并通过 send_message 提交 100~800 字精炼交付报告。
 ```
 
+### 4. 正交多专题异步并行派单与反馈验收队列机制 (Orthogonal Async Dispatch & Verification Queue)
+
+主会话在面对多个跨模块改动时，严禁无视解耦特性机械串行死等，必须按以下标准流转：
+
+```json
+[
+  {
+    "stage": "1. 正交三要素判定 (Orthogonality Check)",
+    "rule": "1) 专题隔离 (TargetSession 互异)；2) 白名单正交 (Allowlist 零交集)；3) 逻辑解耦 (无前后依赖)。任一不满足强制降级为串行派发。"
+  },
+  {
+    "stage": "2. 异步并行派发 (Async Dispatch)",
+    "rule": "在同一编排周期内向目标专题依次发信 (并发度上限 <= 3)，挂载全局兜底定时器 schedule(TimerCondition='any')，依托 Reactive Wakeup 响应式唤醒。"
+  },
+  {
+    "stage": "3. 反馈验收队列 (FIFO Verification Queue)",
+    "rule": "各专题交付推入反馈验收队列，主会话逐个出队独立执行双轮驱动质检与四大绝对门禁审查；单个任务不合规下发 DELIVERABLE_REJECTED 独立驳回，不干扰其他并行任务。"
+  }
+]
+```
+
 ---
+
 
 
 ## 二、三层分级工作角色与模型思考深度自决体系 (Three-Tier Work Roles & Autonomous Model/Reasoning Hierarchy)

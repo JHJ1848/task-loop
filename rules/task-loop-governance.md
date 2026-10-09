@@ -56,9 +56,16 @@
 * **派单完整背景与信息梳理下发铁律 (Full Context Dispatching Iron Law)**:
   - **严禁简略派单与只甩步骤**: 严禁主会话在派单时仅给出孤立的改动指令与文件列表，必须彻底消除导致专题信息严重不对称、盲人摸象与走弯路的不良惯性；
   - **强制四大法定板块**: 主会话派单消息必须且强制包含【一、完整业务背景与原始需求 (Background & Full Requirements)】(Why & Context)、【二、全局信息梳理与技术推演 (Information Breakdown & Rationale)】(链路/影响面/风险)、【三、实施范围与手术级落地细节 (Objective & Implementation)】(目标与代码级步骤)、【四、严格物理白名单与验收门禁 (Allowlist & Verification Gate)】(白名单/复杂度/验收准则/记忆回写) 四大法定板块。
+* **正交多专题异步并行派单与反馈消息队列化治理铁律 (Orthogonal Async Dispatch & Verification Queue Iron Law)**:
+  - **正交判定三要素**: 1) 专题隔离 (`TargetSession(A) !== TargetSession(B)`)，2) 白名单正交 (`Allowlist(A) ∩ Allowlist(B) == ∅`)，3) 业务依赖解耦 (`Dependency(A, B) == false`)；
+  - **最大并发度上限**: 单次编排周期内最大异步派发度严格限制 `<= 3` (保守原则)；
+  - **悲观降级串行红线**: 任何一项不满足，必须严格降级为单线程串行派发，严禁冒险并发；
+  - **反馈验收队列 (FIFO) 独立质检**: 主会话接收到各专题交付后推入反馈验收队列，逐个出队独立执行双轮驱动质检与四大绝对门禁，严禁并发混杂交叉审查；
+  - **独立驳回隔离机制**: 某个任务质检未通过直接下发 `DELIVERABLE_REJECTED` 驳回重修，其他并行任务的执行与验收完全不受影响。
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
 2. **没有则新建**: 若为全新领域，按规范调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"` 创建真实持久顶层专题会话并注册；若不知如何创建则先查阅文档或向用户询问；
 3. **Sidebus 定向发信**: 按照四大法定板块组织完整派单报文，通过 sidebus 管道调用 `send_message(recipient, message)` 下发任务，严禁主会话擅自拉起临时子代理代劳。
+
 
 ---
 

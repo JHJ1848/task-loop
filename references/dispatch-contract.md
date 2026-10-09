@@ -532,19 +532,101 @@ flowchart TD
 - **复杂度定级与理由**：Level [1/2/3]（原因：涉及模块数 X，代码改动预估 Y 行）
 - **修改物理边界 (Allowlist)**：[`path/to/file1`, `path/to/file2`]
 - **物理路径权责核验 (Routing Seam Gate)**：[已逐一比对：所有 Allowlist 文件 100% 属于目标专题法定权责，无跨界污染]
+- **并发正交性断言 (Concurrency Orthogonality)**：[单任务串行 / 多任务正交无交集 (已通过专题隔离、白名单正交、逻辑解耦 3 准则)]
 - **路由目标会话**：[Target Session ID / Module Key]
 - **跨专题冲突校验**：[无冲突 / 已隔离锁定目标文件]
 - **进度监测与巡检机制**：[已挂载 30s 进度监测器循环 (待真激活准入 120s 巡检任务)]
+- **反馈验收队列状态 (Verification Queue)**：[空闲 / N 个任务等待出队质检]
 - **批判性门禁独立质检证据**：[单测 Exit Code 0 / Diff 白名单审查结果 / Reviewer 审查结果]
 - **验证与质检策略**：[自动化测试命令 + 人机混合验证步骤]
 ```
 
 ---
 
-## 十三、未来演进预留（TODO）
+## 十三、正交多专题异步并行派单与反馈验收队列契约 (Orthogonal Async Dispatch & Verification Queue Protocol)
+
+### 1. 核心问题与设计原则
+在多模块协同演进过程中，若多个改动彼此完全独立，传统的“派发 -> 阻塞等待 -> 质检 -> 开启下一个”机械串行化推进模式会导致执行效率大幅下降，未充分发挥各物理实体专题会话的异步并发优势。
+为此，确立【正交多专题异步并行派单与反馈验收队列契约】：在确保 100% 零冲突与零竞争的前提下，支持正交任务异步并行派发，并将子专题交付反馈推入主会话验收队列（FIFO）逐个出队执行四大绝对门禁审查。
+
+### 2. 正交无冲突三要素判定准则 (Orthogonality Criteria JSON)
+
+主会话在同一编排周期内发起并发派单前，必须在思维链中严格执行以下三要素判定：
+
+```json
+[
+  {
+    "criterion_id": "Criterion 1",
+    "criterion_name": "专题物理隔离 (Target Session Isolation)",
+    "rule": "TargetSession(A) !== TargetSession(B)。同一物理专题会话内部必须保持严格的单线串行流转，严禁将多个并发任务同时写入同一专题导致会话上下文与 KV Cache 紊乱。"
+  },
+  {
+    "criterion_id": "Criterion 2",
+    "criterion_name": "物理写白名单正交 (Allowlist Orthogonality)",
+    "rule": "Allowlist(A) ∩ Allowlist(B) == ∅。各任务下发的物理写白名单必须完全无交集，底层文件排他锁与 PreToolUse 拦截门禁零冲突、零重叠。"
+  },
+  {
+    "criterion_id": "Criterion 3",
+    "criterion_name": "业务逻辑与数据解耦 (Logic & Data Decoupling)",
+    "rule": "Dependency(A, B) == false。任务之间不存在前置/后置输入输出数据依赖，任意任务的成败与执行顺序不会影响其他任务的正确性。"
+  },
+  {
+    "criterion_id": "Fallback",
+    "criterion_name": "悲观降级串行铁律 (Serial Fallback Iron Law)",
+    "rule": "上述三要素中有任何一项不满足（或存在不确定性），主会话必须坚决悲观降级为单线程串行派发，严禁冒险并发！"
+  }
+]
+```
+
+### 3. 异步并行派发流转与监督定时器解耦 (Async Dispatch & Supervision Decoupling)
+
+```json
+[
+  {
+    "step": "1. 正交性裁决与并发度控制",
+    "workflow": "主会话识别拟派发的 N 个任务，核验正交三要素；单次编排周期内最大异步派发度限制 <= 3 (保守原则)。"
+  },
+  {
+    "step": "2. 同周期依次异步发信",
+    "workflow": "在同一主会话轮次内，主会话依次调用 send_message(recipient, message) 向正交专题分别下发四大法定板块派单报文，各任务在任务列表中均标记为 in_progress。"
+  },
+  {
+    "step": "3. 监督定时器全局解耦与响应式唤醒",
+    "workflow": "废除绑定单一专题的死等模式。主会话挂载全局兜底定时器 schedule(DurationSeconds=120, Prompt='巡检并行专题进度', TimerCondition='any')。任一子专题完成并通过 send_message 发信时，系统自动响应式唤醒 (Reactive Wakeup) 主会话，无需死等轮询。"
+  }
+]
+```
+
+### 4. 反馈验收队列机制与独立门禁仲裁 (In-Context Verification Queue FIFO)
+
+```json
+[
+  {
+    "stage": "1. 交付消息入队 (Enqueue)",
+    "workflow": "子专题完成开发与自测后通过 send_message 向主会话汇报交付，主会话将收到的交付报文推入上下文反馈验收队列 (In-Context Verification Queue, FIFO)。"
+  },
+  {
+    "stage": "2. 逐个出队独立质检 (Dequeue & Gate Review)",
+    "workflow": "主会话逐个从队列头部出队，针对当前任务独立执行双轮驱动质检与四大绝对门禁审查（原有逻辑防御/最小自证/风险评估/闭环仲裁），严禁并发混杂交叉审查导致心智负担与上下文污染。"
+  },
+  {
+    "stage": "3. 独立驳回隔离机制 (Isolated DELIVERABLE_REJECTED)",
+    "workflow": "若当前出队任务未通过门禁，主会话仅向该专题定向发送 DELIVERABLE_REJECTED 指令打回重修，其他并行专题的执行与验收完全不受影响。"
+  },
+  {
+    "stage": "4. 全量收网与整体汇报 (Batch Consolidation)",
+    "workflow": "当队列中所有正交并行任务均通过门禁验收后，主会话出具统一的全局验收交付卡向用户汇报。"
+  }
+]
+```
+
+---
+
+## 十四、未来演进预留（TODO）
 
 * **TODO：调用链路追溯与项目级轻量持久化（Traceability Journal）**：
   - *规划方向*：未来可在 `.agents/task-loop/trace-journal.jsonl` 中记录 Main 到各 Topic 会话的调用链、派发快照与干预历史，便于排查复杂长周期任务的链路决策。
   - *当前策略*：出于轻量化与运行性能考量，当前版本仅维护核心 `run-journal.jsonl`，待后续按需平滑拓展。
+
 
 
