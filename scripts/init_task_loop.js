@@ -182,6 +182,184 @@ function scanExistingMemoryDocs(wsRoot) {
   return memoryDocs;
 }
 
+/**
+ * 预置语义专题标准规范
+ */
+const SEMANTIC_TOPIC_PRESETS = {
+  main: '[主会话] 任务编排 & 治理中枢',
+  hook: '[钩子专题] 生命周期 & 安全门禁',
+  subagent: '[子代理专题] Subagent机制 & 动态模板',
+  session_control: '[Session] SDK & Scripting',
+  plugin_spec: '[插件专题] 多厂商插件规范与导出安装',
+  test_spec: '[测试专题] 自动化会话创建验证',
+  dashboard: '[控制面板专题] 状态监控 & 拖拽交互 (dashboard)',
+  blender: '[Blender] 模型创建编辑 & 场景检查',
+  application: '[Application] 场景搭建交互 & 应用系统开发'
+};
+
+/**
+ * 判定标题是否为死模板或无意义通用模板
+ * 
+ * @param {string} title - 待检测标题
+ * @param {string} moduleKey - 模块 Key
+ * @returns {boolean} 是否为泛化死模板
+ */
+function isGenericTemplate(title, moduleKey) {
+  if (!title || typeof title !== 'string') return true;
+  const trimmed = title.trim();
+  if (!trimmed) return true;
+  if (trimmed.includes('核心功能维护 & 记忆沉淀')) return true;
+  if (trimmed.includes('通用开发')) return true;
+  if (trimmed === `[${moduleKey}专题]` || trimmed === `[${moduleKey}]` || trimmed === moduleKey) return true;
+  return false;
+}
+
+/**
+ * 将 moduleKey 格式化为标准方括号内的专题 Tag
+ * 
+ * @param {string} key - 模块 Key
+ * @returns {string} 格式化后的专题 Tag
+ */
+function formatTagFromKey(key) {
+  if (!key) return '专题';
+  if (key === 'session_control') return 'Session';
+  if (key === 'plugin_spec') return '插件专题';
+  if (key === 'test_spec') return '测试专题';
+  if (key === 'hook') return '钩子专题';
+  if (key === 'subagent') return '子代理专题';
+  if (key === 'dashboard') return '控制面板专题';
+  if (key === 'main') return '主会话';
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+/**
+ * 清洗并规范化从记忆文档 H1 提取的标题
+ * 规范化目标: [专题名] 核心功能1 & 核心功能2 标准结构
+ * 
+ * @param {string} docTitle - 文档中提取的 H1 原始标题
+ * @param {string} moduleKey - 模块 Key
+ * @returns {string|null} 规范化后的高质量标题或 null
+ */
+function normalizeH1Title(docTitle, moduleKey) {
+  if (!docTitle || typeof docTitle !== 'string') return null;
+  let cleaned = docTitle
+    .replace(/\[\s*(?:受控记忆(?:文档)?|MEMORY)\s*\]/gi, '')
+    .replace(/[#*`]/g, '')
+    .trim();
+  if (!cleaned || isGenericTemplate(cleaned, moduleKey)) return null;
+
+  // 1. 已经是形如 [专题名] 核心功能1 & 核心功能2
+  const bracketMatch = cleaned.match(/^\[([^\]]+)\]\s*(.*)$/);
+  if (bracketMatch) {
+    const topicTag = bracketMatch[1].trim();
+    const rest = bracketMatch[2].trim();
+    return rest ? `[${topicTag}] ${rest}` : `[${topicTag}]`;
+  }
+
+  // 2. 形式如 "场景搭建交互 & 应用系统开发" 或 "Application: 场景搭建交互 & 应用系统开发"
+  const modRegex = new RegExp(`^${moduleKey}\\s*[:：\\s-]?\\s*(.*)$`, 'i');
+  const modMatch = cleaned.match(modRegex);
+  if (modMatch && modMatch[1].trim()) {
+    const tag = formatTagFromKey(moduleKey);
+    return `[${tag}] ${modMatch[1].trim()}`;
+  }
+
+  // 3. 兜底补上方括号专题名
+  const tag = formatTagFromKey(moduleKey);
+  return `[${tag}] ${cleaned}`;
+}
+
+/**
+ * 终态标题四级解析优先级函数 (Title Resolution Precedence)
+ * Priority 1 (跨分区继承): 优先检查同工程 sessions.json 中其他 vendor 分区对同一 module_key 已确立的高置信度成熟 title (非死模板)
+ * Priority 2 (记忆文档 H1): 若无既有跨分区成熟命名，使用 doc.title (清洗 [受控记忆] 并规范化为 [专题名] 核心功能1 & 核心功能2)
+ * Priority 3 (启发式语义推断): 若无标题，结合该模块职责/Tags/预置表推断标准格式 (如 [Blender] 模型创建编辑 & 场景检查)
+ * Priority 4 (兜底模板): 最后降级为 [${moduleKey}专题] 核心功能维护 & 记忆沉淀
+ * 
+ * @param {Object} doc - 记忆文档扫描对象 ({ module_key, title, ... })
+ * @param {Object} [existingModules] - 当前分区已存在 modules 字典
+ * @param {Array} [registry] - Provider 注册表 (可选)
+ * @param {string} [targetVendor] - 目标宿主厂商
+ * @param {string|Object} [wsRootOrOptions] - 工作区根路径或选项对象
+ * @returns {string} 最优终态标题
+ */
+function resolveOptimalTopicTitle(doc, existingModules, registry, targetVendor, wsRootOrOptions = {}) {
+  const moduleKey = (doc && doc.module_key) || null;
+  if (!moduleKey) {
+    return '[业务专题] 核心功能维护 & 记忆沉淀';
+  }
+
+  const options = typeof wsRootOrOptions === 'object' && wsRootOrOptions !== null ? wsRootOrOptions : { wsRoot: wsRootOrOptions };
+  const wsRoot = options.wsRoot || (doc && doc.absolute_path ? doc.absolute_path.split(/[/\\]docs[/\\]memory/)[0] : '') || process.cwd();
+
+  // === Priority 1 (跨分区继承) ===
+  let sessionsData = options.sessionsData || null;
+  if (!sessionsData && wsRoot) {
+    const sessionsFile = path.join(wsRoot, '.agents', 'task-loop', 'sessions.json');
+    if (fs.existsSync(sessionsFile)) {
+      try {
+        sessionsData = stateStore.readJson(sessionsFile);
+      } catch (_) {}
+    }
+  }
+
+  if (sessionsData && sessionsData.vendors && typeof sessionsData.vendors === 'object') {
+    // 优先从其他 vendor 分区寻找高置信度成熟命名
+    for (const [v, part] of Object.entries(sessionsData.vendors)) {
+      if (part && part.modules && part.modules[moduleKey]) {
+        const candidate = part.modules[moduleKey];
+        const cTitle = candidate && (candidate.title || candidate.suggested_topic_name);
+        if (cTitle && !isGenericTemplate(cTitle, moduleKey)) {
+          return cTitle.trim();
+        }
+      }
+    }
+  }
+
+  // 若传入的 existingModules 自身就包含成熟 title
+  if (existingModules && existingModules[moduleKey]) {
+    const stored = existingModules[moduleKey];
+    const sTitle = stored && (stored.title || stored.suggested_topic_name);
+    if (sTitle && !isGenericTemplate(sTitle, moduleKey)) {
+      return sTitle.trim();
+    }
+  }
+
+  // === Priority 2 (记忆文档 H1) ===
+  let h1Raw = doc && doc.title;
+  if (!h1Raw && doc && (doc.absolute_path || (wsRoot && doc.relative_path))) {
+    const filePath = doc.absolute_path || path.join(wsRoot, doc.relative_path);
+    if (fs.existsSync(filePath)) {
+      try {
+        const content = fs.readFileSync(filePath, 'utf8');
+        const m = content.match(/^#\s+(.+)$/m);
+        if (m) h1Raw = m[1];
+      } catch (_) {}
+    }
+  }
+  if (h1Raw) {
+    const normalizedH1 = normalizeH1Title(h1Raw, moduleKey);
+    if (normalizedH1 && !isGenericTemplate(normalizedH1, moduleKey)) {
+      return normalizedH1;
+    }
+  }
+
+  // === Priority 3 (启发式语义推断) ===
+  if (SEMANTIC_TOPIC_PRESETS[moduleKey]) {
+    return SEMANTIC_TOPIC_PRESETS[moduleKey];
+  }
+  if (doc && Array.isArray(doc.tags) && doc.tags.length > 0) {
+    const filteredTags = doc.tags.filter(t => t && t.toLowerCase() !== moduleKey.toLowerCase() && t !== 'topic');
+    if (filteredTags.length > 0) {
+      const tag = formatTagFromKey(moduleKey);
+      return `[${tag}] ${filteredTags.slice(0, 2).join(' & ')}`;
+    }
+  }
+
+  // === Priority 4 (兜底模板) ===
+  return `[${moduleKey}专题] 核心功能维护 & 记忆沉淀`;
+}
+
 const spawnRootConversation = createRootConversation;
 
 function isReusableSession(vendor, session) {
@@ -473,13 +651,18 @@ function surveyExistingSessions(wsRoot, options = {}) {
       : matchedSession
       ? (matchedSession.lifecycle_status || (matchedSession.resumable ? stateStore.SESSION_STATUS.DISCOVERED : stateStore.SESSION_STATUS.PENDING_CREATION))
       : (stored && stored.lifecycle_status) || stateStore.SESSION_STATUS.PENDING_CREATION;
+    const optimalTopicName = resolveOptimalTopicTitle(doc, existingModules, registry, currentVendor || targetVendor, wsRoot);
+    const matchedTopicName = (matchedSession && matchedSession.suggested_topic_name && !isGenericTemplate(matchedSession.suggested_topic_name, doc.module_key))
+      ? matchedSession.suggested_topic_name
+      : optimalTopicName;
+
     return {
       module_key: doc.module_key,
       memory_doc: doc.relative_path,
       matched_session_id: matchedSession ? matchedSession.session_id : null,
       matched_vendor: matchedSession ? matchedSession.vendor : null,
       resumable: storedNeedsCreation ? false : (matchedSession ? matchedSession.resumable : false),
-      matched_topic_name: matchedSession ? matchedSession.suggested_topic_name : `[${doc.module_key}专题] 核心功能维护 & 记忆沉淀`,
+      matched_topic_name: matchedTopicName,
       status
     };
   });
@@ -611,7 +794,15 @@ function initTaskLoop(options = {}) {
         && align.resumable === true
         && (!stored || isReusableSession(targetVendor, stored));
       if (!reusable) {
-        const title = align.matched_topic_name;
+        const title = (!align.matched_topic_name || isGenericTemplate(align.matched_topic_name, align.module_key))
+          ? resolveOptimalTopicTitle(
+              memoryDocs.find(d => d.module_key === align.module_key) || { module_key: align.module_key },
+              existingModules,
+              null,
+              targetVendor,
+              wsRoot
+            )
+          : align.matched_topic_name;
         const prompt = `[${align.module_key}专题初始化] 你是 task-loop 项目的【${align.module_key}专题负责人】。当前会话刚建立，处于【只读就绪态】。未接收到主会话派发的具体任务前，严禁擅自修改业务代码。请向主会话请示并等待派单。`;
         const existingModel = targetVendor === 'codex'
           ? codexModelPolicy.configuredModel(existingModules && existingModules[align.module_key])
@@ -1043,5 +1234,9 @@ module.exports = {
   sanitizeTitle,
   isValidModuleKey,
   detectCurrentVendor,
-  loadProviderRegistry
+  loadProviderRegistry,
+  resolveOptimalTopicTitle,
+  isGenericTemplate,
+  normalizeH1Title,
+  formatTagFromKey
 };

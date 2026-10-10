@@ -162,6 +162,35 @@ Codex 缺少脚本层原生 Host Adapter 时，脚本返回并记录 `PENDING_CR
 
 本脚本任务不能直接调用 `mcp__codex_app__create_thread`；这是脚本层能力边界，不是创建成功。若宿主工具不可用，保持 `PENDING_CREATION` 或 `UNSUPPORTED`，不伪造完成状态。创建成功后的 `threadId` 必须立即通过 `new_topic_session --bind-current --id-kind threadId` 回写 `sessions.json`、`topics.json` 及厂商镜像，然后重新执行 `/init`。
 
+### 3.1 终态标题四级解析优先级 (Title Resolution Precedence)
+
+为解决新拉起物理实体会话名称生硬或过时（且一旦创建后无法事后刷新的缺陷），调度器在拉起与绑定专题会话时，强制执行四级终态标题解析优先级，确保会话在 IDE 侧边栏及状态机中呈现最高质量的标准化命名：
+
+```json
+[
+  {
+    "priority": 1,
+    "tier_name": "Priority 1: 跨分区继承 (Cross-Vendor Inheritance)",
+    "resolution_rule": "优先检查同工程 .agents/task-loop/sessions.json 中其他 vendor 分区对同一 module_key 已确立的高置信度成熟 title (排除泛化死模板)；跨厂商拉起时天然对齐已有成熟命名。"
+  },
+  {
+    "priority": 2,
+    "tier_name": "Priority 2: 记忆文档 H1 提取清洗 (Memory Doc H1 Extraction)",
+    "resolution_rule": "若无跨分区成熟命名，解析 docs/memory/*.md 对应文档的 H1 标题，清洗 [受控记忆] 标签并规范化为 [专题名称] 核心功能1 & 核心功能2 标准格式。"
+  },
+  {
+    "priority": 3,
+    "tier_name": "Priority 3: 启发式语义推断 (Heuristic Inference)",
+    "resolution_rule": "若文档缺失 H1 标题或不合规，结合 SEMANTIC_TOPIC_PRESETS 预置映射表或 Tags/模块职责推断标准结构 (如 [Blender] 模型创建编辑 & 场景检查)。"
+  },
+  {
+    "priority": 4,
+    "tier_name": "Priority 4: 兜底泛化模板 (Fallback Template)",
+    "resolution_rule": "最后才降级为兜底模板 [${module_key}专题] 核心功能维护 & 记忆沉淀。"
+  }
+]
+```
+
 ### 4. 复用、模型与能力边界
 
 ```json

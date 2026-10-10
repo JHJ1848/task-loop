@@ -177,6 +177,156 @@ def scan_existing_memory_docs(ws_root):
     return memory_docs
 
 
+SEMANTIC_TOPIC_PRESETS = {
+    "main": "[主会话] 任务编排 & 治理中枢",
+    "hook": "[钩子专题] 生命周期 & 安全门禁",
+    "subagent": "[子代理专题] Subagent机制 & 动态模板",
+    "session_control": "[Session] SDK & Scripting",
+    "plugin_spec": "[插件专题] 多厂商插件规范与导出安装",
+    "test_spec": "[测试专题] 自动化会话创建验证",
+    "dashboard": "[控制面板专题] 状态监控 & 拖拽交互 (dashboard)",
+    "blender": "[Blender] 模型创建编辑 & 场景检查",
+    "application": "[Application] 场景搭建交互 & 应用系统开发",
+}
+
+
+def is_generic_template(title, module_key):
+    """判定标题是否为死模板或无意义通用模板"""
+    if not title or not isinstance(title, str):
+        return True
+    trimmed = title.strip()
+    if not trimmed:
+        return True
+    if "核心功能维护 & 记忆沉淀" in trimmed:
+        return True
+    if "通用开发" in trimmed:
+        return True
+    if trimmed in (f"[{module_key}专题]", f"[{module_key}]", module_key):
+        return True
+    return False
+
+
+def format_tag_from_key(key):
+    """将 module_key 格式化为标准方括号内的专题 Tag"""
+    if not key:
+        return "专题"
+    special = {
+        "session_control": "Session",
+        "plugin_spec": "插件专题",
+        "test_spec": "测试专题",
+        "hook": "钩子专题",
+        "subagent": "子代理专题",
+        "dashboard": "控制面板专题",
+        "main": "主会话",
+    }
+    if key in special:
+        return special[key]
+    return key[0].upper() + key[1:] if key else "专题"
+
+
+def normalize_h1_title(doc_title, module_key):
+    """清洗并规范化从记忆文档 H1 提取的标题"""
+    if not doc_title or not isinstance(doc_title, str):
+        return None
+    cleaned = re.sub(r"\[\s*(?:受控记忆(?:文档)?|MEMORY)\s*\]", "", doc_title, flags=re.IGNORECASE)
+    cleaned = re.sub(r"[#*`]", "", cleaned).strip()
+    if not cleaned or is_generic_template(cleaned, module_key):
+        return None
+
+    # 1. 具备 [专题名] 核心功能1 & 核心功能2
+    bracket_match = re.match(r"^\[([^\]]+)\]\s*(.*)$", cleaned)
+    if bracket_match:
+        topic_tag = bracket_match.group(1).strip()
+        rest = bracket_match.group(2).strip()
+        return f"[{topic_tag}] {rest}" if rest else f"[{topic_tag}]"
+
+    # 2. 开头包含 module_key
+    mod_match = re.match(rf"^{re.escape(module_key)}\s*[:：\s-]?\s*(.*)$", cleaned, flags=re.IGNORECASE)
+    if mod_match and mod_match.group(1).strip():
+        tag = format_tag_from_key(module_key)
+        return f"[{tag}] {mod_match.group(1).strip()}"
+
+    tag = format_tag_from_key(module_key)
+    return f"[{tag}] {cleaned}"
+
+
+def resolve_optimal_topic_title(doc, existing_modules=None, registry=None, target_vendor=None, ws_root_or_options=None):
+    """终态标题四级解析优先级函数 (Title Resolution Precedence)
+    Priority 1 (跨分区继承): 优先检查同工程 sessions.json 中其他 vendor 分区对同一 module_key 已确立的高置信度成熟 title (非死模板)
+    Priority 2 (记忆文档 H1): 若无既有跨分区成熟命名，使用 doc.title (清洗 [受控记忆] 并规范化为 [专题名] 核心功能1 & 核心功能2)
+    Priority 3 (启发式语义推断): 若无标题，结合该模块职责/Tags/预置表推断标准格式 (如 [Blender] 模型创建编辑 & 场景检查)
+    Priority 4 (兜底模板): 最后降级为 [${moduleKey}专题] 核心功能维护 & 记忆沉淀
+    """
+    module_key = doc.get("module_key") if isinstance(doc, dict) else None
+    if not module_key:
+        return "[业务专题] 核心功能维护 & 记忆沉淀"
+
+    options = ws_root_or_options if isinstance(ws_root_or_options, dict) else {"ws_root": ws_root_or_options}
+    ws_root = options.get("ws_root")
+    if not ws_root:
+        if isinstance(doc, dict) and doc.get("absolute_path"):
+            parts = re.split(r"[/\\]docs[/\\]memory", doc["absolute_path"])
+            ws_root = parts[0] if parts else os.getcwd()
+        else:
+            ws_root = os.getcwd()
+
+    # === Priority 1 (跨分区继承) ===
+    sessions_data = options.get("sessions_data")
+    if not sessions_data and ws_root:
+        sessions_file = os.path.join(ws_root, ".agents", "task-loop", "sessions.json")
+        if os.path.exists(sessions_file):
+            try:
+                sessions_data = state_store.read_json(sessions_file)
+            except Exception:
+                pass
+
+    if isinstance(sessions_data, dict) and isinstance(sessions_data.get("vendors"), dict):
+        for v, part in sessions_data["vendors"].items():
+            if isinstance(part, dict) and isinstance(part.get("modules"), dict):
+                cand = part["modules"].get(module_key)
+                if isinstance(cand, dict):
+                    c_title = cand.get("title") or cand.get("suggested_topic_name")
+                    if c_title and not is_generic_template(c_title, module_key):
+                        return c_title.strip()
+
+    if isinstance(existing_modules, dict) and module_key in existing_modules:
+        stored = existing_modules[module_key]
+        if isinstance(stored, dict):
+            s_title = stored.get("title") or stored.get("suggested_topic_name")
+            if s_title and not is_generic_template(s_title, module_key):
+                return s_title.strip()
+
+    # === Priority 2 (记忆文档 H1) ===
+    h1_raw = doc.get("title") if isinstance(doc, dict) else None
+    if not h1_raw and isinstance(doc, dict) and (doc.get("absolute_path") or (ws_root and doc.get("relative_path"))):
+        file_path = doc.get("absolute_path") or os.path.join(ws_root, doc.get("relative_path"))
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, "r", encoding="utf-8") as fh:
+                    m = re.search(r"^#\s+(.+)$", fh.read(), flags=re.MULTILINE)
+                    if m:
+                        h1_raw = m.group(1)
+            except Exception:
+                pass
+
+    if h1_raw:
+        norm_h1 = normalize_h1_title(h1_raw, module_key)
+        if norm_h1 and not is_generic_template(norm_h1, module_key):
+            return norm_h1
+
+    # === Priority 3 (启发式语义推断) ===
+    if module_key in SEMANTIC_TOPIC_PRESETS:
+        return SEMANTIC_TOPIC_PRESETS[module_key]
+    if isinstance(doc, dict) and isinstance(doc.get("tags"), list) and doc["tags"]:
+        filtered_tags = [t for t in doc["tags"] if t and t.lower() != module_key.lower() and t != "topic"]
+        if filtered_tags:
+            tag = format_tag_from_key(module_key)
+            return f"[{tag}] {' & '.join(filtered_tags[:2])}"
+
+    # === Priority 4 (兜底模板) ===
+    return f"[{module_key}专题] 核心功能维护 & 记忆沉淀"
+
+
 def resolve_module_assignments(suggestions, memory_docs=None, existing_modules=None, current_vendor="antigravity"):
     """单一事实源: 严格以 docs/memory/*.md 中的法定模块为准进行 1:1 对齐匹配。
     粘性绑定锁保护 (Sticky Binding Lock):
@@ -497,13 +647,19 @@ def survey_existing_sessions(ws_root, options=None):
                   or (stored.get("lifecycle_status") if isinstance(stored, dict) else None)
                   or (state_store.SESSION_STATUS["DISCOVERED"] if matched and matched.get("resumable") else state_store.SESSION_STATUS["PENDING_CREATION"]))
         stored_needs_creation = isinstance(stored, dict) and not is_reusable_session(current_vendor, stored)
+        optimal_title = resolve_optimal_topic_title(doc, existing_modules, None, current_vendor, ws_root)
+        matched_topic_name = (
+            matched["suggested_topic_name"]
+            if matched and matched.get("suggested_topic_name") and not is_generic_template(matched["suggested_topic_name"], doc["module_key"])
+            else optimal_title
+        )
         memory_alignment.append({
             "module_key": doc["module_key"],
             "memory_doc": doc["relative_path"],
             "matched_session_id": matched["session_id"] if matched else None,
             "matched_vendor": matched["vendor"] if matched else None,
             "resumable": False if stored_needs_creation else (matched["resumable"] if matched else False),
-            "matched_topic_name": matched["suggested_topic_name"] if matched else f"[{doc['module_key']}专题] 核心功能维护 & 记忆沉淀",
+            "matched_topic_name": matched_topic_name,
             "status": state_store.SESSION_STATUS["PENDING_CREATION"] if stored_needs_creation else status
         })
 
@@ -585,6 +741,9 @@ def init_task_loop(options=None):
                         and (not stored or is_reusable_session(target_vendor, stored)))
             if not reusable:
                 title = align["matched_topic_name"]
+                if not title or is_generic_template(title, align["module_key"]):
+                    doc_cand = next((d for d in memory_docs if d.get("module_key") == align["module_key"]), {"module_key": align["module_key"]})
+                    title = resolve_optimal_topic_title(doc_cand, existing_modules, None, target_vendor, ws_root)
                 prompt = f"[{align['module_key']}专题初始化] 你是 task-loop 项目的【{align['module_key']}专题负责人】。当前会话刚建立，处于【只读就绪态】。未接收到主会话派发的具体任务前，严禁擅自修改业务代码。请向主会话请示并等待派单。"
                 existing_model = configured_model((existing_modules or {}).get(align["module_key"])) if target_vendor == "codex" else None
                 
