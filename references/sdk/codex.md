@@ -4,7 +4,7 @@
 
 ## 0. 稳定适配边界
 
-Hook 兼容性同样按厂商隔离：Codex 不提供 AGY/ZCode 的 `PreInvocation`、`PreToolUse` 生命周期，插件不得宣称自动注入或物理拦截已生效。Codex 仅支持通过 Skill 指令、调度前置校验和 fail-closed 结果实现等价约束；AGY/ZCode Hook 配置与行为保持原样。
+Hook 兼容性按厂商隔离：Codex 不提供 AGY 的 `PreInvocation` 协议，但支持自己的 `UserPromptSubmit` 等生命周期 Hook。`.codex-plugin/plugin.json` 为 Codex 单独指定 `hooks/codex-session-health.json`；AGY/ZCode Hook 配置保持原样。Codex 插件 Hook 需要宿主信任当前定义；静态文件存在不等于运行时已加载。
 
 ```json
 [
@@ -19,7 +19,7 @@ Hook 兼容性同样按厂商隔离：Codex 不提供 AGY/ZCode 的 `PreInvocati
     "success_condition": "仅显式选择且 CLI exit code 0 返回 SUBMITTED"
   },
   {
-    "unsupported": "自动 PreInvocation / PreToolUse Hook、直接写 .codex/sessions、按 UUID 猜测 AGY"
+    "unsupported": "AGY PreInvocation 协议、直接写 .codex/sessions、按 UUID 猜测 AGY"
   },
   {
     "experimental_only": "codex app-server JSON-RPC；Desktop App Tools 只有在宿主实际暴露时才可按本规范调用"
@@ -29,7 +29,13 @@ Hook 兼容性同样按厂商隔离：Codex 不提供 AGY/ZCode 的 `PreInvocati
 
 `scripts/providers/codex_session_dispatch.js/.py` 在未执行、CLI 缺失或非零退出时只返回 `PREPARED_ONLY`，不会伪造成功或写入 `.codex/sessions`。`exec resume` 使用参数 `-` 并通过 stdin 传递 prompt，避免 prompt 被 CLI 解析为选项。
 
-### 0.1 Provider 解耦入口
+### 0.1 Codex 长会话提醒与轮换
+
+Codex 专属 `UserPromptSubmit` Hook 在使用 task-loop 状态目录的项目中检查当前顶层 Codex 会话的 JSONL 大小和首行记录的创建时间，已绑定主/专题会话会带上模块名。每轮只读取当前文件元数据、首行和项目状态目录，不扫描其他会话。达到 8 MiB 或创建至今 30 天时提醒，16 MiB 或 60 天升级提示，同一档位七天内不重复提醒。阈值是基于本机现有会话文件分布的经验起点，不代表 Codex 的性能上限。首行 JSONL 格式不是稳定的 Hook 契约；格式或身份无法核对时静默跳过，不据此执行任何归档、删除或绑定操作。提醒只在下一次用户提交消息时触发，单纯切换或打开会话不会触发。
+
+提醒后的处理顺序：完成当前工作并整理项目现有的记忆文档、变更记录，补齐当前未完成任务与工作区改动的交接摘要；在同一项目创建全新顶层会话。若原会话存在主/专题绑定，取得正式 `threadId` 后按原 `module_key` 与记忆文档重绑并核验 Codex 分区；核验后由用户选择归档旧会话。删除会永久移除记录，必须单独由用户明确决定。不要使用 `/fork` 复制原有历史，也不要用 `/init` 代替旧专题重绑。现有绑定入口尚未提供完整的轮换事务，因此执行重绑前应检查在途任务与目标模块，不能把提醒视为自动迁移已完成。
+
+### 0.2 Provider 解耦入口
 
 `scripts/providers/codex_session_provider.js/.py` 提供运行时纯适配入口 `create/create_async`、`submit/submit_async`、`read/read_async` 与 `wait`。调用方可显式注入 `desktop`、`sdk`、`api` 函数；创建回执只有 formal `threadId` 才能进入 `READY`，`clientThreadId`/queued 或无回执进入 `PENDING_CREATION`。发送只有存在真实适配器或明确 CLI 能力时才报告可用；适配器只有返回 `{submitted:true}` 才会映射为 `SUBMITTED`，否则返回 `PREPARED_ONLY`。Provider 不读取或写入 `.agents/task-loop`、`.codex/sessions`，也不猜测会话 ID。
 

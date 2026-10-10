@@ -1,5 +1,6 @@
 {
   "name": "task-loop",
   "version": "1.6.1",
-  "skills": "./skills/"
+  "skills": "./skills/",
+  "hooks": "./hooks/codex-session-health.json"
 }
