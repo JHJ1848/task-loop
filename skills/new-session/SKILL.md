@@ -116,6 +116,68 @@ Codex 主会话创建专题时按以下顺序执行，且一次只处理一个 `
 
 `create_thread` 创建成功不代表初始化 Prompt 已获得模型回复。脚本任务无法直接调用该原生工具；无 Host Adapter 时应显式保留 `PENDING_CREATION`/`UNSUPPORTED`，由当前主会话完成工具调用和后续绑定。
 
+### 2.2 Claude Code 主动创建与正式回执闭环
+
+Claude Code 主会话没有 Codex 那样的原生 `create_thread` 工具，改用 **scheduled-task 通道**拉起新的顶层物理会话，再通过 SessionProvider 把 App 侧 ID 还原为 CLI/hook 侧裸 UUID 后绑定。同样一次只处理一个 `module_key`。
+
+```json
+[
+  {
+    "step": 1,
+    "tool": "create_scheduled_task",
+    "args": {
+      "taskId": "<topic-key>-topic-bootstrap",
+      "title": "<topic title>",
+      "description": "<topic one-liner>",
+      "prompt": "<topic memory-derived prompt>"
+    },
+    "rule": "prompt 必须自带工作区绝对路径与专题 module_key，不依赖任何历史会话上下文"
+  },
+  {
+    "step": 2,
+    "tool": "run_scheduled_task",
+    "args": { "taskId": "<topic-key>-topic-bootstrap" },
+    "rule": "立即触发一次，取得该 run 的 session_id"
+  },
+  {
+    "step": 3,
+    "tool": "mcp__ccd_session_mgmt__list_task_runs",
+    "args": { "taskId": "<topic-key>-topic-bootstrap" },
+    "rule": "runs[].session_id 属于 App 侧 local_* 命名空间，不得直接写入状态机"
+  },
+  {
+    "step": 4,
+    "command_node": "node scripts/providers/claude_session_provider.js resolve --host <local_xxx> [--claude-home <dir>]",
+    "command_python": "python scripts/providers/claude_session_provider.py resolve --host <local_xxx> [--claude-home <dir>]",
+    "formal_result": "resolved=true 时取返回的 session_id 作为可绑定的裸 UUID",
+    "pending_result": "resolved=false（此刻无存活附着：或尚未写入注册表，或该会话进程已退出，见下文判定范围与限制）-> PENDING_CREATION；不得绑定 local_* 或伪造 UUID"
+  },
+  {
+    "step": 5,
+    "verify_node": "node scripts/providers/claude_session_provider.js verify --session <bare-uuid>",
+    "verify_python": "python scripts/providers/claude_session_provider.py verify --session <bare-uuid>",
+    "gate": "绑定前确认 sidebar_visible=true 且 reason=interactive_app_session，表示此刻存在存活附着、可直接派单；若为 pid_dead / not_registered 只说明此刻未运行，不得据此判定绑定失效或重复拉起（verdict_scope=live_registry_presence）"
+  },
+  {
+    "step": 6,
+    "bind_node": "node scripts/new_topic_session.js --workspace <root> --vendor claude --doc <doc> --bind-current <bare-uuid>",
+    "bind_python": "python scripts/new_topic_session.py --workspace <root> --vendor claude --doc <doc> --bind-current <bare-uuid>",
+    "after_bind": "立即回写 sessions/topics 两套厂商分区与镜像；同一专题不得重复创建"
+  }
+]
+```
+
+**命名空间坑（必须遵守）**：App 侧会话 ID 形如 `local_<uuid>`，CLI/hook 侧是裸 UUID，两者是两套命名空间。`list_sessions` 与 `list_task_runs` 返回的都是 `local_*`；状态机登记与跨会话 `send_message` 必须一律使用裸 UUID，需要换算时只走 `resolve`。
+
+**判定范围与限制（重要）**：`claude_session_provider` 的判定范围是 **`live_registry_presence`（此刻是否存在存活的 App 会话附着）**，不是「该会话是否在侧边栏列表中」，输出中的 `verdict_scope` 字段恒为 `live_registry_presence` 以声明这一测量边界。
+
+- 注册表 `~/.claude/sessions/<pid>.json` 只登记**正在运行/可附着的进程**，进程退出后该条目即消失；而 App 侧会话列表在磁盘上**没有可读来源**（`~/.claude`、`%APPDATA%/Claude`、`%LOCALAPPDATA%/Claude` 全盘检索均不存在 `local_*` 索引，App 数据目录只有 `claude_desktop_config.json` 与 `logs/`）。
+- 因此 `sidebar_visible=false` 且 reason 为 `not_registered` / `pid_dead`，**只表示此刻没有存活进程附着，绝不代表该会话已不在侧边栏列表**。空闲（未运行）的 App 会话仍保留在列表中并可点击续接，此能力无法由脚本判定，也不要试图伪造。
+- **核验已绑定专题会话是否存在时，严禁仅凭 `sidebar_visible=false` 判定绑定失效并重复拉起新会话**；把空闲专题会话误判为失效会造成会话泛滥与状态机污染。
+- reason 分为两类：`kind_bg` 与 `no_host_session_id` 是**确定性的资格否定**（bg 会话与无 hostSessionId 的会话永远不进列表，`claude --bg` 与 `claude -p` 无头会话即属此类，不能作为长期专题物理会话）；`pid_dead` 与 `not_registered` 只是**此刻无附着**。全部取值为 `interactive_app_session` / `no_host_session_id` / `kind_bg` / `pid_dead` / `not_registered`。
+
+**scheduled-task 生命周期坑**：删除该引导任务会连带归档它派生的会话（主治理中枢实测结论）。因此绑定完成后必须二选一——**保留该任务**（推荐，便于后续复用与重复拉起），或先通过会话管理执行 `unarchive_session` 把该会话解归档；否则专题会话会从项目会话列表中消失，物理实体会话拓扑被破坏。
+
 ### 2. 分支 B: 专题会话/非主会话环境 (`is_main: false`) — 就地注册绑定流
 1. **就地复用原则 (In-Place Binding)**:
    - 当前会话本身已是一个常驻在左侧边栏的独立物理实体，**默认直接将当前物理会话就地注册/绑定为目标专题会话**，严禁在当前会话内再次套娃新建顶层根会话。

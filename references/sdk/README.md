@@ -110,13 +110,16 @@ QuestionProvider 是现有契约支柱，继续负责原生问答、选项和确
   {
     "vendor": "Anthropic Claude Code",
     "doc_path": "references/sdk/claude.md",
-    "status": "预留适配 (Standard Adapter)",
+    "status": "已适配 (App-Hosted Provisioning)",
     "capabilities": [
       "终端原生交互确认原语 (Confirm / Select)",
       "Hooks 管道: stdin JSON 提取 .session_id 与 Exit Code 2 拦截",
       "活动会话查询: claude agents --json",
       "无头模式派发: claude -p --output-format json",
-      "会话分叉与续接 (--resume, --fork-session)"
+      "会话分叉与续接 (--resume, --fork-session)",
+      "侧边栏可见性判定: ~/.claude/sessions 注册表 hostSessionId + kind",
+      "App 宿主主动拉起专题会话: scheduled-task 通道 (产出 hostSessionId 会话)",
+      "命名空间桥接: local_* (App) <-> 裸 UUID (CLI/hook)"
     ]
   }
 ]

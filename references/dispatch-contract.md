@@ -7,9 +7,8 @@
 ## 一、主会话定位与三核心能力（Main Session Role & Capabilities）
 
 ### 1. 角色与灵活职责
-* **控制面核心**：主会话（Main Session）是任务编排、需求初加工与边界划定的中枢，自身尽量不负责大型业务落地开发。
-* **灵活授权**：允许主会话进行**简单直接小改动**（Level 1 场景）以及**全局项目文件扫描读取**以采集关键上下文，并将提炼出的高质量重点信息作为参数注入派单包。
-* **专题会话独立性（客观事实）**：各专题会话（Topic Sessions）不仅接受主会话的调度派发，也**完全支持人类用户直接进入会话进行独立交互与开发**，无需强行受到主会话的单向限制。
+* **控制面核心与文档主理 (Control Plane & Docs Stewardship)**：主会话（Main Session）是任务编排、需求初加工与边界划定的中枢。**允许并且提倡主会话直接执行 `docs/`（含 `docs/MEMORY.md`、`docs/memory/*.md` 等）、`MEMORY.md`、`README.md`、`AGENTS.md`、`references/` 等文档与记忆相关的编辑操作**，以保持全局上下文高保真度，避免跨会话转手改文档造成的上下文失真；同时**严禁主会话直接编写或修改模块业务代码**。
+* **下层专题职责协同**：下层的各个专题会话（Topic Sessions）负责**独立的模块业务代码开发**以及**协助局部 `docs` 文档编辑**，并支持人类用户直接进入专题会话进行独立交互与开发。
 
 ### 2. 主会话核心编排与裁决能力
 1. **需求初加工与定界（Intake & Pruning）**：
@@ -31,16 +30,16 @@
 [
   {
     "layer": "L1 (Top Layer)",
-    "role": "Main Session (全局中枢 / 治理中枢)",
+    "role": "Main Session (全局中枢 / 治理与文档主理中枢)",
     "lifecycle_nature": "常驻顶层根会话 (nestingDepth: 0)",
-    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收。严禁自身编写业务代码 (WORK) 或派遣 Worker 子代理。",
+    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收；允许并提倡直接主理 docs/ 与 MEMORY.md 等文档操作以防止上下文失真，严禁自身编写模块业务代码 (WORK) 或派遣 Worker 子代理。",
     "model_selection_policy": "选用大上下文、高统筹规划与强决策推理模型；思考深度由 Agent 结合决策复杂度自决 (Autonomous Determination)，杜绝硬编码型号。"
   },
   {
     "layer": "L2 (Middle Layer)",
     "role": "Topic Session (专题物理实体会话 / 领域负责人)",
     "lifecycle_nature": "长期常驻物理实体会话 (Permanent Physical Session)，与 docs/memory/*.md 1:1 强绑定",
-    "core_responsibilities": "模块专属落地，负责代码编写、深入排障、语法检查与功能自测。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
+    "core_responsibilities": "负责独立的模块业务代码开发、深入排障、语法检查与功能自测，并协助局部 docs 文档编辑与专题记忆沉淀。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
     "model_selection_policy": "选用高严密、强逻辑与代码生成能力优异的主力模型；思考深度充沛，由 Agent 结合工程复杂度自决，杜绝硬编码型号。"
   },
   {
@@ -438,38 +437,92 @@ flowchart TD
 
 ---
 
-## 十、双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
+## 十、双阶梯进度监测与动态巡检机制 (Dual-Stage Progress Monitor & Dynamic Inspection: 15s Fast Probe + 30s~45s Working Gate)
 
-为消除专题会话由于后台休眠未触发、陷入死循环或理解偏离目标导致的派单失控，主会话派单后必须严格执行【30s 响应监测器门禁循环与 120s 巡检任务准入机制】（彻底废除固定 30s->120s 无脑递进的旧流水线，严格以真实线程工作态为准）：
+为彻底解决 AGY 等高响应宿主下用户无效盲等超 60s 的痛点，并杜绝因假阳性无法及时拦截的问题，全面废除原 30s + 120s 漫长等待流水线，确立【15s 快速探针 + 30s~45s 动态工作巡检（全链路 <60s 闭环）与 4 维物理交叉验证门禁】：
 
-### 1. 门禁循环与时序动作定义 (Progress Monitor & Inspection Lifecycle JSON)
+### 1. 4 维物理交叉验证判定契约 (4-Dimensional Physical Cross-Validation Protocol)
+
+主会话在调用 `scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id>` 探测专题状态时，必须严格执行以下 4 维物理交叉验证：
 
 ```json
 [
   {
-    "stage": "Stage 1: 30s 响应监测器循环与自愈门禁 (Response Monitor Gate Loop & Self-Healing)",
-    "timing": "派单后挂载 schedule(DurationSeconds=30, Prompt=\"检查专题会话真激活状态\", TimerCondition=\"any\")",
-    "trigger_condition": "派单发信 30 秒后触发",
-    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <target_session_id> 精准核验：派单后是否检测到真实工作态 (thread_running === true 或存在 source='MODEL' 工作步/思考/工具调用)。",
-    "pass_condition": "is_working === true (can_enter_120s_gate: true)。仅当响应监测器确凿通过后，才准入挂载 120s 巡检任务定时器。",
-    "abnormal_resolution": "若 is_working === false (未激活/无 MODEL 步): 1. 绝对严禁挂载 120s 巡检任务死等！2. 必须立即出具【🔴 专题未激活告警卡】提示用户唤醒；3. 立即调用 agentapi.bat send-message 补发唤醒包；4. 继续挂载 30s 进度监测器循环监控，直到真实激活。"
+    "dimension_id": "Dimension 1: Presence 在场锁 (Presence Lock)",
+    "verification_target": "进程与线程运行时活跃态",
+    "verification_logic": "探测目标会话的在场锁文件是否存在或 thread_running === true，确保专题会话未发生进程闪退或物理失联。"
   },
   {
-    "stage": "Stage 2: 120s 巡检任务准入门禁 (120s Inspection Task Admission)",
-    "timing": "仅在 30s 响应监测器确凿通过 (is_working === true) 后准入挂载 schedule(DurationSeconds=120, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\")",
-    "trigger_condition": "准入通过且派单工作推进 120 秒后触发",
-    "inspection_actions": "读取目标专题 transcript.jsonl 最新 steps，走查：1. 是否偏离单一职责目标；2. 是否发生死循环/重复调用；3. 推演逻辑是否存在严重技术漏洞；4. 是否尝试越界修改。",
+    "dimension_id": "Dimension 2: Filesystem 物理增量 (Filesystem Increment)",
+    "verification_target": "物理日志写盘真实增量",
+    "verification_logic": "核验目标专题 transcript.jsonl（或 rollout 日志）的字节大小 (file_size) 与修改时间 (mtime)，派单后必须存在物理写盘增量，杜绝内存静默挂死。"
+  },
+  {
+    "dimension_id": "Dimension 3: Inference Step 时效强约束 (Step Recency Constraint)",
+    "verification_target": "最新推理步骤时间戳有效性",
+    "verification_logic": "提取最新 source='MODEL' 推理步骤，严格比对生成时间戳 (step_timestamp > dispatch_time)；排除派单前的陈旧历史 steps 欺骗，核验首步思考与工具调用真实发生在派单之后。"
+  },
+  {
+    "dimension_id": "Dimension 4: Daemon RPC 可达性 (Daemon RPC Connectivity)",
+    "verification_target": "后台通信管道畅通性",
+    "verification_logic": "探测 Agent Daemon 进程存活与 agentapi / RPC 信道可达性，确保若需补发唤醒或发送修正指令时通信链路 100% 畅通。"
+  }
+]
+```
+
+### 2. 门禁循环与时序动作定义 (Progress Monitor & Inspection Lifecycle JSON)
+
+```json
+[
+  {
+    "stage": "Stage 1: 15s 快速探针循环与自愈门禁 (15s Fast Probe & Self-Healing)",
+    "timing": "派单后挂载 schedule(DurationSeconds=15, Prompt=\"执行 15s 快速探针核验专题 4 维物理激活态\", TimerCondition=\"any\")",
+    "trigger_condition": "派单发信 15 秒后触发",
+    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> 精准执行 4 维物理交叉验证 (Presence、Filesystem、Inference Step、Daemon RPC)。",
+    "pass_condition": "4 维物理交叉检测确凿通过 (can_enter_working_gate === true 且 is_working === true)。仅当快速探针确凿通过后，才准入挂载 30s~45s 动态工作巡检任务。",
+    "abnormal_resolution": "若 4 维交叉检测未通过 (is_working === false / 无增量 / 步骤陈旧 / 无在场): 1. 绝对严禁挂载工作巡检盲等！2. 第 15 秒即刻向用户出具【🔴 专题未激活告警卡】提示用户唤醒；3. 立即调用 agentapi.bat send-message 补发唤醒包；4. 继续挂载 15s 快速探针循环监控，直到真实激活。"
+  },
+  {
+    "stage": "Stage 2: 30s~45s 动态工作巡检门禁 (30s~45s Dynamic Working Gate)",
+    "timing": "仅在 15s 快速探针确凿通过后准入挂载 schedule(DurationSeconds=30, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\") (长耗时自测任务至多 45s)",
+    "trigger_condition": "准入通过且派单工作推进 30s~45s 后触发",
+    "inspection_actions": "读取目标专题 transcript.jsonl 最新 steps，走查：1. 是否偏离单一职责目标；2. 是否发生死循环/重复工具调用；3. 推演逻辑是否存在严重技术漏洞；4. 是否尝试越界修改物理文件。",
     "abnormal_resolution": "若发现执行偏差，主会话立即调用 send_message(recipient=\"<topic_session_id>\", message=\"【主中枢偏差修正指令】检测到执行路径偏离目标...请按以下修正方案调整...\") 进行强力干预。"
   }
 ]
 ```
 
-### 2. 监督定时器调用与清理规范 (Schedule Rules)
+### 3. 监督定时器调用与清理规范 (Schedule Rules & <60s SLA)
 1. **统一标准工具**: 必须使用系统原生 `schedule` 工具设定倒计时（严禁使用后台 `sleep` 命令）；
-2. **提前交付短路**: 若专题会话在 30s 或 120s 内提前完成交付并发送 `send_message`，主中枢收到回执后自动唤醒并可直接回收/忽略该监督定时器；
-3. **巡检无干预放行**: 若 120s 巡检确认专题思路清晰且正在执行正常长耗时单测/构建，主会话不发送扰动指令，允许其平稳运行直至交付；
-4. **定时器冲突管理与主动销毁 (Conflict Avoidance)**: 严禁在未清理旧定时器的情况下挂载带有相同 `TimerCondition` 的新定时器（防范 `conflicting early termination condition` 报错）。在更新或追加新阶段进度监测或巡检定时器前，若前置定时器仍在运行，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器任务；
-5. **防假阳性铁律 (Anti-False-Positive Iron Rule)**: 30s 进度监测器必须以 `--monitor-dispatch`（或 `--probe-dispatch`）返回的 `is_working === true` 为唯一通过标准。若为 false 则说明后台休眠未启动，严禁假装通过或进入 120s 盲等，必须立即告警并自愈重试。
+2. **提前交付短路**: 若专题会话在 15s 探针或 45s 巡检内提前完成交付并发送 `send_message`，主中枢收到回执后自动唤醒并直接回收/忽略监督定时器；
+3. **全链路 <60s 闭环时效铁律**: 快速探针 15s + 动态工作巡检 30s~45s，全链路监测与巡检耗时严格控制在 60s 内！未激活必须在 15s 内即刻告警并出具唤醒卡，严禁无谓盲等；
+4. **巡检无干预放行**: 若 30s~45s 巡检确认专题思路清晰且正在执行正常长耗时自测/构建，主会话不发送扰动指令，允许其平稳运行直至交付；
+5. **定时器冲突管理与主动销毁 (Conflict Avoidance)**: 严禁在未清理旧定时器的情况下挂载带有相同 `TimerCondition` 的新定时器（防范 `conflicting early termination condition` 报错）。在更新或追加新阶段进度监测或巡检定时器前，若前置定时器仍在运行，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器任务；
+6. **防假阳性与物理交叉铁律 (Anti-False-Positive & Physical Cross-Validation Iron Rule)**: 快速探针必须以 4 维物理交叉验证结果 (`can_enter_working_gate === true`) 为唯一通过标准。若任一维度未达标（仅有逻辑心跳但无物理写盘，或步时间戳为派单前的陈旧历史），严禁放行进入巡检阶段，必须判定为未激活并自愈唤醒。
+
+### 4. 多渠道转录内省与轨迹审查规范 (Multi-Channel Transcript Introspection)
+
+在任务下发后或巡检阶段，主会话可结合宏观 4 维物理探针与细粒度执行轨迹内省，通过多渠道多方式实时透视专题执行情况：
+
+```json
+[
+  {
+    "channel": "Channel 1: 探针伴随轨迹内省 (Probe-Attached Trajectory)",
+    "mechanism": "node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id>",
+    "scope": "返回体原生携带 recent_trajectory（最近 3 步操作摘要、动作类型与思维链摘要），供巡检门禁在一次探测中完成状态裁决与动作速览。"
+  },
+  {
+    "channel": "Channel 2: 深度转录轨迹转储 (Deep Transcript Introspection CLI)",
+    "mechanism": "node scripts/inspect_agy_sessions.js --dump-recent <target_session_id> [--tail <n>] [--json]",
+    "scope": "按时序提取派单之后或最近 N 步的完整执行轨迹，深入审查思维链（Thinking 前 200 字）、工具调用详情（工具名与参数摘要）以及模型输出内容。"
+  },
+  {
+    "channel": "Channel 3: 编程接口原语调用 (Programmatic Introspection Primitive)",
+    "mechanism": "const { fetchSessionTranscript } = require('./scripts/inspect_agy_sessions');",
+    "scope": "直接在自动化脚本中按会话 ID 获取结构化历史步骤，支持自定义 tail、thinking 与 tools 开关，彻底杜绝被动死等。"
+  }
+]
+```
 
 ---
 
@@ -535,7 +588,7 @@ flowchart TD
 - **并发正交性断言 (Concurrency Orthogonality)**：[单任务串行 / 多任务正交无交集 (已通过专题隔离、白名单正交、逻辑解耦 3 准则)]
 - **路由目标会话**：[Target Session ID / Module Key]
 - **跨专题冲突校验**：[无冲突 / 已隔离锁定目标文件]
-- **进度监测与巡检机制**：[已挂载 30s 进度监测器循环 (待真激活准入 120s 巡检任务)]
+- **进度监测与巡检机制**：[已挂载 15s 快速探针 (4 维物理交叉验证通过后准入 30s~45s 动态工作巡检，<60s 闭环)]
 - **反馈验收队列状态 (Verification Queue)**：[空闲 / N 个任务等待出队质检]
 - **批判性门禁独立质检证据**：[单测 Exit Code 0 / Diff 白名单审查结果 / Reviewer 审查结果]
 - **验证与质检策略**：[自动化测试命令 + 人机混合验证步骤]
@@ -592,7 +645,7 @@ flowchart TD
   },
   {
     "step": "3. 监督定时器全局解耦与响应式唤醒",
-    "workflow": "废除绑定单一专题的死等模式。主会话挂载全局兜底定时器 schedule(DurationSeconds=120, Prompt='巡检并行专题进度', TimerCondition='any')。任一子专题完成并通过 send_message 发信时，系统自动响应式唤醒 (Reactive Wakeup) 主会话，无需死等轮询。"
+    "workflow": "废除绑定单一专题的死等模式。主会话挂载全局兜底定时器 schedule(DurationSeconds=45, Prompt='巡检并行专题进度', TimerCondition='any') (<60s 闭环)。任一子专题完成并通过 send_message 发信时，系统自动响应式唤醒 (Reactive Wakeup) 主会话，无需死等轮询。"
   }
 ]
 ```

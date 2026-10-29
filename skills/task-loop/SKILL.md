@@ -15,10 +15,10 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ### 1. 三步路由流转 (调度器主动创建 + Hook 被动护航)
 主会话（Main Session）专注于需求初加工、任务编排、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
-* **主会话行为硬性红线 (Explore Only & Mandatory Sidebus Delegation)**:
-  - **仅限只读探索**: 主会话仅承担需求分析、只读探测与架构诊断 (`explore`)，**严禁主会话自身直接执行修改落地 (`work`) 或修改业务代码**；
+* **主会话行为硬性红线 (Main Session Hard Boundaries)**:
+  - **业务代码只读与提倡文档主理 (Code Explore-Only & Docs Stewardship)**：主会话承担需求初加工、只读探测、架构诊断 (`explore`)、1/2/3 复杂度裁决、任务编排与质检门禁职责；**允许并提倡主会话直接新建、编辑和维护 `docs/`（含 `docs/MEMORY.md`、`docs/memory/*.md`）、`MEMORY.md`、`README.md`、`AGENTS.md`、`references/` 等文档与记忆资产**，从根源消除跨会话传话导致的上下文失真；但**严禁主会话在自身会话中直接编写或修改模块业务代码**；
   - **主会话子代理派遣权限限制**: 主会话严禁派遣 Worker (写代码/落地子代理)，主会话只能派遣 `reviewer` (代码走查/审查) 和 `explorer` / `research` (架构只读探索) 子代理；
-  - **强制 sidebus 派单执行**: 所有具体编码与 BugFix (`work`) **必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派发给对应的专题会话 (Topic Session) 实施**；各专题会话承接任务后，方可按需拉起子代理 subagents 落地或直接实施，彻底杜绝主会话直接修改业务代码或擅自拉起临时 Worker；
+  - **业务代码强制 sidebus 派单执行 (Mandatory Sidebus Delegation for Code)**：所有具体的模块业务代码开发、功能落地与 BugFix (`work`) **必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派单至对应的专题会话 (Topic Session) 独立实施**；下层各个专题会话负责独立的模块代码开发以及协助局部 `docs` 文档编辑；各专题会话承接任务后，方可按需拉起子代理 subagents 落地或直接实施，彻底杜绝主会话直接修改业务代码或擅自拉起临时 Worker；
   - **无可用专题与防擅自派发铁律**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
 2. **没有则新建 (主动程序化创建)**: 若为全新领域，调度器调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"`（自动净化父级环境变数，确保 `nestingDepth: 0` 独立顶层根会话）并在 `sessions.json` 持久化登记；若不知如何创建或无环境，先查阅文档或向用户确认；
@@ -128,6 +128,32 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 ]
 ```
 
+### 5. 前置方案探讨与极简对话伙伴模式 (Discuss Mode Integration)
+
+主会话在面对用户模糊需求、方案选型或前置需求对齐时，**严禁一开始就输出千字长篇大论或机械倾倒全量备选方案**，防止用户产生阅读疲劳与注意力涣散。
+主会话应优先进入【极简对话伙伴 (Discuss Mode)】（详见 [`skills/discuss/SKILL.md`](../discuss/SKILL.md)）：
+
+```json
+[
+  {
+    "principle": "1. 极简篇幅 (Ultra-Concise)",
+    "rule": "每轮回复控制在 1~3 句话以内（建议不超过 60 字），直奔主题，避免套话与繁复排版。"
+  },
+  {
+    "principle": "2. 单点推进 (Single-Point Focus)",
+    "rule": "每轮仅探讨最核心的一个决策点或当前步骤，不一次性罗列全量备选项，细节留待后续多轮互动自然深入。"
+  },
+  {
+    "principle": "3. 互动收尾 (Interactive Closing)",
+    "rule": "回复末尾附带简短聚焦的追问，引导对话自然往下走；待与用户完全对齐并锁定需求后，再按 4 大法定板块向专题派单。"
+  },
+  {
+    "principle": "4. 按需展开 (On-Demand Expansion)",
+    "rule": "仅当用户明确要求“输出完整代码/完整方案”时，才临时解除篇幅限制展开详尽阐述。"
+  }
+]
+```
+
 ---
 
 
@@ -142,14 +168,14 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
     "layer": "L1 (Top Layer)",
     "role": "Main Session (全局中枢 / 治理中枢)",
     "lifecycle_nature": "常驻顶层根会话 (nestingDepth: 0)",
-    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收。严禁自身编写业务代码 (WORK) 或派遣 Worker 子代理。",
+    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收；允许并提倡直接主理 docs/ 与 MEMORY.md 等文档操作以防止上下文失真，严禁自身编写模块业务代码 (WORK) 或派遣 Worker 子代理。",
     "model_selection_policy": "选用大上下文、高统筹规划与强决策推理模型；思考深度由 Agent 结合决策复杂度自决 (Autonomous Determination)，杜绝硬编码型号。"
   },
   {
     "layer": "L2 (Middle Layer)",
     "role": "Topic Session (专题物理实体会话 / 领域负责人)",
     "lifecycle_nature": "长期常驻物理实体会话 (Permanent Physical Session)，与 docs/memory/*.md 1:1 强绑定",
-    "core_responsibilities": "模块专属落地，负责代码编写、深入排障、语法检查与功能自测。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
+    "core_responsibilities": "负责独立的模块业务代码开发、深入排障、语法检查与功能自测，并协助局部 docs 文档编辑与专题记忆沉淀。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
     "model_selection_policy": "选用高严密、强逻辑与代码生成能力优异的主力模型；思考深度充沛，由 Agent 结合工程复杂度自决，杜绝硬编码型号。"
   },
   {
@@ -214,22 +240,68 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ---
 
-## 五、双阶梯进度监测与巡检机制 (Dual-Stage Progress Monitor & Inspection Tasks)
+## 五、双阶梯进度监测与动态巡检机制 (Dual-Stage Progress Monitor & Dynamic Inspection: 15s Fast Probe + 30s~45s Working Gate)
 
-为消除专题会话休眠未响应或偏离目标的失控，主会话派单后执行【30s 响应监测器门禁循环 + 120s 巡检任务准入】：
+为彻底解决 AGY 等高响应宿主下用户无效盲等超 60s 的痛点，并杜绝因假阳性无法及时拦截的问题，全面废除原 30s + 120s 漫长等待流水线，确立【15s 快速探针 + 30s~45s 动态工作巡检（全链路 <60s 闭环）与 4 维物理交叉验证门禁】：
+
+### 1. 4 维物理交叉验证判定契约 (4-Dimensional Physical Cross-Validation Protocol)
+
+主会话在调用 `scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id>` 探测专题状态时，必须严格执行以下 4 维物理交叉验证：
 
 ```json
 [
   {
-    "stage": "Stage 1: 30s 响应监测器循环与自愈门禁",
-    "rule": "派单后挂载 schedule(DurationSeconds=30)。触发时运行 node scripts/inspect_agy_sessions.js --monitor-dispatch <id>。若 is_working === false，绝对严禁挂载 120s 巡检任务！立即输出【🔴 专题未激活告警卡】、通过 agentapi 补发唤醒，并继续挂载 30s 进度监测器循环监控直至真实激活。"
+    "dimension_id": "Dimension 1: Presence 在场锁 (Presence Lock)",
+    "verification_target": "进程与线程运行时活跃态",
+    "verification_logic": "探测目标会话的在场锁文件是否存在或 thread_running === true，确保专题会话未发生进程闪退或物理失联。"
   },
   {
-    "stage": "Stage 2: 120s 巡检任务准入门禁",
-    "rule": "仅当响应监测器确凿返回 is_working === true 后，才准入挂载 schedule(DurationSeconds=120) 进行路径走查与偏差干预。"
+    "dimension_id": "Dimension 2: Filesystem 物理增量 (Filesystem Increment)",
+    "verification_target": "物理日志写盘真实增量",
+    "verification_logic": "核验目标专题 transcript.jsonl（或 rollout 日志）的字节大小 (file_size) 与修改时间 (mtime)，派单后必须存在物理写盘增量，杜绝内存静默挂死。"
+  },
+  {
+    "dimension_id": "Dimension 3: Inference Step 时效强约束 (Step Recency Constraint)",
+    "verification_target": "最新推理步骤时间戳有效性",
+    "verification_logic": "提取最新 source='MODEL' 推理步骤，严格比对生成时间戳 (step_timestamp > dispatch_time)；排除派单前的陈旧历史 steps 欺骗，核验首步思考与工具调用真实发生在派单之后。"
+  },
+  {
+    "dimension_id": "Dimension 4: Daemon RPC 可达性 (Daemon RPC Connectivity)",
+    "verification_target": "后台通信管道畅通性",
+    "verification_logic": "探测 Agent Daemon 进程存活与 agentapi / RPC 信道可达性，确保若需补发唤醒或发送修正指令时通信链路 100% 畅通。"
   }
 ]
 ```
+
+### 2. 门禁循环与时序动作定义 (Progress Monitor & Inspection Lifecycle JSON)
+
+```json
+[
+  {
+    "stage": "Stage 1: 15s 快速探针循环与自愈门禁 (15s Fast Probe & Self-Healing)",
+    "timing": "派单后挂载 schedule(DurationSeconds=15, Prompt=\"执行 15s 快速探针核验专题 4 维物理激活态\", TimerCondition=\"any\")",
+    "trigger_condition": "派单发信 15 秒后触发",
+    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> 精准执行 4 维物理交叉验证 (Presence、Filesystem、Inference Step、Daemon RPC)。",
+    "pass_condition": "4 维物理交叉检测确凿通过 (can_enter_working_gate === true 且 is_working === true)。仅当快速探针确凿通过后，才准入挂载 30s~45s 动态工作巡检任务。",
+    "abnormal_resolution": "若 4 维交叉检测未通过 (is_working === false / 无增量 / 步骤陈旧 / 无在场): 1. 绝对严禁挂载工作巡检盲等！2. 第 15 秒即刻向用户出具【🔴 专题未激活告警卡】提示用户唤醒；3. 立即调用 agentapi.bat send-message 补发唤醒包；4. 继续挂载 15s 快速探针循环监控，直到真实激活。"
+  },
+  {
+    "stage": "Stage 2: 30s~45s 动态工作巡检门禁 (30s~45s Dynamic Working Gate)",
+    "timing": "仅在 15s 快速探针确凿通过后准入挂载 schedule(DurationSeconds=30, Prompt=\"巡检专题会话执行偏差\", TimerCondition=\"any\") (长耗时自测任务至多 45s)",
+    "trigger_condition": "准入通过且派单工作推进 30s~45s 后触发",
+    "inspection_actions": "读取目标专题 transcript.jsonl 最新 steps，走查：1. 是否偏离单一职责目标；2. 是否发生死循环/重复工具调用；3. 推演逻辑是否存在严重技术漏洞；4. 是否尝试越界修改物理文件。",
+    "abnormal_resolution": "若发现执行偏差，主会话立即调用 send_message(recipient=\"<topic_session_id>\", message=\"【主中枢偏差修正指令】检测到执行路径偏离目标...请按以下修正方案调整...\") 进行强力干预。"
+  }
+]
+```
+
+### 3. 监督定时器调用与清理规范 (Schedule Rules & <60s SLA)
+1. **统一标准工具**: 必须使用系统原生 `schedule` 工具设定倒计时（严禁使用后台 `sleep` 命令）；
+2. **提前交付短路**: 若专题会话在 15s 探针或 45s 巡检内提前完成交付并发送 `send_message`，主中枢收到回执后自动唤醒并直接回收/忽略监督定时器；
+3. **全链路 <60s 闭环时效铁律**: 快速探针 15s + 动态工作巡检 30s~45s，全链路监测与巡检耗时严格控制在 60s 内！未激活必须在 15s 内即刻告警并出具唤醒卡，严禁无谓盲等；
+4. **巡检无干预放行**: 若 30s~45s 巡检确认专题思路清晰且正在执行正常长耗时自测/构建，主会话不发送扰动指令，允许其平稳运行直至交付；
+5. **定时器冲突管理与主动销毁 (Conflict Avoidance)**: 严禁在未清理旧定时器的情况下挂载带有相同 `TimerCondition` 的新定时器（防范 `conflicting early termination condition` 报错）。在更新或追加新阶段进度监测或巡检定时器前，若前置定时器仍在运行，必须先调用 `manage_task(Action='kill', TaskId='<old_task_id>')` 显式销毁旧定时器任务；
+6. **防假阳性与物理交叉铁律 (Anti-False-Positive & Physical Cross-Validation Iron Rule)**: 快速探针必须以 4 维物理交叉验证结果 (`can_enter_working_gate === true`) 为唯一通过标准。若任一维度未达标（仅有逻辑心跳但无物理写盘，或步时间戳为派单前的陈旧历史），严禁放行进入巡检阶段，必须判定为未激活并自愈唤醒。
 
 ---
 
@@ -294,7 +366,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
     "hook_name": "PreToolUse",
     "script": "scripts/hooks/enforce_allowlist.js (.py)",
     "lifecycle_point": "工具执行拦截门禁 (Pre-Tool-Use)",
-    "core_function": "物理白名单安全门禁 (Allowlist Guard)。物理拦截专题会话越界写文件行为，防目录前缀碰撞与符号链接逃逸；硬性拦截主会话直接写业务代码，保障派单治理闭环。"
+    "core_function": "物理白名单安全门禁 (Allowlist Guard)。物理拦截专题会话越界写文件行为，防目录前缀碰撞与符号链接逃逸；支持主会话直接维护 docs/ 与治理文档，硬性拦截主会话直接写模块业务代码，保障派单治理闭环。"
   }
 ]
 ```
@@ -305,6 +377,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 ## 八、关联文档与受控记忆 (References)
 * **深度派发与质检契约**: [`references/dispatch-contract.md`](../../references/dispatch-contract.md)
+* **极简对话伙伴工具**: [`skills/discuss/SKILL.md`](../discuss/SKILL.md)
 * **治理总规范**: [`AGENTS.md`](../../AGENTS.md)
 * **受控记忆主索引**: [`docs/MEMORY.md`](../../docs/MEMORY.md)
 

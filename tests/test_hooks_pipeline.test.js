@@ -267,6 +267,27 @@ function runHooksPipelineTests() {
       'Deny reason should explain violation'
     );
 
+    // 3.5 Test enforce_allowlist.js with Main Thread docs stewardship allowed files (docs/MEMORY.md, MEMORY.md, README.md)
+    for (const allowedDoc of ["docs/MEMORY.md", "docs/memory/session_control.md", "MEMORY.md", "README.md"]) {
+      const mockMainDocToolUse = JSON.stringify({
+        vendor: 'antigravity',
+        conversationId: MOCK_MAIN_ID,
+        toolCall: {
+          name: "replace_file_content",
+          args: {
+            TargetFile: allowedDoc
+          }
+        },
+        workspacePaths: [sandboxDir]
+      });
+      const mainDocOutput = execSync(`node "${allowlistScript}"`, {
+        input: mockMainDocToolUse,
+        encoding: 'utf8'
+      });
+      const mainDocResult = JSON.parse(mainDocOutput);
+      assert.strictEqual(mainDocResult.decision, 'allow', `Main thread should be allowed to steward docs asset: ${allowedDoc}`);
+    }
+
     // 4. Test enforce_allowlist.js with topic session disallowed file returns ALLOWLIST_EXPANSION_REQUEST
     const mockTopicDisallowed = JSON.stringify({
       vendor: 'antigravity',

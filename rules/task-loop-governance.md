@@ -23,16 +23,16 @@
 [
   {
     "layer": "L1 (Top Layer)",
-    "role": "Main Session (全局中枢 / 治理中枢)",
+    "role": "Main Session (全局中枢 / 治理与文档主理中枢)",
     "lifecycle_nature": "常驻顶层根会话 (nestingDepth: 0)",
-    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收。严禁自身编写业务代码 (WORK) 或派遣 Worker 子代理。",
+    "core_responsibilities": "用户意图初加工、信息广域收集、架构只读诊断 (EXPLORE)、决策推演、任务编排派单与质检门禁验收；允许并提倡直接主理 docs/ 与 MEMORY.md 等文档操作以防止上下文失真，严禁自身编写模块业务代码 (WORK) 或派遣 Worker 子代理。",
     "model_selection_policy": "选用大上下文、高统筹规划与强决策推理模型；思考深度由 Agent 结合决策复杂度自决 (Autonomous Determination)，杜绝硬编码型号。"
   },
   {
     "layer": "L2 (Middle Layer)",
     "role": "Topic Session (专题物理实体会话 / 领域负责人)",
     "lifecycle_nature": "长期常驻物理实体会话 (Permanent Physical Session)，与 docs/memory/*.md 1:1 强绑定",
-    "core_responsibilities": "模块专属落地，负责代码编写、深入排障、语法检查与功能自测。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
+    "core_responsibilities": "负责独立的模块业务代码开发、深入排障、语法检查与功能自测，并协助局部 docs 文档编辑与专题记忆沉淀。持续积累领域会话历史，最大化大模型 Prompt Token (KV Cache) 命中率。",
     "model_selection_policy": "选用高严密、强逻辑与代码生成能力优异的主力模型；思考深度充沛，由 Agent 结合工程复杂度自决，杜绝硬编码型号。"
   },
   {
@@ -49,8 +49,8 @@
 
 ## 3. 主会话编排与三步派单铁律 (Main Session 3-Step Law)
 
-主会话在接收到用户需求后，专注于需求初加工、任务编排、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
-* **主会话行为硬性红线 (Explore Only & Sidebus Delegation)**: 主会话仅限执行只读探索与架构诊断 (EXPLORE)，**严禁在自身会话中直接修改业务代码 (WORK)**；所有具体编码与 BugFix 必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派单至对应的专题会话 (Topic Session) 实施，各专题会话承接任务后才可在其内部按需拉起子代理 (subagents) 落地，彻底杜绝主会话直接动手或擅自派遣临时 Worker 造成的治理失控。
+主会话在接收到用户需求后，专注于需求初加工、任务编排、文档与记忆主理、任务类型判定（只读 `explore` vs 修改 `work`）与物理白名单（`allowlist`）划定：
+* **主会话行为硬性红线 (Code Explore-Only, Docs Stewardship & Sidebus Delegation)**: 主会话负责只读探索与架构诊断 (EXPLORE)，**允许并提倡主会话直接编写、维护 `docs/`（含 `docs/MEMORY.md`、`docs/memory/*.md`）、`MEMORY.md`、`README.md`、`AGENTS.md`、`references/` 等文档资产以消除上下文失真**；但**严禁在自身会话中直接修改模块业务代码 (WORK)**。所有具体模块代码开发与 BugFix 必须且强制要求通过 sidebus (`send_message` / `agentapi`) 派单至对应的专题会话 (Topic Session) 独立实施，下层各专题会话负责独立的模块代码开发并协助局部 `docs` 编辑。
 * **主会话子代理派遣权限限制 (Reviewer & Explorer Only)**: 主会话严禁派遣 Worker (落地/写代码子代理)，主会话只能派遣 `reviewer` (代码审查/走查) 和 `explorer` / `research` (架构只读探索) 子代理；
 * **无可用会话与防擅自派发铁律 (Strict Topic Governance & No Unauthorized Worker)**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
 * **派单完整背景与信息梳理下发铁律 (Full Context Dispatching Iron Law)**:

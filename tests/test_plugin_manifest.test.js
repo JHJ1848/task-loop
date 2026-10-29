@@ -24,8 +24,8 @@ function runPluginManifestTests() {
   const rulesPath = path.join(rootDir, 'rules', 'task-loop-governance.md');
   assert.strictEqual(fs.existsSync(rulesPath), true, 'rules/task-loop-governance.md must exist');
 
-  // 4. Verify 5 independent skills (hook is background interceptor, not an exposed skill)
-  const expectedSkills = ['task-loop', 'session-control', 'subagent', 'init', 'new-session'];
+  // 4. Verify independent skills (hook is background interceptor, not an exposed skill)
+  const expectedSkills = ['task-loop', 'session-control', 'subagent', 'init', 'new-session', 'discuss'];
   for (const skillName of expectedSkills) {
     const skillPath = path.join(rootDir, 'skills', skillName, 'SKILL.md');
     assert.strictEqual(fs.existsSync(skillPath), true, `skills/${skillName}/SKILL.md must exist`);

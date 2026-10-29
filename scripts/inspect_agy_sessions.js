@@ -259,24 +259,305 @@ function printTable(report) {
   console.log(`\n================================================================================\n`);
 }
 
-function probeDispatchSession(sessionId, options = {}) {
-  const brainDir = options.brainPath ? path.resolve(options.brainPath) : path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+/**
+ * 保护性检查 AgentAPI RPC 连通性
+ */
+function checkAgentApiRpc(sessionId, options = {}) {
+  if (options.skipRpc) {
+    return { checked: false, available: true, skipped: true };
+  }
+  const home = os.homedir();
+  const candidates = [
+    process.env.AGENTAPI_PATH,
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi.bat'),
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi.exe'),
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi'),
+    path.join(home, '.antigravity', 'bin', 'agentapi.bat'),
+    path.join(home, '.antigravity', 'bin', 'agentapi.exe'),
+    path.join(home, '.antigravity', 'bin', 'agentapi')
+  ].filter(Boolean);
+
+  let bin = candidates.find(c => fs.existsSync(c));
+  if (!bin) {
+    try {
+      const which = process.platform === 'win32' ? 'where.exe agentapi' : 'which agentapi';
+      const out = require('child_process').execSync(which, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 600 }).trim();
+      const firstLine = out.split(/\r?\n/)[0];
+      if (firstLine && fs.existsSync(firstLine)) bin = firstLine;
+    } catch {}
+  }
+
+  if (!bin || !fs.existsSync(bin)) {
+    return { checked: false, available: false, error: 'agentapi binary not found' };
+  }
+
+  try {
+    const isWin = process.platform === 'win32';
+    const isBat = isWin && /\.(bat|cmd)$/i.test(bin);
+    let res;
+    if (isBat) {
+      const cmdPath = process.env.ComSpec || 'cmd.exe';
+      res = require('child_process').spawnSync(cmdPath, ['/d', '/s', '/c', `"${bin}" get-conversation-metadata ${sessionId}`], {
+        encoding: 'utf8',
+        timeout: 3000,
+        windowsVerbatimArguments: true,
+        stdio: ['pipe', 'pipe', 'ignore']
+      });
+    } else {
+      res = require('child_process').spawnSync(bin, ['get-conversation-metadata', sessionId], {
+        encoding: 'utf8',
+        timeout: 3000,
+        stdio: ['pipe', 'pipe', 'ignore']
+      });
+    }
+    if (res.error) {
+      return { checked: true, available: false, error: res.error.message };
+    }
+    if (res.status === 0 && res.stdout) {
+      let meta = null;
+      try { meta = JSON.parse(res.stdout); } catch { meta = res.stdout.trim(); }
+      return { checked: true, available: true, metadata: meta };
+    } else {
+      const errOut = (res.stderr && res.stderr.trim()) || `exit code ${res.status}`;
+      return { checked: true, available: false, error: errOut };
+    }
+  } catch (err) {
+    return { checked: true, available: false, error: err.message };
+  }
+}
+
+/**
+ * 跨会话转录内省原语 (Transcript Introspection Primitive)
+ * 按时序提取目标会话的最新执行轨迹，包括思维链 Thinking、工具调用与模型内容。
+ */
+function fetchSessionTranscript(sessionId, options = {}) {
+  const tail = typeof options.tail === 'number' && options.tail > 0 ? options.tail : 5;
+  const includeThinking = options.includeThinking !== false;
+  const includeTools = options.includeTools !== false;
+  const brainDir = options.brainPath
+    ? path.resolve(options.brainPath)
+    : path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
   const sessionDir = path.join(brainDir, sessionId);
 
   if (!fs.existsSync(sessionDir)) {
     return {
       session_id: sessionId,
       found: false,
-      thread_running: false,
-      is_working: false,
-      working_status: 'DORMANT_NOT_ACTIVATED',
-      can_enter_120s_gate: false,
-      should_loop_30s_probe: true,
-      dispatch_found: false,
+      total_steps: 0,
+      tail,
+      steps: [],
+      error: `会话目录不存在: ${sessionDir}`
+    };
+  }
+
+  let logFile = path.join(sessionDir, '.system_generated', 'logs', 'transcript.jsonl');
+  if (!fs.existsSync(logFile)) {
+    logFile = path.join(sessionDir, '.system_generated', 'logs', 'transcript_full.jsonl');
+  }
+
+  if (!fs.existsSync(logFile)) {
+    return {
+      session_id: sessionId,
+      found: false,
+      total_steps: 0,
+      tail,
+      steps: [],
+      error: `日志文件不存在: ${logFile}`
+    };
+  }
+
+  const allSteps = [];
+  try {
+    const content = fs.readFileSync(logFile, 'utf8');
+    const lines = content.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        allSteps.push(parsed);
+      } catch {}
+    }
+  } catch (err) {
+    return {
+      session_id: sessionId,
+      found: false,
+      total_steps: 0,
+      tail,
+      steps: [],
+      error: `读取转录日志失败: ${err.message}`
+    };
+  }
+
+  const rawTailSteps = allSteps.slice(-tail);
+  const formattedSteps = rawTailSteps.map((st, idx) => {
+    const stepIdx = st.step_index !== undefined ? st.step_index : (allSteps.length - rawTailSteps.length + idx);
+    const item = {
+      step_index: stepIdx,
+      type: st.type || 'UNKNOWN',
+      source: st.source || 'UNKNOWN',
+      status: st.status || 'DONE',
+      created_at: st.created_at || null
+    };
+
+    if (includeThinking && st.thinking) {
+      item.thinking_preview = st.thinking.length > 200
+        ? st.thinking.slice(0, 197) + '...'
+        : st.thinking;
+    } else {
+      item.thinking_preview = null;
+    }
+
+    if (includeTools && st.tool_calls && Array.isArray(st.tool_calls)) {
+      item.tool_calls = st.tool_calls.map(tc => {
+        let argsSummary = '';
+        if (tc.args) {
+          if (typeof tc.args === 'string') {
+            argsSummary = tc.args.length > 120 ? tc.args.slice(0, 117) + '...' : tc.args;
+          } else {
+            const str = JSON.stringify(tc.args);
+            argsSummary = str.length > 120 ? str.slice(0, 117) + '...' : str;
+          }
+        }
+        return {
+          name: tc.name || 'unnamed_tool',
+          args_summary: argsSummary
+        };
+      });
+    } else {
+      item.tool_calls = [];
+    }
+
+    if (st.content && typeof st.content === 'string') {
+      item.content_snippet = st.content.length > 200
+        ? st.content.slice(0, 197) + '...'
+        : st.content;
+    } else {
+      item.content_snippet = null;
+    }
+
+    return item;
+  });
+
+  return {
+    session_id: sessionId,
+    found: true,
+    total_steps: allSteps.length,
+    tail,
+    log_file: logFile,
+    steps: formattedSteps
+  };
+}
+
+/**
+ * 格式化打印近期执行轨迹报告
+ */
+function printRecentTrajectory(data) {
+  console.log('\n' + '='.repeat(80));
+  console.log('[task-loop] 目标专题会话执行轨迹内省报告 (Transcript Introspection)');
+  console.log('='.repeat(80));
+  console.log(`* 会话 ID   : ${data.session_id}`);
+  console.log(`* 状态     : ${data.found ? '🟢 日志已就绪' : '🔴 未找到日志'}`);
+  console.log(`* 总步数   : ${data.total_steps} (展示最近 ${data.steps ? data.steps.length : 0} 步)`);
+  if (data.log_file) {
+    console.log(`* 日志路径 : ${data.log_file}`);
+  }
+  if (data.error) {
+    console.log(`* 错误信息 : ${data.error}`);
+  }
+  console.log('-'.repeat(80));
+
+  if (!data.steps || data.steps.length === 0) {
+    console.log('(未检测到有效历史步骤)');
+  } else {
+    data.steps.forEach(st => {
+      const sourceTag = `[${st.source || 'UNKNOWN'}]`;
+      const typeTag = `[${st.type || 'STEP'}]`;
+      const statusTag = `[${st.status || 'DONE'}]`;
+      console.log(`\n#${st.step_index} ${sourceTag} ${typeTag} ${statusTag} (${st.created_at || '时间未知'})`);
+      if (st.thinking_preview) {
+        console.log(`   💡 思考链: ${st.thinking_preview.replace(/\r?\n/g, ' ')}`);
+      }
+      if (st.tool_calls && st.tool_calls.length > 0) {
+        st.tool_calls.forEach(tc => {
+          console.log(`   🔧 工具调用: ${tc.name} -> ${tc.args_summary}`);
+        });
+      }
+      if (st.content_snippet) {
+        console.log(`   💬 内容摘要: ${st.content_snippet.replace(/\r?\n/g, ' ')}`);
+      }
+    });
+  }
+  console.log('\n' + '='.repeat(80) + '\n');
+}
+
+/**
+ * 4维物理交叉验证探针 (4-Dimension Physical Cross-Validation Probe)
+ * 彻底消灭历史步骤与假阳性绿灯，综合在场锁、文件物理增量、步骤时效与 Daemon RPC。
+ */
+function probeDispatchSession(sessionId, options = {}) {
+  const brainDir = options.brainPath ? path.resolve(options.brainPath) : path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
+  const sessionDir = path.join(brainDir, sessionId);
+  const nowMs = Date.now();
+  const freshWindowSec = typeof options.freshWindowSec === 'number' ? options.freshWindowSec : 30;
+  const baselineTime = options.baselineTime || null;
+  const baselineSize = typeof options.baselineSize === 'number' ? options.baselineSize : null;
+
+  // 维度 1: Presence 在场锁检测
+  const presenceLockDir = options.presencePath
+    ? path.resolve(options.presencePath)
+    : path.join(os.homedir(), '.gemini', 'antigravity', 'presence');
+  const presenceLockFile = path.join(presenceLockDir, `${sessionId}.lock`);
+  const isPresent = fs.existsSync(presenceLockFile);
+  const dimensionPresence = {
+    is_present: isPresent,
+    lock_file: presenceLockFile
+  };
+
+  if (!fs.existsSync(sessionDir)) {
+    const dimensionFs = {
+      transcript_path: null,
+      transcript_mtime: null,
+      transcript_size: 0,
+      delta_bytes: 0,
+      has_recent_write: false,
+      mtime_diff_sec: null
+    };
+    const dimensionInference = {
       model_steps_count: 0,
       tool_calls_count: 0,
       thinking_steps_count: 0,
       in_progress_steps_count: 0,
+      latest_model_step: null,
+      is_fresh: false,
+      step_age_sec: null,
+      thread_running_fresh: false
+    };
+    const dimensionRpc = checkAgentApiRpc(sessionId, options);
+
+    return {
+      session_id: sessionId,
+      found: false,
+      thread_running: false,
+      is_working: false,
+      working_status: 'DORMANT_NOT_ACTIVATED',
+      can_enter_gate: false,
+      can_enter_120s_gate: false,
+      should_loop_probe: true,
+      should_loop_30s_probe: true,
+      should_loop_30s_monitor: true,
+      dispatch_found: false,
+      recent_trajectory: [],
+      model_steps_count: 0,
+      tool_calls_count: 0,
+      thinking_steps_count: 0,
+      in_progress_steps_count: 0,
+      dimensions: {
+        presence: dimensionPresence,
+        filesystem: dimensionFs,
+        inference_step: dimensionInference,
+        rpc: dimensionRpc
+      },
       reason: `会话目录不存在: ${sessionDir}`,
       deep_link: `conversation://${sessionId}`,
       alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未创建或无日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
@@ -286,25 +567,87 @@ function probeDispatchSession(sessionId, options = {}) {
   let logFile = path.join(sessionDir, '.system_generated', 'logs', 'transcript.jsonl');
   if (!fs.existsSync(logFile)) {
     logFile = path.join(sessionDir, '.system_generated', 'logs', 'transcript_full.jsonl');
-    if (!fs.existsSync(logFile)) {
-      return {
-        session_id: sessionId,
-        found: false,
-        thread_running: false,
-        is_working: false,
-        working_status: 'DORMANT_NOT_ACTIVATED',
-        can_enter_120s_gate: false,
-        should_loop_30s_probe: true,
-        dispatch_found: false,
-        model_steps_count: 0,
-        tool_calls_count: 0,
-        thinking_steps_count: 0,
-        in_progress_steps_count: 0,
-        reason: '未找到 transcript.jsonl 日志文件',
-        deep_link: `conversation://${sessionId}`,
-        alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
-      };
+  }
+
+  // 维度 2: 文件系统物理状态与增量检测
+  let transcriptMtime = null;
+  let transcriptMtimeMs = 0;
+  let transcriptSize = 0;
+  let deltaBytes = null;
+  if (fs.existsSync(logFile)) {
+    try {
+      const stat = fs.statSync(logFile);
+      transcriptMtime = stat.mtime.toISOString();
+      transcriptMtimeMs = stat.mtime.getTime();
+      transcriptSize = stat.size;
+      if (baselineSize !== null) {
+        deltaBytes = Math.max(0, transcriptSize - baselineSize);
+      }
+    } catch {}
+  }
+
+  let mtimeDiffSec = transcriptMtimeMs > 0 ? Math.floor((nowMs - transcriptMtimeMs) / 1000) : null;
+  let hasRecentWrite = false;
+  if (baselineTime) {
+    const baseMs = typeof baselineTime === 'number' ? baselineTime : new Date(baselineTime).getTime();
+    if (!isNaN(baseMs)) {
+      hasRecentWrite = transcriptMtimeMs >= (baseMs - 1000);
+      if (baselineSize !== null) {
+        hasRecentWrite = hasRecentWrite && (deltaBytes > 0);
+      }
     }
+  } else if (mtimeDiffSec !== null) {
+    hasRecentWrite = mtimeDiffSec <= freshWindowSec;
+  }
+
+  const dimensionFilesystem = {
+    transcript_path: logFile,
+    transcript_mtime: transcriptMtime,
+    transcript_size: transcriptSize,
+    delta_bytes: deltaBytes,
+    has_recent_write: hasRecentWrite,
+    mtime_diff_sec: mtimeDiffSec
+  };
+
+  if (!fs.existsSync(logFile)) {
+    const dimensionInference = {
+      model_steps_count: 0,
+      tool_calls_count: 0,
+      thinking_steps_count: 0,
+      in_progress_steps_count: 0,
+      latest_model_step: null,
+      is_fresh: false,
+      step_age_sec: null,
+      thread_running_fresh: false
+    };
+    const dimensionRpc = checkAgentApiRpc(sessionId, options);
+
+    return {
+      session_id: sessionId,
+      found: false,
+      thread_running: false,
+      is_working: false,
+      working_status: 'DORMANT_NOT_ACTIVATED',
+      can_enter_gate: false,
+      can_enter_120s_gate: false,
+      should_loop_probe: true,
+      should_loop_30s_probe: true,
+      should_loop_30s_monitor: true,
+      dispatch_found: false,
+      model_steps_count: 0,
+      tool_calls_count: 0,
+      thinking_steps_count: 0,
+      in_progress_steps_count: 0,
+      dimensions: {
+        presence: dimensionPresence,
+        filesystem: dimensionFilesystem,
+        inference_step: dimensionInference,
+        rpc: dimensionRpc
+      },
+      reason: '未找到 transcript.jsonl 日志文件',
+      deep_link: `conversation://${sessionId}`,
+      alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
+    };
   }
 
   let lastDispatchIndex = -1;
@@ -338,19 +681,40 @@ function probeDispatchSession(sessionId, options = {}) {
       } catch (e) {}
     }
   } catch (e) {
+    const dimensionInference = {
+      model_steps_count: 0,
+      tool_calls_count: 0,
+      thinking_steps_count: 0,
+      in_progress_steps_count: 0,
+      latest_model_step: null,
+      is_fresh: false,
+      step_age_sec: null,
+      thread_running_fresh: false
+    };
+    const dimensionRpc = checkAgentApiRpc(sessionId, options);
+
     return {
       session_id: sessionId,
       found: false,
       thread_running: false,
       is_working: false,
       working_status: 'DORMANT_NOT_ACTIVATED',
+      can_enter_gate: false,
       can_enter_120s_gate: false,
+      should_loop_probe: true,
       should_loop_30s_probe: true,
+      should_loop_30s_monitor: true,
       dispatch_found: false,
       model_steps_count: 0,
       tool_calls_count: 0,
       thinking_steps_count: 0,
       in_progress_steps_count: 0,
+      dimensions: {
+        presence: dimensionPresence,
+        filesystem: dimensionFilesystem,
+        inference_step: dimensionInference,
+        rpc: dimensionRpc
+      },
       reason: `读取日志异常: ${e.message}`,
       deep_link: `conversation://${sessionId}`
     };
@@ -410,34 +774,142 @@ function probeDispatchSession(sessionId, options = {}) {
     }
   }
 
-  // Also check if the absolute last step of the whole session is actively generating/in-progress
+  // 检查最后一步是否为 IN_PROGRESS
   if (steps.length > 0 && steps[steps.length - 1].status === 'IN_PROGRESS') {
     threadRunning = true;
   }
 
-  const isWorking = Boolean(modelStepsAfterDispatch > 0 || threadRunning);
-  const canEnter120sGate = isWorking;
-  const shouldLoop30sMonitor = !isWorking;
+  // 维度 3: Step Freshness 时效强校验 (彻底根除历史步骤假阳性)
+  let isStepFresh = false;
+  let stepAgeSec = null;
+  if (latestModelStep && latestModelStep.created_at) {
+    const stepMs = new Date(latestModelStep.created_at).getTime();
+    if (!isNaN(stepMs)) {
+      stepAgeSec = Math.floor((nowMs - stepMs) / 1000);
+      if (baselineTime) {
+        const baseMs = typeof baselineTime === 'number' ? baselineTime : new Date(baselineTime).getTime();
+        if (!isNaN(baseMs)) {
+          isStepFresh = stepMs >= (baseMs - 1000);
+        }
+      } else {
+        isStepFresh = stepAgeSec <= freshWindowSec;
+      }
+    }
+  }
 
-  return {
-    session_id: sessionId,
-    found: true,
-    thread_running: threadRunning,
-    is_working: isWorking,
-    working_status: isWorking ? 'WORKING_IN_PROGRESS' : 'DORMANT_NOT_ACTIVATED',
-    can_enter_120s_gate: canEnter120sGate,
-    should_loop_30s_monitor: shouldLoop30sMonitor,
-    should_loop_30s_probe: shouldLoop30sMonitor,
-    dispatch_found: lastDispatchIndex !== -1,
-    dispatch_step_index: lastDispatchIndex,
-    last_dispatch_step: lastDispatchStep,
+  let threadRunningFresh = false;
+  if (threadRunning && steps.length > 0) {
+    const lastStep = steps[steps.length - 1];
+    if (lastStep && lastStep.created_at) {
+      const lastMs = new Date(lastStep.created_at).getTime();
+      if (!isNaN(lastMs)) {
+        const lastAgeSec = Math.floor((nowMs - lastMs) / 1000);
+        if (baselineTime) {
+          const baseMs = typeof baselineTime === 'number' ? baselineTime : new Date(baselineTime).getTime();
+          threadRunningFresh = lastMs >= (baseMs - 1000);
+        } else {
+          threadRunningFresh = lastAgeSec <= freshWindowSec;
+        }
+      }
+    }
+  }
+
+  const dimensionInference = {
     model_steps_count: modelStepsAfterDispatch,
     tool_calls_count: toolCallsCount,
     thinking_steps_count: thinkingStepsCount,
     in_progress_steps_count: inProgressStepsCount,
     latest_model_step: latestModelStep,
+    is_fresh: isStepFresh,
+    step_age_sec: stepAgeSec,
+    thread_running_fresh: threadRunningFresh
+  };
+
+  // 维度 4: Daemon RPC 可达性
+  const dimensionRpc = checkAgentApiRpc(sessionId, options);
+
+  // 综合裁决逻辑 (Reconciliation Logic):
+  // 充要条件:
+  // 1. 最新模型推理步骤在时效判定窗口内 (is_fresh 或 threadRunningFresh)
+  // 2. 或磁盘物理层近期有真实写入且 IDE 在场处于前台聚焦活跃态 (has_recent_write && is_present)
+  const isWorking = Boolean(
+    dimensionInference.is_fresh ||
+    dimensionInference.thread_running_fresh ||
+    (dimensionFilesystem.has_recent_write && dimensionPresence.is_present)
+  );
+
+  const canEnterGate = isWorking;
+  const shouldLoopProbe = !isWorking;
+
+  const dimensions = {
+    presence: dimensionPresence,
+    filesystem: dimensionFilesystem,
+    inference_step: dimensionInference,
+    rpc: dimensionRpc
+  };
+
+  const alertCard = isWorking ? null : [
+    `[🔴 专题未激活告警卡]`,
+    `专题会话 (${sessionId}) 尚未进入大模型真实工作态 (4维物理交叉验证: 未检测到时效内的有效步骤与活跃写入)！`,
+    `【4维物理校验指标】:`,
+    `* 在场锁 (Presence): ${dimensionPresence.is_present ? '🟢 在场' : '⚪ 未打开/休眠'}`,
+    `* 磁盘变更 (Filesystem): ${dimensionFilesystem.has_recent_write ? '🟢 近期有写入' : '⚪ 无近期写入'} (${dimensionFilesystem.delta_bytes !== null ? `增量: ${dimensionFilesystem.delta_bytes}B` : `大小: ${dimensionFilesystem.transcript_size}B`})`,
+    `* 推理时效 (Inference): ${dimensionInference.is_fresh ? '🟢 新鲜步骤' : '🔴 无时效内步骤'} (步骤距今: ${dimensionInference.step_age_sec !== null ? `${dimensionInference.step_age_sec}s` : '无'})`,
+    `* RPC 可达 (Daemon): ${dimensionRpc.available ? '🟢 可达' : '⚪ 未激活'}`,
+    `【自愈与门禁规则】:`,
+    `1. 绝对严禁挂载 120s 巡检任务进入盲等！`,
+    `2. 立即通过 agentapi send-message 补发唤醒，或点击下方链接在 UI 中手动激活：`,
+    `[-> 点击切换并激活专题会话](conversation://${sessionId})`,
+    `3. 必须继续挂载 30s 进度监测器循环监控，直到真实激活。`
+  ].join('\n');
+
+  const recentTrajectory = steps.slice(-3).map((st, idx) => {
+    const stepIdx = st.step_index !== undefined ? st.step_index : (steps.length - 3 + idx);
+    const tcNames = (st.tool_calls && Array.isArray(st.tool_calls))
+      ? st.tool_calls.map(tc => tc.name).filter(Boolean)
+      : [];
+    let actionSummary = st.type || 'UNKNOWN';
+    if (tcNames.length > 0) {
+      actionSummary = `tool_calls(${tcNames.join(', ')})`;
+    } else if (st.thinking) {
+      actionSummary = 'thinking';
+    } else if (st.content) {
+      actionSummary = 'content_output';
+    }
+    return {
+      step_index: stepIdx,
+      source: st.source || 'UNKNOWN',
+      type: st.type || 'UNKNOWN',
+      status: st.status || 'DONE',
+      created_at: st.created_at || null,
+      action_summary: actionSummary,
+      thinking_preview: st.thinking ? (st.thinking.slice(0, 100).replace(/\s+/g, ' ')) : null
+    };
+  });
+
+  return {
+    session_id: sessionId,
+    found: true,
+    thread_running: threadRunningFresh || threadRunning,
+    is_working: isWorking,
+    working_status: isWorking ? 'WORKING_IN_PROGRESS' : 'DORMANT_NOT_ACTIVATED',
+    can_enter_gate: canEnterGate,
+    can_enter_120s_gate: canEnterGate,
+    should_loop_probe: shouldLoopProbe,
+    should_loop_30s_probe: shouldLoopProbe,
+    should_loop_30s_monitor: shouldLoopProbe,
+    dispatch_found: lastDispatchIndex !== -1,
+    dispatch_step_index: lastDispatchIndex,
+    last_dispatch_step: lastDispatchStep,
+    recent_trajectory: recentTrajectory,
+    model_steps_count: modelStepsAfterDispatch,
+    tool_calls_count: toolCallsCount,
+    thinking_steps_count: thinkingStepsCount,
+    in_progress_steps_count: inProgressStepsCount,
+    latest_model_step: latestModelStep,
+    dimensions,
     deep_link: `conversation://${sessionId}`,
-    alert_card: isWorking ? null : `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未进入大模型真实工作态 (未见 MODEL 步 / thread_running: false)！\n【自愈与门禁规则】:\n1. 绝对严禁挂载 120s 巡检任务进入盲等！\n2. 立即通过 agentapi.bat send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n[-> 点击切换并激活专题会话](conversation://${sessionId})\n3. 必须继续挂载 30s 进度监测器循环监控，直到真实激活。`
+    alert_card: alertCard
   };
 }
 
@@ -448,6 +920,12 @@ if (require.main === module) {
   let isJson = false;
   let activeWindow = 30;
   let probeDispatchId = null;
+  let dumpRecentId = null;
+  let tail = 5;
+  let baselineTime = null;
+  let baselineSize = null;
+  let freshWindowSec = 30;
+  let skipRpc = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--root' && args[i + 1]) {
@@ -458,6 +936,18 @@ if (require.main === module) {
       activeWindow = parseInt(args[++i], 10) || 30;
     } else if ((args[i] === '--probe-dispatch' || args[i] === '--monitor-dispatch') && args[i + 1]) {
       probeDispatchId = args[++i];
+    } else if (args[i] === '--dump-recent' && args[i + 1]) {
+      dumpRecentId = args[++i];
+    } else if (args[i] === '--tail' && args[i + 1]) {
+      tail = parseInt(args[++i], 10) || 5;
+    } else if (args[i] === '--baseline-time' && args[i + 1]) {
+      baselineTime = args[++i];
+    } else if (args[i] === '--baseline-size' && args[i + 1]) {
+      baselineSize = parseInt(args[++i], 10);
+    } else if (args[i] === '--fresh-window-sec' && args[i + 1]) {
+      freshWindowSec = parseInt(args[++i], 10) || 30;
+    } else if (args[i] === '--skip-rpc') {
+      skipRpc = true;
     } else if (args[i] === '--json') {
       isJson = true;
     } else if (args[i] === '-h' || args[i] === '--help') {
@@ -468,13 +958,38 @@ if (require.main === module) {
       console.log(`  --active-window <mins>      Minutes to consider a session ACTIVE (default: 30)`);
       console.log(`  --monitor-dispatch <id>     Monitor target session for real MODEL execution post-dispatch (alias: --probe-dispatch)`);
       console.log(`  --probe-dispatch <sess_id>  Alias for --monitor-dispatch`);
+      console.log(`  --dump-recent <sess_id>     Introspect recent execution trajectory (thinking, tools, content)`);
+      console.log(`  --tail <n>                  Number of recent steps to dump (default: 5)`);
+      console.log(`  --baseline-time <iso_or_ms> Dispatch baseline timestamp for freshness calculation`);
+      console.log(`  --baseline-size <bytes>     Dispatch baseline transcript size in bytes`);
+      console.log(`  --fresh-window-sec <sec>    Window in seconds for fresh step calculation (default: 30)`);
+      console.log(`  --skip-rpc                  Skip AgentAPI metadata query`);
       console.log(`  --json                      Output raw JSON instead of table`);
       process.exit(0);
     }
   }
 
+  if (dumpRecentId) {
+    const dumpResult = fetchSessionTranscript(dumpRecentId, {
+      brainPath,
+      tail
+    });
+    if (isJson) {
+      console.log(JSON.stringify(dumpResult, null, 2));
+    } else {
+      printRecentTrajectory(dumpResult);
+    }
+    process.exit(0);
+  }
+
   if (probeDispatchId) {
-    const probeResult = probeDispatchSession(probeDispatchId, { brainPath });
+    const probeResult = probeDispatchSession(probeDispatchId, {
+      brainPath,
+      baselineTime,
+      baselineSize,
+      freshWindowSec,
+      skipRpc
+    });
     console.log(JSON.stringify(probeResult, null, 2));
     process.exit(0);
   }
@@ -487,4 +1002,12 @@ if (require.main === module) {
   }
 }
 
-module.exports = { inspectAgySessions, probeDispatchSession, formatRelativeTime, loadRegistrySessions };
+module.exports = {
+  inspectAgySessions,
+  probeDispatchSession,
+  formatRelativeTime,
+  loadRegistrySessions,
+  checkAgentApiRpc,
+  fetchSessionTranscript,
+  printRecentTrajectory
+};

@@ -284,11 +284,19 @@ function isExemptPath(normTarget, normWsRoot) {
   if (normWsRoot && isPathInside(normTarget, normWsRoot)) {
     const wsExemptPrefixes = [
       path.join(normWsRoot, 'docs'),
+      path.join(normWsRoot, 'doc'),
       path.join(normWsRoot, 'scratch'),
       path.join(normWsRoot, '.agents', 'task-loop')
     ];
     for (const p of wsExemptPrefixes) {
       if (isPathInside(normTarget, p)) return true;
+    }
+    const wsExemptExact = [
+      path.join(normWsRoot, 'MEMORY.md'),
+      path.join(normWsRoot, 'README.md')
+    ];
+    for (const f of wsExemptExact) {
+      if (isPathInside(normTarget, f)) return true;
     }
     return false;
   }
@@ -372,6 +380,7 @@ function isGovernanceOrStateFile(normTarget, normWsRoot) {
   const allowedPrefixes = [
     path.join(absWsRoot, '.agents'),
     path.join(absWsRoot, 'docs'),
+    path.join(absWsRoot, 'doc'),
     path.join(absWsRoot, 'rules'),
     path.join(absWsRoot, 'templates'),
     path.join(absWsRoot, 'references'),
@@ -385,6 +394,8 @@ function isGovernanceOrStateFile(normTarget, normWsRoot) {
   }
 
   const allowedExactFiles = [
+    path.join(absWsRoot, 'MEMORY.md'),
+    path.join(absWsRoot, 'README.md'),
     path.join(absWsRoot, 'AGENTS.md'),
     path.join(absWsRoot, '.gitignore'),
     path.join(absWsRoot, 'plugin.json'),
@@ -577,7 +588,7 @@ function processPayload(payload, env, argv) {
 
     if (isMain) {
       if (!isGovernanceOrStateFile(normTarget, normWsRoot)) {
-        const reason = `[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 (${targetFile})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。`;
+        const reason = `[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话在业务代码上仅限只读探索 (Explore Only & Docs Stewardship)，允许主理 docs/、MEMORY.md、README.md 等文档资产，严禁直接修改业务代码 (${targetFile})！所有具体业务代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 派发。`;
         return formatDeny(reason, isZcodeProtocol);
       }
       return isZcodeProtocol ? {} : { decision: 'allow' };

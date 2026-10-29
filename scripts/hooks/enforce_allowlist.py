@@ -288,11 +288,19 @@ def is_exempt_path(norm_target, norm_ws_root):
     if norm_ws_root and is_path_inside(norm_target, norm_ws_root):
         ws_exempt_prefixes = [
             os.path.join(norm_ws_root, "docs"),
+            os.path.join(norm_ws_root, "doc"),
             os.path.join(norm_ws_root, "scratch"),
             os.path.join(norm_ws_root, ".agents", "task-loop"),
         ]
         for p in ws_exempt_prefixes:
             if is_path_inside(norm_target, p):
+                return True
+        ws_exempt_exact = [
+            os.path.join(norm_ws_root, "MEMORY.md"),
+            os.path.join(norm_ws_root, "README.md"),
+        ]
+        for f in ws_exempt_exact:
+            if is_path_inside(norm_target, f):
                 return True
         return False
 
@@ -367,6 +375,7 @@ def is_governance_or_state_file(norm_target, norm_ws_root):
     allowed_prefixes = [
         os.path.join(abs_ws_root, ".agents"),
         os.path.join(abs_ws_root, "docs"),
+        os.path.join(abs_ws_root, "doc"),
         os.path.join(abs_ws_root, "rules"),
         os.path.join(abs_ws_root, "templates"),
         os.path.join(abs_ws_root, "references"),
@@ -379,6 +388,8 @@ def is_governance_or_state_file(norm_target, norm_ws_root):
             return True
 
     allowed_exact = [
+        os.path.join(abs_ws_root, "MEMORY.md"),
+        os.path.join(abs_ws_root, "README.md"),
         os.path.join(abs_ws_root, "AGENTS.md"),
         os.path.join(abs_ws_root, ".gitignore"),
         os.path.join(abs_ws_root, "plugin.json"),
@@ -577,7 +588,7 @@ def process_payload(payload, env=None, argv=None):
 
         if is_main_session:
             if not is_governance_or_state_file(norm_target, norm_ws_root):
-                reason = f"[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话仅限只读探索 (Explore Only)，严禁直接修改业务代码 ({target_file})！所有具体代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 或子代理 (Subagent Worker) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 或 invoke_subagent 派发。"
+                reason = f"[task-loop PreToolUse DENY] 主会话硬性治理红线：主会话在业务代码上仅限只读探索 (Explore Only & Docs Stewardship)，允许主理 docs/、MEMORY.md、README.md 等文档资产，严禁直接修改业务代码 ({target_file})！所有具体业务代码实施、功能落地与 BugFix 必须且强制要求派单至专题会话 (Topic Session) 实施，以彻底杜绝多会话并发修改导致的上下文错乱与业务冲突。请先生成派单契约并使用 send_message 派发。"
                 return format_deny(reason, is_zcode_protocol)
             return {} if is_zcode_protocol else {"decision": "allow"}
 

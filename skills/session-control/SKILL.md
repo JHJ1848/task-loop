@@ -176,6 +176,25 @@ def create_top_level_topic_session(title: str, initial_prompt: str, workspace_ro
 agentapi.bat send-message <target_conversation_id> "<message_or_json_payload>"
 ```
 
+#### 3.4 专题会话状态 4 维物理交叉验证快速探针 (`--probe-dispatch`)
+主会话向目标专题发信派单后，通过 `inspect_agy_sessions.js --probe-dispatch` 执行 15s 快速探针，精准核验 4 维物理激活态（Presence 在场锁、Filesystem 物理增量、Inference Step 时效强约束、Daemon RPC 可达性），防止假阳性与无效盲等：
+```bash
+# 执行 15s 快速探针核验专题激活态 (支持 --probe-dispatch 与 --monitor-dispatch 别名)
+node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id>
+```
+判定标准：`can_enter_working_gate === true` 且 `is_working === true` 方可准入 30s~45s 动态工作巡检；若未达标则在 15s 内即刻出具告警卡并补发唤醒，全链路响应控制在 60s 内。
+
+#### 3.5 专题会话跨会话转录与轨迹内省 (`--dump-recent` / `fetchSessionTranscript`)
+主会话或巡检器可通过 `--dump-recent <target_session_id>` 快速转储并查看指定会话的最近执行轨迹（包含步骤序号、来源角色、动作类型、工具摘要与思考链片段），支持 `--tail <n>` 自定义步数（默认 5 步，支持 `--json` 输出结构化数据）：
+```bash
+# 查看目标会话最近 3 步执行轨迹 (控制台格式化输出)
+node scripts/inspect_agy_sessions.js --dump-recent <target_session_id> --tail 3
+
+# Python 同构命令
+python scripts/inspect_agy_sessions.py --dump-recent <target_session_id> --tail 3
+```
+同时在 `--probe-dispatch` 探针返回体中已内嵌 `recent_trajectory`（最近 3 步操作），主会话无需盲等或盲猜即可洞察专题执行现场。
+
 ### 4. 真实专题派单实战案例 (Real-World Case: `cdd1ca5c-3532-4489-b844-15c6f34055fa`)
 
 以既有会话控制专题会话 `cdd1ca5c-3532-4489-b844-15c6f34055fa`（`session_control` 专题）为例，主会话或外部调度器通过 Sidebus 下发修改落地任务 (`work`)：
@@ -269,8 +288,13 @@ agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发�
   },
   {
     "gotcha_id": "Gotcha 16",
-    "title": "双阶梯进度监测与巡检机制",
-    "rule": "inspect_agy_sessions.js --monitor-dispatch 提供 thread_running/is_working 细粒度监测。若 is_working === false 绝对严禁挂载 120s 巡检任务，必须出具告警卡、自愈补发并循环 30s 进度监测器，直到确凿激活才准入 120s 巡检任务。"
+    "title": "15s 快速探针与 4 维物理交叉验证",
+    "rule": "inspect_agy_sessions.js --probe-dispatch 提供 4 维物理交叉验证 (Presence 在场锁、Filesystem 物理增量、Inference Step 时效约束、Daemon RPC 可达性)。若 can_enter_working_gate !== true 或 is_working !== true 绝对严禁挂载工作巡检，必须在 15s 内即刻出具告警卡、自愈补发并循环 15s 快速探针，直到确凿激活才准入 30s~45s 动态工作巡检，全链路控制在 60s 内，严禁盲等。"
+  },
+  {
+    "gotcha_id": "Gotcha 17",
+    "title": "多渠道转录内省与轨迹审查规范",
+    "rule": "当探针报告专题在场但怀疑卡顿、或巡检需要核实专题执行进度时，优先使用 inspect_agy_sessions.js --dump-recent <session_id> --tail 5 查看最近轨迹与思维链，或直接读取 probe_dispatch 返回的 recent_trajectory 字段，彻底杜绝主会话对专题执行进度的盲猜与失联盲等。"
   }
 ]
 ```

@@ -11,6 +11,7 @@ associated with the current workspace.
 import sys
 import os
 import json
+import re
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -287,27 +288,301 @@ def print_table(report):
     print("\n" + "=" * 80 + "\n")
 
 
-def probe_dispatch_session(session_id: str, brain_path: str = None):
-    if brain_path:
-        brain_dir = str(Path(brain_path).resolve())
+def check_agentapi_rpc(session_id: str, options: dict = None):
+    """保护性检查 AgentAPI RPC 连通性"""
+    if options and options.get("skip_rpc"):
+        return {"checked": False, "available": True, "skipped": True}
+
+    import shutil
+    import subprocess
+
+    bin_path = os.environ.get("AGENTAPI_PATH")
+    if not bin_path or not os.path.exists(bin_path):
+        home = os.path.expanduser("~")
+        candidates = [
+            os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.bat"),
+            os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.exe"),
+            os.path.join(home, ".gemini", "antigravity", "bin", "agentapi"),
+            os.path.join(home, ".antigravity", "bin", "agentapi.bat"),
+            os.path.join(home, ".antigravity", "bin", "agentapi.exe"),
+            os.path.join(home, ".antigravity", "bin", "agentapi"),
+        ]
+        bin_path = next((c for c in candidates if os.path.exists(c)), None)
+
+    if not bin_path:
+        bin_path = shutil.which("agentapi")
+
+    if not bin_path:
+        return {"checked": False, "available": False, "error": "agentapi binary not found"}
+
+    try:
+        proc = subprocess.run(
+            [bin_path, "get-conversation-metadata", session_id],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            shell=(os.name == "nt"),
+            encoding="utf-8"
+        )
+        if proc.returncode == 0:
+            out = proc.stdout.strip()
+            try:
+                meta = json.loads(out)
+            except Exception:
+                meta = out
+            return {"checked": True, "available": True, "metadata": meta}
+        else:
+            return {"checked": True, "available": False, "error": proc.stderr.strip() or f"exit code {proc.returncode}"}
+    except Exception as e:
+        return {"checked": True, "available": False, "error": str(e)}
+
+
+def fetch_session_transcript(session_id: str, options: dict = None, **kwargs):
+    """跨会话转录内省原语 (Transcript Introspection Primitive)
+    按时序提取目标会话的最新执行轨迹，包括思维链 Thinking、工具调用与模型内容。
+    """
+    opts = dict(options or {})
+    opts.update(kwargs)
+    options = opts
+
+    tail = int(options.get("tail", 5))
+    if tail <= 0:
+        tail = 5
+    include_thinking = options.get("include_thinking", True)
+    include_tools = options.get("include_tools", True)
+
+    brain_dir = (
+        str(Path(options["brain_path"]).resolve())
+        if options.get("brain_path")
+        else os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")
+    )
+    session_dir = os.path.join(brain_dir, session_id)
+
+    if not os.path.exists(session_dir):
+        return {
+            "session_id": session_id,
+            "found": False,
+            "total_steps": 0,
+            "tail": tail,
+            "steps": [],
+            "error": f"会话目录不存在: {session_dir}"
+        }
+
+    log_file = os.path.join(session_dir, ".system_generated", "logs", "transcript.jsonl")
+    if not os.path.exists(log_file):
+        log_file = os.path.join(session_dir, ".system_generated", "logs", "transcript_full.jsonl")
+
+    if not os.path.exists(log_file):
+        return {
+            "session_id": session_id,
+            "found": False,
+            "total_steps": 0,
+            "tail": tail,
+            "steps": [],
+            "error": f"日志文件不存在: {log_file}"
+        }
+
+    all_steps = []
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    all_steps.append(json.loads(line))
+                except Exception:
+                    pass
+    except Exception as e:
+        return {
+            "session_id": session_id,
+            "found": False,
+            "total_steps": 0,
+            "tail": tail,
+            "steps": [],
+            "error": f"读取转录日志失败: {str(e)}"
+        }
+
+    raw_tail_steps = all_steps[-tail:] if tail < len(all_steps) else all_steps
+    formatted_steps = []
+    offset = len(all_steps) - len(raw_tail_steps)
+
+    for idx, st in enumerate(raw_tail_steps):
+        step_idx = st.get("step_index")
+        if step_idx is None:
+            step_idx = offset + idx
+
+        item = {
+            "step_index": step_idx,
+            "type": st.get("type", "UNKNOWN"),
+            "source": st.get("source", "UNKNOWN"),
+            "status": st.get("status", "DONE"),
+            "created_at": st.get("created_at")
+        }
+
+        th = st.get("thinking")
+        if include_thinking and th:
+            item["thinking_preview"] = th[:197] + "..." if len(th) > 200 else th
+        else:
+            item["thinking_preview"] = None
+
+        tool_calls = st.get("tool_calls")
+        if include_tools and isinstance(tool_calls, list):
+            tc_list = []
+            for tc in tool_calls:
+                args = tc.get("args")
+                if args is not None:
+                    if isinstance(args, str):
+                        args_summary = args[:117] + "..." if len(args) > 120 else args
+                    else:
+                        args_str = json.dumps(args, ensure_ascii=False)
+                        args_summary = args_str[:117] + "..." if len(args_str) > 120 else args_str
+                else:
+                    args_summary = ""
+                tc_list.append({
+                    "name": tc.get("name", "unnamed_tool"),
+                    "args_summary": args_summary
+                })
+            item["tool_calls"] = tc_list
+        else:
+            item["tool_calls"] = []
+
+        content = st.get("content")
+        if content and isinstance(content, str):
+            item["content_snippet"] = content[:197] + "..." if len(content) > 200 else content
+        else:
+            item["content_snippet"] = None
+
+        formatted_steps.append(item)
+
+    return {
+        "session_id": session_id,
+        "found": True,
+        "total_steps": len(all_steps),
+        "tail": tail,
+        "log_file": log_file,
+        "steps": formatted_steps
+    }
+
+
+def print_recent_trajectory(data: dict):
+    print("\n" + "=" * 80)
+    print("[task-loop] 目标专题会话执行轨迹内省报告 (Transcript Introspection)")
+    print("=" * 80)
+    print(f"* 会话 ID   : {data.get('session_id')}")
+    print(f"* 状态     : {'🟢 日志已就绪' if data.get('found') else '🔴 未找到日志'}")
+    print(f"* 总步数   : {data.get('total_steps', 0)} (展示最近 {len(data.get('steps', []))} 步)")
+    if data.get("log_file"):
+        print(f"* 日志路径 : {data['log_file']}")
+    if data.get("error"):
+        print(f"* 错误信息 : {data['error']}")
+    print("-" * 80)
+
+    steps = data.get("steps", [])
+    if not steps:
+        print("(未检测到有效历史步骤)")
     else:
-        brain_dir = os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")
+        for st in steps:
+            source_tag = f"[{st.get('source', 'UNKNOWN')}]"
+            type_tag = f"[{st.get('type', 'STEP')}]"
+            status_tag = f"[{st.get('status', 'DONE')}]"
+            print(f"\n#{st.get('step_index')} {source_tag} {type_tag} {status_tag} ({st.get('created_at') or '时间未知'})")
+            if st.get("thinking_preview"):
+                clean_th = re.sub(r'\s+', ' ', st["thinking_preview"])
+                print(f"   💡 思考链: {clean_th}")
+            for tc in st.get("tool_calls", []):
+                print(f"   🔧 工具调用: {tc.get('name')} -> {tc.get('args_summary')}")
+            if st.get("content_snippet"):
+                clean_cnt = re.sub(r'\s+', ' ', st["content_snippet"])
+                print(f"   💬 内容摘要: {clean_cnt}")
+    print("\n" + "=" * 80 + "\n")
+
+
+def probe_dispatch_session(session_id: str, brain_path: str = None, options: dict = None, **kwargs):
+    """4维物理交叉验证探针 (4-Dimension Physical Cross-Validation Probe)
+    彻底消灭历史步骤与假阳性绿灯，综合在场锁、文件物理增量、步骤时效与 Daemon RPC。
+    """
+    opts = dict(options or {})
+    if brain_path:
+        opts["brain_path"] = brain_path
+    opts.update(kwargs)
+    options = opts
+
+    brain_dir = (
+        str(Path(options["brain_path"]).resolve())
+        if options.get("brain_path")
+        else os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "brain")
+    )
+
+    now = datetime.now(timezone.utc)
+    now_ms = int(now.timestamp() * 1000)
+    fresh_window_sec = int(options.get("fresh_window_sec", 30))
+    baseline_time = options.get("baseline_time")
+    baseline_size = options.get("baseline_size")
+    if baseline_size is not None:
+        try:
+            baseline_size = int(baseline_size)
+        except Exception:
+            baseline_size = None
+
+    # 维度 1: Presence 在场锁检测
+    presence_lock_dir = (
+        str(Path(options["presence_path"]).resolve())
+        if options.get("presence_path")
+        else os.path.join(os.path.expanduser("~"), ".gemini", "antigravity", "presence")
+    )
+    presence_lock_file = os.path.join(presence_lock_dir, f"{session_id}.lock")
+    is_present = os.path.exists(presence_lock_file)
+    dimension_presence = {
+        "is_present": is_present,
+        "lock_file": presence_lock_file
+    }
 
     session_dir = os.path.join(brain_dir, session_id)
     if not os.path.exists(session_dir):
+        dimension_fs = {
+            "transcript_path": None,
+            "transcript_mtime": None,
+            "transcript_size": 0,
+            "delta_bytes": 0,
+            "has_recent_write": False,
+            "mtime_diff_sec": None
+        }
+        dimension_inference = {
+            "model_steps_count": 0,
+            "tool_calls_count": 0,
+            "thinking_steps_count": 0,
+            "in_progress_steps_count": 0,
+            "latest_model_step": None,
+            "is_fresh": False,
+            "step_age_sec": None,
+            "thread_running_fresh": False
+        }
+        dimension_rpc = check_agentapi_rpc(session_id, options)
+
         return {
             "session_id": session_id,
             "found": False,
             "thread_running": False,
             "is_working": False,
             "working_status": "DORMANT_NOT_ACTIVATED",
+            "can_enter_gate": False,
             "can_enter_120s_gate": False,
+            "should_loop_probe": True,
             "should_loop_30s_probe": True,
+            "should_loop_30s_monitor": True,
             "dispatch_found": False,
+            "recent_trajectory": [],
             "model_steps_count": 0,
             "tool_calls_count": 0,
             "thinking_steps_count": 0,
             "in_progress_steps_count": 0,
+            "dimensions": {
+                "presence": dimension_presence,
+                "filesystem": dimension_fs,
+                "inference_step": dimension_inference,
+                "rpc": dimension_rpc
+            },
             "reason": f"会话目录不存在: {session_dir}",
             "deep_link": f"conversation://{session_id}",
             "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未创建或无日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
@@ -316,24 +591,91 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
     log_file = os.path.join(session_dir, ".system_generated", "logs", "transcript.jsonl")
     if not os.path.exists(log_file):
         log_file = os.path.join(session_dir, ".system_generated", "logs", "transcript_full.jsonl")
-        if not os.path.exists(log_file):
-            return {
-                "session_id": session_id,
-                "found": False,
-                "thread_running": False,
-                "is_working": False,
-                "working_status": "DORMANT_NOT_ACTIVATED",
-                "can_enter_120s_gate": False,
-                "should_loop_30s_probe": True,
-                "dispatch_found": False,
-                "model_steps_count": 0,
-                "tool_calls_count": 0,
-                "thinking_steps_count": 0,
-                "in_progress_steps_count": 0,
-                "reason": "未找到 transcript.jsonl 日志文件",
-                "deep_link": f"conversation://{session_id}",
-                "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
-            }
+
+    # 维度 2: 文件系统物理状态与增量检测
+    transcript_mtime = None
+    transcript_mtime_ms = 0
+    transcript_size = 0
+    delta_bytes = None
+
+    if os.path.exists(log_file):
+        try:
+            stat = os.stat(log_file)
+            transcript_mtime_dt = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc)
+            transcript_mtime = transcript_mtime_dt.isoformat()
+            transcript_mtime_ms = int(stat.st_mtime * 1000)
+            transcript_size = stat.st_size
+            if baseline_size is not None:
+                delta_bytes = max(0, transcript_size - baseline_size)
+        except Exception:
+            pass
+
+    mtime_diff_sec = int((now_ms - transcript_mtime_ms) / 1000) if transcript_mtime_ms > 0 else None
+    has_recent_write = False
+
+    if baseline_time:
+        try:
+            if isinstance(baseline_time, (int, float)):
+                base_ms = int(baseline_time)
+            else:
+                base_iso = str(baseline_time).replace("Z", "+00:00")
+                base_ms = int(datetime.fromisoformat(base_iso).timestamp() * 1000)
+            has_recent_write = (transcript_mtime_ms >= (base_ms - 1000))
+            if baseline_size is not None:
+                has_recent_write = has_recent_write and (delta_bytes > 0)
+        except Exception:
+            pass
+    elif mtime_diff_sec is not None:
+        has_recent_write = (mtime_diff_sec <= fresh_window_sec)
+
+    dimension_filesystem = {
+        "transcript_path": log_file,
+        "transcript_mtime": transcript_mtime,
+        "transcript_size": transcript_size,
+        "delta_bytes": delta_bytes,
+        "has_recent_write": has_recent_write,
+        "mtime_diff_sec": mtime_diff_sec
+    }
+
+    if not os.path.exists(log_file):
+        dimension_inference = {
+            "model_steps_count": 0,
+            "tool_calls_count": 0,
+            "thinking_steps_count": 0,
+            "in_progress_steps_count": 0,
+            "latest_model_step": None,
+            "is_fresh": False,
+            "step_age_sec": None,
+            "thread_running_fresh": False
+        }
+        dimension_rpc = check_agentapi_rpc(session_id, options)
+
+        return {
+            "session_id": session_id,
+            "found": False,
+            "thread_running": False,
+            "is_working": False,
+            "working_status": "DORMANT_NOT_ACTIVATED",
+            "can_enter_gate": False,
+            "can_enter_120s_gate": False,
+            "should_loop_probe": True,
+            "should_loop_30s_probe": True,
+            "should_loop_30s_monitor": True,
+            "dispatch_found": False,
+            "model_steps_count": 0,
+            "tool_calls_count": 0,
+            "thinking_steps_count": 0,
+            "in_progress_steps_count": 0,
+            "dimensions": {
+                "presence": dimension_presence,
+                "filesystem": dimension_filesystem,
+                "inference_step": dimension_inference,
+                "rpc": dimension_rpc
+            },
+            "reason": "未找到 transcript.jsonl 日志文件",
+            "deep_link": f"conversation://{session_id}",
+            "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
+        }
 
     last_dispatch_index = -1
     last_dispatch_step = None
@@ -369,19 +711,40 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
             except Exception:
                 pass
     except Exception as e:
+        dimension_inference = {
+            "model_steps_count": 0,
+            "tool_calls_count": 0,
+            "thinking_steps_count": 0,
+            "in_progress_steps_count": 0,
+            "latest_model_step": None,
+            "is_fresh": False,
+            "step_age_sec": None,
+            "thread_running_fresh": False
+        }
+        dimension_rpc = check_agentapi_rpc(session_id, options)
+
         return {
             "session_id": session_id,
             "found": False,
             "thread_running": False,
             "is_working": False,
             "working_status": "DORMANT_NOT_ACTIVATED",
+            "can_enter_gate": False,
             "can_enter_120s_gate": False,
+            "should_loop_probe": True,
             "should_loop_30s_probe": True,
+            "should_loop_30s_monitor": True,
             "dispatch_found": False,
             "model_steps_count": 0,
             "tool_calls_count": 0,
             "thinking_steps_count": 0,
             "in_progress_steps_count": 0,
+            "dimensions": {
+                "presence": dimension_presence,
+                "filesystem": dimension_filesystem,
+                "inference_step": dimension_inference,
+                "rpc": dimension_rpc
+            },
             "reason": f"读取日志异常: {e}",
             "deep_link": f"conversation://{session_id}"
         }
@@ -433,33 +796,161 @@ def probe_dispatch_session(session_id: str, brain_path: str = None):
                 "is_in_progress": is_in_progress
             }
 
-    # Also check if absolute last step of the whole session is actively in progress
     if len(steps) > 0 and steps[-1].get("status") == "IN_PROGRESS":
         thread_running = True
 
-    is_working = bool(model_steps_after_dispatch > 0 or thread_running)
-    can_enter_120s_gate = is_working
-    should_loop_30s_monitor = not is_working
+    # 维度 3: Step Freshness 时效强校验 (彻底根除历史步骤假阳性)
+    is_step_fresh = False
+    step_age_sec = None
+    if latest_model_step and latest_model_step.get("created_at"):
+        try:
+            step_iso = latest_model_step["created_at"].replace("Z", "+00:00")
+            step_dt = datetime.fromisoformat(step_iso)
+            step_ms = int(step_dt.timestamp() * 1000)
+            step_age_sec = int((now_ms - step_ms) / 1000)
 
-    return {
-        "session_id": session_id,
-        "found": True,
-        "thread_running": thread_running,
-        "is_working": is_working,
-        "working_status": "WORKING_IN_PROGRESS" if is_working else "DORMANT_NOT_ACTIVATED",
-        "can_enter_120s_gate": can_enter_120s_gate,
-        "should_loop_30s_monitor": should_loop_30s_monitor,
-        "should_loop_30s_probe": should_loop_30s_monitor,
-        "dispatch_found": (last_dispatch_index != -1),
-        "dispatch_step_index": last_dispatch_index,
-        "last_dispatch_step": last_dispatch_step,
+            if baseline_time:
+                if isinstance(baseline_time, (int, float)):
+                    b_ms = int(baseline_time)
+                else:
+                    b_iso = str(baseline_time).replace("Z", "+00:00")
+                    b_ms = int(datetime.fromisoformat(b_iso).timestamp() * 1000)
+                is_step_fresh = (step_ms >= (b_ms - 1000))
+            else:
+                is_step_fresh = (step_age_sec <= fresh_window_sec)
+        except Exception:
+            pass
+
+    thread_running_fresh = False
+    if thread_running and len(steps) > 0:
+        last_step = steps[-1]
+        if last_step.get("created_at"):
+            try:
+                l_iso = last_step["created_at"].replace("Z", "+00:00")
+                l_dt = datetime.fromisoformat(l_iso)
+                l_ms = int(l_dt.timestamp() * 1000)
+                l_age_sec = int((now_ms - l_ms) / 1000)
+                if baseline_time:
+                    if isinstance(baseline_time, (int, float)):
+                        b_ms = int(baseline_time)
+                    else:
+                        b_iso = str(baseline_time).replace("Z", "+00:00")
+                        b_ms = int(datetime.fromisoformat(b_iso).timestamp() * 1000)
+                    thread_running_fresh = (l_ms >= (b_ms - 1000))
+                else:
+                    thread_running_fresh = (l_age_sec <= fresh_window_sec)
+            except Exception:
+                pass
+
+    dimension_inference = {
         "model_steps_count": model_steps_after_dispatch,
         "tool_calls_count": tool_calls_count,
         "thinking_steps_count": thinking_steps_count,
         "in_progress_steps_count": in_progress_steps_count,
         "latest_model_step": latest_model_step,
+        "is_fresh": is_step_fresh,
+        "step_age_sec": step_age_sec,
+        "thread_running_fresh": thread_running_fresh
+    }
+
+    # 维度 4: Daemon RPC 可达性
+    dimension_rpc = check_agentapi_rpc(session_id, options)
+
+    # 综合裁决逻辑 (Reconciliation Logic):
+    is_working = bool(
+        dimension_inference["is_fresh"]
+        or dimension_inference["thread_running_fresh"]
+        or (dimension_filesystem["has_recent_write"] and dimension_presence["is_present"])
+    )
+
+    can_enter_gate = is_working
+    should_loop_probe = not is_working
+
+    dimensions = {
+        "presence": dimension_presence,
+        "filesystem": dimension_filesystem,
+        "inference_step": dimension_inference,
+        "rpc": dimension_rpc
+    }
+
+    if is_working:
+        alert_card = None
+    else:
+        presence_str = '🟢 在场' if dimension_presence['is_present'] else '⚪ 未打开/休眠'
+        write_str = '🟢 近期有写入' if dimension_filesystem['has_recent_write'] else '⚪ 无近期写入'
+        delta_str = f"增量: {dimension_filesystem['delta_bytes']}B" if dimension_filesystem['delta_bytes'] is not None else f"大小: {dimension_filesystem['transcript_size']}B"
+        inf_str = '🟢 新鲜步骤' if dimension_inference['is_fresh'] else '🔴 无时效内步骤'
+        age_str = f"{dimension_inference['step_age_sec']}s" if dimension_inference['step_age_sec'] is not None else '无'
+        rpc_str = '🟢 可达' if dimension_rpc.get('available') else '⚪ 未激活'
+
+        alert_card = (
+            "[🔴 专题未激活告警卡]\n"
+            f"专题会话 ({session_id}) 尚未进入大模型真实工作态 (4维物理交叉验证: 未检测到时效内的有效步骤与活跃写入)！\n"
+            "【4维物理校验指标】:\n"
+            f"* 在场锁 (Presence): {presence_str}\n"
+            f"* 磁盘变更 (Filesystem): {write_str} ({delta_str})\n"
+            f"* 推理时效 (Inference): {inf_str} (步骤距今: {age_str})\n"
+            f"* RPC 可达 (Daemon): {rpc_str}\n"
+            "【自愈与门禁规则】:\n"
+            "1. 绝对严禁挂载 120s 巡检任务进入盲等！\n"
+            "2. 立即通过 agentapi send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n"
+            f"[-> 点击切换并激活专题会话](conversation://{session_id})\n"
+            "3. 必须继续挂载 30s 进度监测器循环监控，直到真实激活。"
+        )
+
+    recent_tail = steps[-3:] if len(steps) >= 3 else steps
+    recent_trajectory = []
+    r_offset = len(steps) - len(recent_tail)
+    for idx, st in enumerate(recent_tail):
+        step_idx = st.get("step_index")
+        if step_idx is None:
+            step_idx = r_offset + idx
+        tcs = st.get("tool_calls")
+        tc_names = [tc.get("name") for tc in tcs if isinstance(tc, dict) and tc.get("name")] if isinstance(tcs, list) else []
+        action_summary = st.get("type", "UNKNOWN")
+        if tc_names:
+            action_summary = f"tool_calls({', '.join(tc_names)})"
+        elif st.get("thinking"):
+            action_summary = "thinking"
+        elif st.get("content"):
+            action_summary = "content_output"
+
+        th = st.get("thinking")
+        thinking_prev = re.sub(r'\s+', ' ', th[:100]) if th else None
+
+        recent_trajectory.append({
+            "step_index": step_idx,
+            "source": st.get("source", "UNKNOWN"),
+            "type": st.get("type", "UNKNOWN"),
+            "status": st.get("status", "DONE"),
+            "created_at": st.get("created_at"),
+            "action_summary": action_summary,
+            "thinking_preview": thinking_prev
+        })
+
+    return {
+        "session_id": session_id,
+        "found": True,
+        "thread_running": thread_running_fresh or thread_running,
+        "is_working": is_working,
+        "working_status": "WORKING_IN_PROGRESS" if is_working else "DORMANT_NOT_ACTIVATED",
+        "can_enter_gate": can_enter_gate,
+        "can_enter_120s_gate": can_enter_gate,
+        "should_loop_probe": should_loop_probe,
+        "should_loop_30s_probe": should_loop_probe,
+        "should_loop_30s_monitor": should_loop_probe,
+        "dispatch_found": (last_dispatch_index != -1),
+        "dispatch_step_index": last_dispatch_index,
+        "last_dispatch_step": last_dispatch_step,
+        "recent_trajectory": recent_trajectory,
+        "model_steps_count": model_steps_after_dispatch,
+        "tool_calls_count": tool_calls_count,
+        "thinking_steps_count": thinking_steps_count,
+        "in_progress_steps_count": in_progress_steps_count,
+        "latest_model_step": latest_model_step,
+        "dimensions": dimensions,
         "deep_link": f"conversation://{session_id}",
-        "alert_card": None if is_working else f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未进入大模型真实工作态 (未见 MODEL 步 / thread_running: false)！\n【自愈与门禁规则】:\n1. 绝对严禁挂载 120s 巡检任务进入盲等！\n2. 立即通过 agentapi.bat send-message 补发唤醒，或点击下方链接在 UI 中手动激活：\n[-> 点击切换并激活专题会话](conversation://{session_id})\n3. 必须继续挂载 30s 进度监测器循环监控，直到真实激活。"
+        "alert_card": alert_card
     }
 
 
@@ -470,12 +961,39 @@ def main():
     parser.add_argument("--active-window", type=int, default=30, help="Minutes to consider a session ACTIVE (default: 30)")
     parser.add_argument("--monitor-dispatch", default=None, help="Monitor target session for real MODEL execution post-dispatch (alias: --probe-dispatch)")
     parser.add_argument("--probe-dispatch", default=None, help="Alias for --monitor-dispatch")
+    parser.add_argument("--dump-recent", default=None, help="Introspect recent execution trajectory (thinking, tools, content)")
+    parser.add_argument("--tail", type=int, default=5, help="Number of recent steps to dump (default: 5)")
+    parser.add_argument("--baseline-time", default=None, help="Dispatch baseline timestamp for freshness calculation")
+    parser.add_argument("--baseline-size", type=int, default=None, help="Dispatch baseline transcript size in bytes")
+    parser.add_argument("--fresh-window-sec", type=int, default=30, help="Window in seconds for fresh step calculation (default: 30)")
+    parser.add_argument("--skip-rpc", action="store_true", help="Skip AgentAPI metadata query")
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of table")
     args = parser.parse_args()
 
+    if args.dump_recent:
+        dump_result = fetch_session_transcript(
+            args.dump_recent,
+            brain_path=args.brain_path,
+            tail=args.tail
+        )
+        if args.json:
+            print(json.dumps(dump_result, ensure_ascii=False, indent=2))
+        else:
+            print_recent_trajectory(dump_result)
+        sys.exit(0)
+
     target_dispatch_id = args.monitor_dispatch or args.probe_dispatch
     if target_dispatch_id:
-        probe_result = probe_dispatch_session(target_dispatch_id, brain_path=args.brain_path)
+        probe_result = probe_dispatch_session(
+            target_dispatch_id,
+            brain_path=args.brain_path,
+            options={
+                "baseline_time": args.baseline_time,
+                "baseline_size": args.baseline_size,
+                "fresh_window_sec": args.fresh_window_sec,
+                "skip_rpc": args.skip_rpc
+            }
+        )
         print(json.dumps(probe_result, ensure_ascii=False, indent=2))
         sys.exit(0)
 

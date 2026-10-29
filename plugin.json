@@ -9,7 +9,8 @@
       "skills/session-control",
       "skills/subagent",
       "skills/init",
-      "skills/new-session"
+      "skills/new-session",
+      "skills/discuss"
     ],
     "rules": [
       "rules/task-loop-governance.md"

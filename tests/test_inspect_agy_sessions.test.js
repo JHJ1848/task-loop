@@ -7,7 +7,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { inspectAgySessions, formatRelativeTime } = require('../scripts/inspect_agy_sessions');
+const { inspectAgySessions, probeDispatchSession, formatRelativeTime, checkAgentApiRpc, fetchSessionTranscript } = require('../scripts/inspect_agy_sessions');
 
 function runTest() {
   console.log('Running test_inspect_agy_sessions.test.js...');
@@ -184,6 +184,113 @@ function runTest() {
   assert.strictEqual(activeProbe.tool_calls_count, 1);
   assert.strictEqual(activeProbe.thinking_steps_count, 1);
   assert.strictEqual(activeProbe.alert_card, null);
+
+  // Test 5: 彻底根除历史旧步骤（如 3 天前）产生的假阳性绿灯 (Stale history step false-positive elimination)
+  const staleSessId = '66666666-6666-6666-6666-666666666666';
+  const staleDir = path.join(tempBrain, staleSessId, '.system_generated', 'logs');
+  fs.mkdirSync(staleDir, { recursive: true });
+  const staleFile = path.join(staleDir, 'transcript.jsonl');
+  const threeDaysAgoIso = new Date(now.getTime() - 3 * 86400 * 1000).toISOString();
+  // 会话中有历史 MODEL 步骤，但在 3 天前产生；新派单后专题会话实际休眠未激活
+  fs.writeFileSync(staleFile, [
+    JSON.stringify({ type: 'USER_INPUT', source: 'USER_EXPLICIT', content: 'Old conversation', created_at: threeDaysAgoIso }),
+    JSON.stringify({ type: 'USER_INPUT', source: 'SYSTEM', content: '[主会话派单任务: WORK] 3天前下发的任务', created_at: threeDaysAgoIso }),
+    JSON.stringify({ type: 'PLANNER_RESPONSE', source: 'MODEL', status: 'DONE', thinking: '3天前的旧响应', created_at: threeDaysAgoIso })
+  ].join('\n'), 'utf8');
+
+  // 物理修改文件 mtime 为 3 天前
+  const threeDaysAgoDate = new Date(now.getTime() - 3 * 86400 * 1000);
+  fs.utimesSync(staleFile, threeDaysAgoDate, threeDaysAgoDate);
+
+  const staleProbe = probeDispatchSession(staleSessId, { brainPath: tempBrain, freshWindowSec: 30, skipRpc: true });
+  assert.strictEqual(staleProbe.found, true);
+  assert.strictEqual(staleProbe.is_working, false, '3-day-old step must NOT be considered is_working (False Positive Eliminated!)');
+  assert.strictEqual(staleProbe.can_enter_gate, false, 'Stale session must NOT enter gate');
+  assert.strictEqual(staleProbe.can_enter_120s_gate, false);
+  assert.strictEqual(staleProbe.should_loop_probe, true);
+  assert.strictEqual(staleProbe.dimensions.inference_step.is_fresh, false, 'Inference step must be flagged is_fresh: false');
+  assert.ok(staleProbe.dimensions.inference_step.step_age_sec > 86400, 'Step age must be > 1 day');
+  assert.ok(staleProbe.alert_card && staleProbe.alert_card.includes('🔴 专题未激活告警卡'));
+
+  // Test 6: 4维物理交叉验证指标健全性 (Presence 在场锁 + 文件增量)
+  const presenceMockDir = path.join(tempDir, 'presence');
+  fs.mkdirSync(presenceMockDir, { recursive: true });
+  const lockFilePath = path.join(presenceMockDir, `${staleSessId}.lock`);
+  fs.writeFileSync(lockFilePath, 'active_gui_window', 'utf8');
+
+  // 当存在在场锁但文件无近期写入时，仍未工作
+  const presenceOnlyProbe = probeDispatchSession(staleSessId, { brainPath: tempBrain, presencePath: presenceMockDir, skipRpc: true });
+  assert.strictEqual(presenceOnlyProbe.dimensions.presence.is_present, true, 'Presence lock should be detected');
+  assert.strictEqual(presenceOnlyProbe.dimensions.filesystem.has_recent_write, false, 'Old file should not have recent write');
+  assert.strictEqual(presenceOnlyProbe.is_working, false, 'Presence alone without recent write is not working');
+
+  // 当在场锁存在 + 文件发生新鲜物理写入 (近 10s 内更新)
+  const freshWriteTime = new Date().toISOString();
+  fs.appendFileSync(staleFile, '\n' + JSON.stringify({
+    type: 'USER_INPUT',
+    source: 'USER_EXPLICIT',
+    content: 'User typed in foreground window',
+    created_at: freshWriteTime
+  }), 'utf8');
+
+  const activePresenceProbe = probeDispatchSession(staleSessId, { brainPath: tempBrain, presencePath: presenceMockDir, skipRpc: true });
+  assert.strictEqual(activePresenceProbe.dimensions.presence.is_present, true);
+  assert.strictEqual(activePresenceProbe.dimensions.filesystem.has_recent_write, true, 'Recent write should be detected');
+  assert.strictEqual(activePresenceProbe.is_working, true, 'Presence + Recent Write should validate working state');
+  assert.strictEqual(activePresenceProbe.can_enter_gate, true);
+
+  // Test 7: Windows 环境下 RPC 探测 EINVAL 根除验证与保护性连通性
+  const skippedRpc = checkAgentApiRpc(staleSessId, { skipRpc: true });
+  assert.strictEqual(skippedRpc.skipped, true);
+  assert.strictEqual(skippedRpc.available, true);
+
+  const realRpc = checkAgentApiRpc(staleSessId);
+  assert.ok(typeof realRpc.available === 'boolean');
+  if (realRpc.error) {
+    assert.strictEqual(realRpc.error.includes('EINVAL'), false, 'RPC probe must NOT fail with EINVAL on Windows');
+  }
+
+  // Test 8: 转录内省原语 fetchSessionTranscript 与 recent_trajectory 校验
+  const transcriptTestId = '77777777-7777-7777-7777-777777777777';
+  const tDir = path.join(tempBrain, transcriptTestId, '.system_generated', 'logs');
+  fs.mkdirSync(tDir, { recursive: true });
+  const tFile = path.join(tDir, 'transcript.jsonl');
+  fs.writeFileSync(tFile, [
+    JSON.stringify({ step_index: 0, type: 'USER_INPUT', source: 'USER_EXPLICIT', content: 'Step 0 user query', created_at: '2026-10-16T01:00:00Z' }),
+    JSON.stringify({ step_index: 1, type: 'PLANNER_RESPONSE', source: 'MODEL', status: 'DONE', thinking: 'Deep thoughts step 1', content: 'Model answer 1', created_at: '2026-10-16T01:01:00Z' }),
+    JSON.stringify({
+      step_index: 2,
+      type: 'PLANNER_RESPONSE',
+      source: 'MODEL',
+      status: 'DONE',
+      thinking: 'Deep thoughts step 2 with long reasoning analysis',
+      tool_calls: [{ name: 'run_command', args: { CommandLine: 'npm test' } }],
+      content: 'Executing command...',
+      created_at: '2026-10-16T01:02:00Z'
+    })
+  ].join('\n'), 'utf8');
+
+  const introspectRes = fetchSessionTranscript(transcriptTestId, { brainPath: tempBrain, tail: 2 });
+  assert.strictEqual(introspectRes.found, true);
+  assert.strictEqual(introspectRes.total_steps, 3);
+  assert.strictEqual(introspectRes.steps.length, 2);
+  assert.strictEqual(introspectRes.steps[0].step_index, 1);
+  assert.strictEqual(introspectRes.steps[1].step_index, 2);
+  assert.strictEqual(introspectRes.steps[1].tool_calls.length, 1);
+  assert.strictEqual(introspectRes.steps[1].tool_calls[0].name, 'run_command');
+  assert.ok(introspectRes.steps[1].thinking_preview.includes('Deep thoughts step 2'));
+
+  // probeDispatchSession 中 recent_trajectory 校验
+  const probeWithTrajectory = probeDispatchSession(transcriptTestId, { brainPath: tempBrain, skipRpc: true });
+  assert.ok(Array.isArray(probeWithTrajectory.recent_trajectory));
+  assert.strictEqual(probeWithTrajectory.recent_trajectory.length, 3);
+  assert.strictEqual(probeWithTrajectory.recent_trajectory[2].action_summary, 'tool_calls(run_command)');
+
+  // 不存在会话测试
+  const notFoundRes = fetchSessionTranscript('non-existent-uuid', { brainPath: tempBrain });
+  assert.strictEqual(notFoundRes.found, false);
+  assert.strictEqual(notFoundRes.steps.length, 0);
+  assert.ok(notFoundRes.error);
 
   // Cleanup
   fs.rmSync(tempDir, { recursive: true, force: true });

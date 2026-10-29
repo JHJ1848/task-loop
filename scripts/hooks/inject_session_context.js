@@ -332,8 +332,8 @@ function getPluginTopicRules(details, templates, mainThreadId) {
       lines.push(...pluginRules.main_session);
     } else {
       lines.push(`- [Plugin: task-loop | 主会话定位与治理硬约束]:`);
-      lines.push(`  1. 仅限只读探索 (Explore Only): 主会话仅限执行需求初加工、只读探测与架构诊断 (EXPLORE)，严禁主会话自身直接执行修改落地 (WORK) 或直接编辑业务代码;`);
-      lines.push(`  2. 强制 sidebus 派单执行 (Mandatory Sidebus Delegation): 所有具体的业务代码修改、功能落地与 BugFix (WORK) 强制要求通过 sidebus (send_message / agentapi) 派单至对应的专题会话 (Topic Session) 实施，杜绝主会话直接修改或擅自派遣临时 Worker 造成的上下文错乱与业务冲突;`);
+      lines.push(`  1. 业务代码只读与提倡文档主理 (Code Explore-Only & Docs Stewardship): 主会话负责需求初加工、只读探测与架构诊断 (EXPLORE)，允许并提倡主会话直接编写、维护 docs/ (含 docs/MEMORY.md、docs/memory/*.md 等)、MEMORY.md、README.md、AGENTS.md、references/ 等文档与记忆资产以防止上下文失真；严禁主会话自身直接编辑模块业务代码 (WORK);`);
+      lines.push(`  2. 业务代码强制 sidebus 派单执行 (Mandatory Sidebus Delegation): 所有具体的模块业务代码开发、功能落地与 BugFix (WORK) 强制要求通过 sidebus (send_message / agentapi) 派单至对应的专题会话 (Topic Session) 独立实施；下层专题会话负责独立的模块代码开发并协助局部 docs 文档编辑，杜绝主会话直接修改业务代码或擅自派遣临时 Worker 造成的上下文错乱与业务冲突;`);
       lines.push(`  3. 主会话子代理派遣权限严格受限 (Reviewer & Explorer Only): 主会话严禁派遣 Worker (落地/写代码子代理)，主会话仅限派遣 reviewer (代码审查走查) 与 explorer / research (架构只读探索);`);
       lines.push(`  4. 实体会话与 KV Cache 价值: 主会话与专题会话为长期存在的物理会话实体 (Permanent Physical Session Entities)，常驻 IDE 左侧边栏列表中，存储历史积累并极大提升大模型 Prompt Token Cache (KV Cache) 命中率，大幅降低延迟与成本;`);
       lines.push(`  5. 完整背景与信息梳理下发铁律 (Full Context Dispatching Iron Law): 严禁省略业务背景只甩修改步骤与白名单清单！派单消息必须且强制包含四大法定板块：【一、完整业务背景与原始需求 (Background & Full Requirements)】(Why & Context: 核心痛点/事故反思/用户诉求全貌还原)、【二、全局信息梳理与技术推演 (Information Breakdown & Rationale)】(调用链/跨模块影响面/架构决策/风险推演)、【三、实施范围与手术级落地细节 (Objective & Implementation)】(目标与代码级步骤)、【四、严格物理白名单与验收门禁 (Allowlist & Verification Gate)】(明确 [EXPLORE]/[WORK]、严格物理白名单、复杂度定级与自测门禁)，彻底消除专题信息不对称与盲人摸象;`);
@@ -342,7 +342,8 @@ function getPluginTopicRules(details, templates, mainThreadId) {
       lines.push(`  8. 任务派单流转与权责核验 (Dispatch Workflow & Seam Gate): 寻找专题 -> 没有则按规范创建顶层专题会话 -> 派单前必须在思维链中核验拟下发 Allowlist 物理文件是否 100% 属于目标专题权责 (严禁搭便车派单) -> 按照四大法定板块组织完整派单报文，通过 sidebus (send_message) 定向发信，划定 Allowlist 物理白名单;`);
       lines.push(`  9. 复杂度分级调度: Level 1 就地派单，Level 2 标准派单自测，Level 3 专题会话内 Subagent 并行协作;`);
       lines.push(`  10. 四大绝对门禁与双轮驱动质检 (Dual-Engine Verification & Loop Rejection): 严禁充当传声筒盲目轻信放行！主会话必须严格执行双轮驱动质检与四大绝对门禁：① 门禁1 (原有逻辑破坏防御): 逐行逆向审视 Diff，严禁专题擅自删除或弱化旧有 if 校验、业务门禁、前置条件或提前落盘，发现违规必须下发 DELIVERABLE_REJECTED 驳回重修；② 门禁2 (最小改动自证与注释溯源): 核验《最小改动自证说明》与代码改动原因注释，超出 Allowlist 或无关重构一律驳回；③ 门禁3 (双轮驱动质检与全局风险评估): 执行【轮1: 需求清单逐项逆向比对】(排查遗漏与假交付 GOTCHA-001/003) 与【轮2: 宏观上下文深度质检】(防误伤误改/防分支冲突/推演状态机乱序/边界空值/并发原子性风险)；④ 门禁4 (Loop 闭环仲裁与主动打回): 门禁未 100% 全过时主动打回专题修复，杜绝让用户充当质检员 (参考 references/dispatch-contract.md 与 gotchas.md);`);
-      lines.push(`  11. 双阶梯进度监测与动态监督机制 (Dynamic Progress Supervision & Inspection): 派单后挂载 30s 进度监测器 (schedule DurationSeconds=30)。30s 触发时执行 node scripts/inspect_agy_sessions.js --monitor-dispatch <session_id> 检查真活跃 (thread_running/is_working)；定期审视目标专题的思考链 (Thinking) 与工具调用 (Tool Calls)，识别死循环、走弯路或消极退化特征并主动纠偏，杜绝消极挂起。【门禁分流】: ① 若 is_working === false (未见 MODEL 步/未激活)，绝对严禁挂载 120s 巡检任务！必须立即出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 补发唤醒，并继续挂载 30s 进度监测器循环监控直至激活；② 仅当确凿返回 is_working === true (检测到线程工作) 时，才准入挂载 120s 巡检任务 (参考 references/dispatch-contract.md 与 gotchas.md);`);
+      // [task-042 对齐] 15s 快速探针与 4 维物理交叉验证规范 (<60s 闭环)
+      lines.push(`  11. 双阶梯进度监测与动态监督机制 (Dynamic Progress Supervision & Inspection): 派单后挂载 15s 快速探针 (schedule DurationSeconds=15)。15s 触发时执行 node scripts/inspect_agy_sessions.js --probe-dispatch <session_id> 执行 4 维物理交叉验证 (Presence/Filesystem/Inference Step/Daemon RPC)；【门禁分流】: ① 若 can_enter_gate !== true 或 is_working !== true，绝对严禁挂载工作巡检！必须在 15s 内即刻出具【🔴 专题未激活告警卡】、调用 agentapi.bat send-message 强制补发物理唤醒，并继续挂载 15s 快速探针循环监控直至激活；② 仅当确凿返回 can_enter_gate === true 且 is_working === true 时，才准入挂载 30s~45s 动态工作巡检任务，全链路控制在 60s 内，严禁让用户无效等待 >60s (参考 references/dispatch-contract.md 与 gotchas.md);`);
       lines.push(`  12. 正交多专题异步并行派单与反馈验收队列机制 (Orthogonal Async Dispatch & Verification Queue): 当存在多个跨模块改动时，主会话前置核验正交三要素：① 专题隔离 (TargetSession(A) !== TargetSession(B)，同专题内部单线串行)；② 白名单正交 (Allowlist(A) ∩ Allowlist(B) == ∅，物理写白名单零交集)；③ 逻辑解耦 (无先后数据依赖)。三要素全满足时，允许同一编排周期内向正交专题异步并行派单 (并发度上限 <= 3) 并挂载全局兜底定时器 (TimerCondition="any") 响应式唤醒；任一不满足强制悲观降级为串行派发。子专题交付消息进入反馈验收队列 (FIFO)，主会话逐个出队独立执行双轮驱动质检与四大绝对门禁；单个任务未过下发 DELIVERABLE_REJECTED 独立驳回重修，其他并行任务不受干扰。`);
     }
   } else if (details.module_key === 'session_control') {
@@ -380,7 +381,7 @@ function getPluginTopicRules(details, templates, mainThreadId) {
       lines.push(`  1. 物理实体与领域深耕: 作为长期常驻 IDE 侧边栏的物理会话实体，持续沉淀领域上下文并最大化大模型 KV Cache 命中率;`);
       lines.push(`  2. 领域攻坚与闭环: 负责所属领域专业排查与代码实施，严守任务 Allowlist 物理白名单;`);
       lines.push(`  3. 专题内子代理协同门槛: 仅在满足并发度 >= 2 (多分支并发加速) 或物理强隔离沙箱时才允许拉起子代理，严禁单子代理串行让专题干等，单线任务一律由专题自身直接实施闭环;`);
-      lines.push(`  4. 标准执行与自查流程: 承接锁定 -> 边界实施 (附带代码注释溯源) -> 专题自主语法检查与功能自测 -> 记忆沉淀 (docs/memory/*.md) -> 强制提供包含最小改动自证、注释溯源、原有逻辑自查与自测证据的规范交付物并通过 sidebus 汇报。`);
+      lines.push(`  4. 职责与标准执行流: 负责独立模块代码开发并协助 docs 文档编辑；承接任务锁定 Allowlist -> 白名单内精准实施 (附带代码注释溯源) -> 专题自主语法检查与功能自测 -> 协助专题记忆沉淀 (docs/memory/*.md) -> 取消机械三段式，统一采用 100~800 字简洁精炼的话语汇报交付结果并通过 sidebus 汇报。`);
     }
   }
 
@@ -479,7 +480,7 @@ function computeLifecycleState(details, activeTodo) {
     return {
       label: '[🧭 治理与调度中 (ORCHESTRATING)]',
       code: 'ORCHESTRATING',
-      desc: '作为主治理中枢，仅限只读探索与任务编排，严禁自身修改业务代码'
+      desc: '作为主治理中枢，负责探索编排并直接主理 docs/记忆文档，严禁自身修改业务代码'
     };
   }
 

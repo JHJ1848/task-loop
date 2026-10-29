@@ -319,6 +319,30 @@ class TestHooksPipeline(unittest.TestCase):
             "Explore Only" in res.get("reason", "")
         )
 
+    def test_enforce_allowlist_main_docs_stewardship(self):
+        for allowed_doc in ["docs/MEMORY.md", "docs/memory/session_control.md", "MEMORY.md", "README.md"]:
+            mock_input = json.dumps({
+                "vendor": "antigravity", "conversationId": MOCK_MAIN_ID,
+                "toolCall": {
+                    "name": "replace_file_content",
+                    "args": {
+                        "TargetFile": allowed_doc
+                    }
+                },
+                "workspacePaths": [self.sandbox_dir]
+            })
+            proc = subprocess.Popen(
+                [sys.executable, self.allowlist_script],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8"
+            )
+            stdout, _ = proc.communicate(input=mock_input)
+            res = json.loads(stdout)
+            self.assertEqual(res.get("decision"), "allow", f"Main thread should be allowed to steward docs asset: {allowed_doc}")
+
     def test_enforce_allowlist_topic_expansion_request(self):
         os.environ["TASK_LOOP_ALLOWLIST"] = "skills/subagent/SKILL.md"
         mock_input = json.dumps({
