@@ -337,6 +337,96 @@ def check_agentapi_rpc(session_id: str, options: dict = None):
         return {"checked": True, "available": False, "error": str(e)}
 
 
+def wake_session_via_agent_api(session_id: str, wake_message: str = None, options: dict = None, **kwargs):
+    """通过 agentapi 原地触发物理自愈唤醒 (Auto-Wake via AgentApi)
+    严格纯位置参数: agentapi send-message <session_id> "<wake_message>"
+    """
+    opts = dict(options or {})
+    opts.update(kwargs)
+    default_msg = "【task-loop 自动物理唤醒】请立即处理当前会话任务。"
+    msg = (wake_message or opts.get("wake_message") or default_msg).strip()
+
+    mock_agent_api = opts.get("mock_agent_api") or opts.get("mockAgentApi")
+    if mock_agent_api:
+        if callable(mock_agent_api):
+            return mock_agent_api(session_id, msg)
+        return {"success": True, "stdout": "mock success"}
+
+    import shutil
+    import subprocess
+
+    bin_path = os.environ.get("AGENTAPI_PATH") or opts.get("agent_api_path") or opts.get("agentApiPath")
+    if not bin_path or not os.path.exists(bin_path):
+        home = os.path.expanduser("~")
+        candidates = [
+            os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.bat"),
+            os.path.join(home, ".gemini", "antigravity", "bin", "agentapi.exe"),
+            os.path.join(home, ".gemini", "antigravity", "bin", "agentapi"),
+            os.path.join(home, ".antigravity", "bin", "agentapi.bat"),
+            os.path.join(home, ".antigravity", "bin", "agentapi.exe"),
+            os.path.join(home, ".antigravity", "bin", "agentapi"),
+        ]
+        bin_path = next((c for c in candidates if os.path.exists(c)), None)
+
+    if not bin_path:
+        bin_path = shutil.which("agentapi")
+
+    if not bin_path:
+        return {"success": False, "error": "agentapi binary not found"}
+
+    clean_env = os.environ.copy()
+    clean_env.pop("ANTIGRAVITY_CONVERSATION_ID", None)
+    clean_env.pop("ANTIGRAVITY_TRAJECTORY_ID", None)
+    clean_env.pop("ANTIGRAVITY_SOURCE_METADATA", None)
+
+    try:
+        proc = subprocess.run(
+            [bin_path, "send-message", session_id, msg],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            shell=(os.name == "nt"),
+            encoding="utf-8",
+            env=clean_env
+        )
+        if proc.returncode == 0:
+            return {"success": True, "stdout": proc.stdout.strip()}
+        else:
+            err = proc.stderr.strip() or proc.stdout.strip() or f"exit code {proc.returncode}"
+            return {"success": False, "error": err}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def apply_auto_wake_if_dormant(ret: dict, session_id: str, options: dict = None, **kwargs):
+    """内部辅助函数: 若处于未激活/未工作状态且开启 auto_wake，原地补发物理唤醒并注入状态"""
+    opts = dict(options or {})
+    opts.update(kwargs)
+    auto_wake = opts.get("auto_wake") if "auto_wake" in opts else opts.get("autoWake")
+    if not auto_wake:
+        ret["auto_woken"] = False
+        return ret
+
+    if ret.get("is_working") or ret.get("can_enter_gate"):
+        ret["auto_woken"] = False
+        ret["auto_wake_skipped"] = "ALREADY_WORKING"
+        return ret
+
+    default_msg = "【task-loop 自动物理唤醒】请立即处理当前会话任务。"
+    wake_msg = auto_wake.strip() if isinstance(auto_wake, str) and auto_wake.strip() else (opts.get("wake_message") or default_msg)
+    wake_res = wake_session_via_agent_api(session_id, wake_msg, opts)
+    if wake_res and wake_res.get("success"):
+        ret["auto_woken"] = True
+        ret["auto_wake_message"] = wake_msg
+        ret["auto_wake_result"] = "SUCCESS"
+    else:
+        ret["auto_woken"] = False
+        ret["auto_wake_message"] = wake_msg
+        ret["auto_wake_result"] = "FAILED"
+        ret["auto_wake_error"] = wake_res.get("error") if wake_res else "unknown error"
+    return ret
+
+
 def fetch_session_transcript(session_id: str, options: dict = None, **kwargs):
     """跨会话转录内省原语 (Transcript Introspection Primitive)
     按时序提取目标会话的最新执行轨迹，包括思维链 Thinking、工具调用与模型内容。
@@ -560,7 +650,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None, options: dic
         }
         dimension_rpc = check_agentapi_rpc(session_id, options)
 
-        return {
+        return apply_auto_wake_if_dormant({
             "session_id": session_id,
             "found": False,
             "thread_running": False,
@@ -586,7 +676,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None, options: dic
             "reason": f"会话目录不存在: {session_dir}",
             "deep_link": f"conversation://{session_id}",
             "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未创建或无日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
-        }
+        }, session_id, options)
 
     log_file = os.path.join(session_dir, ".system_generated", "logs", "transcript.jsonl")
     if not os.path.exists(log_file):
@@ -650,7 +740,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None, options: dic
         }
         dimension_rpc = check_agentapi_rpc(session_id, options)
 
-        return {
+        return apply_auto_wake_if_dormant({
             "session_id": session_id,
             "found": False,
             "thread_running": False,
@@ -675,7 +765,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None, options: dic
             "reason": "未找到 transcript.jsonl 日志文件",
             "deep_link": f"conversation://{session_id}",
             "alert_card": f"[🔴 专题未激活告警卡]\n专题会话 ({session_id}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://{session_id})"
-        }
+        }, session_id, options)
 
     last_dispatch_index = -1
     last_dispatch_step = None
@@ -723,7 +813,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None, options: dic
         }
         dimension_rpc = check_agentapi_rpc(session_id, options)
 
-        return {
+        return apply_auto_wake_if_dormant({
             "session_id": session_id,
             "found": False,
             "thread_running": False,
@@ -747,7 +837,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None, options: dic
             },
             "reason": f"读取日志异常: {e}",
             "deep_link": f"conversation://{session_id}"
-        }
+        }, session_id, options)
 
     if last_dispatch_index == -1:
         for i in range(len(steps) - 1, -1, -1):
@@ -928,7 +1018,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None, options: dic
             "thinking_preview": thinking_prev
         })
 
-    return {
+    return apply_auto_wake_if_dormant({
         "session_id": session_id,
         "found": True,
         "thread_running": thread_running_fresh or thread_running,
@@ -951,7 +1041,7 @@ def probe_dispatch_session(session_id: str, brain_path: str = None, options: dic
         "dimensions": dimensions,
         "deep_link": f"conversation://{session_id}",
         "alert_card": alert_card
-    }
+    }, session_id, options)
 
 
 def main():
@@ -967,6 +1057,7 @@ def main():
     parser.add_argument("--baseline-size", type=int, default=None, help="Dispatch baseline transcript size in bytes")
     parser.add_argument("--fresh-window-sec", type=int, default=30, help="Window in seconds for fresh step calculation (default: 30)")
     parser.add_argument("--skip-rpc", action="store_true", help="Skip AgentAPI metadata query")
+    parser.add_argument("--auto-wake", nargs="?", const="【task-loop 自动物理唤醒】请立即处理当前会话任务。", default=None, help="Auto-wake target session via agentapi if dormant/not working")
     parser.add_argument("--json", action="store_true", help="Output raw JSON instead of table")
     args = parser.parse_args()
 
@@ -991,7 +1082,9 @@ def main():
                 "baseline_time": args.baseline_time,
                 "baseline_size": args.baseline_size,
                 "fresh_window_sec": args.fresh_window_sec,
-                "skip_rpc": args.skip_rpc
+                "skip_rpc": args.skip_rpc,
+                "auto_wake": args.auto_wake,
+                "wake_message": args.auto_wake
             }
         )
         print(json.dumps(probe_result, ensure_ascii=False, indent=2))

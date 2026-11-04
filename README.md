@@ -1,6 +1,6 @@
 # Task Loop (`task-loop`)
 
-通用跨 Agent 任务循环调度器（Universal Cross-Agent Task Loop），全面支持 **Antigravity (AGY)**、**Codex** 和 **Claude Code**。
+通用跨 Agent 任务循环调度器（Universal Cross-Agent Task Loop），全面支持 **Antigravity (AGY)**、**ZCode (Z.ai)**、**OpenAI Codex** 和 **Anthropic Claude Code**。
 
 ![架构设计与落地方案](assets/architecture.png)
 
@@ -8,13 +8,81 @@
 
 ## [Core Features] 核心特性
 
-- **多厂商环境感知（Vendor-Agnostic）**：自动扫描并解析当前项目的历史 Agent 会话（AGY / Codex / Claude），提取交互元数据与上下文。
-- **智能打标与专题会话路由（Auto-Tagging & Routing）**：主会话 AI 结合工程架构对各个专题会话进行语义化分类与标签化（`tags` / `module_key`），构建项目专题拓扑；主会话通过 sidebus 派单至专题会话，由专题会话按需拉起 subagents 实施落地。
+- **多厂商环境感知（Vendor-Agnostic）**：自动扫描并解析当前项目的历史 Agent 会话（AGY / ZCode / Codex / Claude），提取交互元数据与上下文。
+- **智能打标与专题会话路由（Auto-Tagging & Routing）**：主会话 AI 结合工程架构对各个专题会话进行语义化分类与标签化（`tags` / `module_key`），构建项目专题拓扑；主会话负责直接主理 `docs/` 与记忆文档防失真，并通过 sidebus 派单至专题会话独立开发业务代码，由专题会话按需拉起 subagents 实施落地。
 - **1 / 2 / 3 复杂度分级调度（Complexity Tiering）**：
   - **Level 1（简单）**：单点 Bugfix / 单文件修改，直发单线程极速闭环。
   - **Level 2（标准）**：模块内功能开发与重构，边界约束内自测与专题记忆回写。
   - **Level 3（复杂）**：跨模块架构演进 / 耗时 > 3 分钟，强制 Subagent 编排（Research / Worker / Reviewer 并行流转）。
 - **双运行时环境支持（Dual Runtime: Node.js & Python）**：Node.js (18+) 为 Primary 主力黄金事实源（零 npm 外部依赖，极速启动）；Python (3.8+) 为等价标准库薄适配（零 pip 外部依赖），契约测试保障 100% 行为等价。
+
+---
+
+## [Session Mechanics] 插件操作会话的基础原理与跨平台底层架构
+
+不同 AI 宿主对“会话（Session / Thread / Conversation）”的底层暴露方式截然不同。本插件通过抽象统一的 **六大标准会话原语 (`SessionProvider`)** 与 **双层生命周期钩子 (`PreInvocation` / `PreToolUse`)**，在底层針對四大平台采用各自原生的权威通信机制：
+
+### 1. Google Antigravity (AGY)：原生 Built-in 工具 + `agentapi` Sidebus RPC + 磁盘物理直通
+与 Claude Code Desktop（内置 `ccd_session*` MCP）和 Codex（内置 `codex_app` MCP）不同，**AGY 不通过 MCP 暴露会话管理**，而是采用三层组合原语（经 AGY 官方内置 `antigravity_guide`、`automation`、`agy-customizations/docs/hooks.md` 及 `agentapi` CLI 实测证实）：
+* **L1 宿主内置工具 (`default_api`)**：
+  - `send_message(Recipient, Message)`：通过 Language Server Sidebus 向目标会话或子代理投递消息（UI 渲染为 `Message from Root Agent` 折叠卡），并触发宿主原生的 **Reactive Wakeup（响应式唤醒）**——发信方无需轮询，收到回信或后台任务完成时由系统事件驱动自动恢复执行。
+  - `invoke_subagent` / `define_subagent` / `manage_subagents(list|kill|kill_all)`：在当前会话内动态定义、拉起、监控与销毁树状子代理沙箱。
+  - `schedule(DurationSeconds, TimerCondition)`：挂载事件驱动定时器（当 `TimerCondition` 命中目标会话回信时自动提前取消定时器并唤醒）。
+* **L2 本地守护进程 CLI (`~/.gemini/antigravity/bin/agentapi.bat`)**：
+  - 底层直连宿主本地 Connect RPC (`ANTIGRAVITY_LS_ADDRESS` / `LanguageServerService`)，提供三大顶层根会话控制命令：
+    - `agentapi new-conversation [--model=<flash_lite|flash|pro>] [--title=<title>] -- <prompt>`：净化父级环境变量后创建 `nestingDepth: 0` 的独立顶层物理根会话（常驻 IDE 左侧列表）；
+    - `agentapi send-message [--title=<title>] <recipient_id> <content>`：强制物理唤醒处于休眠态的顶层专题会话进入大模型推理；
+    - `agentapi get-conversation-metadata <conversation_id>`：通过 RPC 实时校验会话存在性与工作区绑定。
+* **L3 物理文件系统直通与生命周期 Hooks**：
+  - **4 维物理状态探针与转录内省**：直接读取 `~/.gemini/antigravity/presence/<id>.lock`（在场锁）与 `~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript.jsonl`（全量推理步骤、Thinking 思考链与 Tool Calls），结合 `conversation://<id>` 协议实现零延迟状态交叉验证与 UI 切屏；
+  - **Hooks 管道**：通过 `PreInvocation` 输出 `injectSteps: [{"ephemeralMessage": "..."}]` 实现零轨迹污染的上下文与规则注入；通过 `PreToolUse` 输出 `decision: "allow"|"deny"` 强制执行物理文件修改白名单（Allowlist）。
+
+### 2. 四大平台会话底层实现机制权威对照矩阵 (JSON)
+
+```json
+[
+  {
+    "vendor": "Google Antigravity (AGY)",
+    "architecture_paradigm": "Native Built-in Tools + Sidebus CLI (agentapi Connect RPC) + Disk JSONL Introspection",
+    "session_id_discovery": "Runtime <user_information> / env ANTIGRAVITY_CONVERSATION_ID / Hook stdin conversationId",
+    "top_level_session_spawn": "agentapi new-conversation --title=\"...\" -- \"<prompt>\" (净化父环境变量, nestingDepth: 0)",
+    "cross_session_send_and_wake": "In-session: send_message(Recipient, Message) + Reactive Wakeup; CLI RPC: agentapi send-message <id> <msg>",
+    "subagent_sandbox": "invoke_subagent / define_subagent / manage_subagents (list | kill | kill_all)",
+    "storage_and_introspection": "~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript.jsonl + presence/<id>.lock",
+    "lifecycle_hooks": "PreInvocation (injectSteps.ephemeralMessage) + PreToolUse (decision: allow | deny)"
+  },
+  {
+    "vendor": "Anthropic Claude Code",
+    "architecture_paradigm": "Desktop Built-in MCP (ccd_session / ccd_session_mgmt) + Headless CLI (-p --resume) + Scheduled Task Bridge",
+    "session_id_discovery": "Hook stdin .session_id (snake_case) + ~/.claude/sessions/<pid>.json (sessionId <-> hostSessionId: local_xxx)",
+    "top_level_session_spawn": "Desktop UI MCP: mcp__ccd_session__start_session / Scheduled Task Bridge (scheduled_tasks_run_scheduled_task 产出 local_<uuid>)",
+    "cross_session_send_and_wake": "Desktop MCP: mcp__ccd_session_mgmt__send_message / list_sessions / list_events; CLI: claude -p --resume <uuid> \"<prompt>\" --output-format json",
+    "subagent_sandbox": "Native Agent/Task subagents & claude --resume <id> --fork-session",
+    "storage_and_introspection": "~/.claude/projects/<munged-cwd>/<uuid>.jsonl + ~/.claude/sessions/<pid>.json",
+    "lifecycle_hooks": "SessionStart (stdout text) + UserPromptSubmit (additionalContext) + PreToolUse (Exit Code 2 block)"
+  },
+  {
+    "vendor": "OpenAI Codex",
+    "architecture_paradigm": "Desktop App MCP (codex_app) + Non-Interactive CLI (codex exec resume / codex queue)",
+    "session_id_discovery": "Process env CODEX_THREAD_ID / CODEX_SESSION_ID",
+    "top_level_session_spawn": "Desktop MCP: mcp__codex_app__list_projects -> mcp__codex_app__create_thread (worktree | local)",
+    "cross_session_send_and_wake": "Desktop MCP: mcp__codex_app__send_message_to_thread -> wait_threads -> read_thread; CLI: codex exec resume <id> / codex queue --thread <id>",
+    "subagent_sandbox": "Desktop child threads (create_thread) or CLI isolated exec",
+    "storage_and_introspection": "$CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl (session_meta.payload + rollout events)",
+    "lifecycle_hooks": ".codex-plugin/plugin.json -> UserPromptSubmit (codex-session-health.json 监控长会话体积与轮换)"
+  },
+  {
+    "vendor": "ZCode (Z.ai)",
+    "architecture_paradigm": "In-Process Agent Tool + Headless Electron Node CLI (zcode.cjs) + SQLite/Rollout Store",
+    "session_id_discovery": "Hook stdin .session_id / env ZCODE_SESSION_ID",
+    "top_level_session_spawn": "ELECTRON_RUN_AS_NODE=1 ZCode.exe zcode.cjs --cwd <dir> -p \"<prompt>\" (封装于 spawn_zcode_session.js)",
+    "cross_session_send_and_wake": "In-process: SendMessage(to: agent_<uuid>); Cross-session CLI: zcode --resume <sess_id> -p \"<prompt>\"",
+    "subagent_sandbox": "Native Agent (Task) tool synchronous subagent execution",
+    "storage_and_introspection": "~/.zcode/cli/db/db.sqlite (session, input_history 只读查询) + ~/.zcode/cli/rollout/model-io-sess_<uuid>.jsonl",
+    "lifecycle_hooks": "hooks/hooks.json -> SessionStart / UserPromptSubmit (hookSpecificOutput.additionalContext) + PreToolUse (permissionDecision: deny)"
+  }
+]
+```
 
 ---
 

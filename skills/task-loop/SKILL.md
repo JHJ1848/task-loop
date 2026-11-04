@@ -22,7 +22,46 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
   - **无可用专题与防擅自派发铁律**: 若没有相关专题会话可用、或不清楚如何新建/请求会话，主会话**必须先检查相关文档指导 (`references/sdk/README.md`, `skills/new-session/SKILL.md`, `skills/session-control/SKILL.md`)**；若仍需确认，**必须主动向用户请求指引并询问**；**绝对禁止主会话自主擅自派遣子代理 Worker 逃避专题治理！**
 1. **寻找专题会话**: 查阅 `.agents/task-loop/sessions.json`，若存在对应领域的长期专题会话，直接执行步骤 3；
 2. **没有则新建 (主动程序化创建)**: 若为全新领域，调度器调用 `agentapi new-conversation --title="[专题名称] 功能1 & 功能2" "<prompt>"`（自动净化父级环境变数，确保 `nestingDepth: 0` 独立顶层根会话）并在 `sessions.json` 持久化登记；若不知如何创建或无环境，先查阅文档或向用户确认；
-3. **Sidebus 定向发信**: 通过 sidebus 管道使用 `send_message(recipient, message)` 定向发信下发任务，目标会话激活时由 **`PreInvocation` Hook 自动被动注入该专题专属上下文**，严禁主会话擅自拉起临时子代理代劳。
+3. **Sidebus 定向发信与双轨合一派单 (Dual-Trigger Dispatch)**:
+   - **双轨合一保障**: 主会话通过 sidebus 管道调用原生 `send_message(recipient, message)` 下发派单任务的同时，**推荐立即顺带执行一次轻量物理唤醒命令**（`agentapi.bat send-message <id> "任务已派发，请即刻执行"`，注意为纯位置参数，严禁 `--to` / `--message`），彻底杜绝目标专题在后台无焦点时静默休眠 (DORMANT_NOT_ACTIVATED)，从源头避免白等 15 秒探针；
+   - **Hook 瞬态上下文感知**: 目标会话激活时由 **`PreInvocation` Hook 自动被动注入该专题专属上下文**，严禁主会话擅自拉起临时子代理代劳。
+
+### 1.1 跨平台会话操作底层原理矩阵 (Multi-Vendor Session Mechanics)
+
+本项目基于各宿主平台官方底层能力与物理特性构建会话调度与控制抽象层。各大主流宿主环境的底层会话创建、定向发信/唤醒与反向内省机制定义如下：
+
+```json
+[
+  {
+    "vendor": "Google Antigravity (AGY)",
+    "architecture_layer": "原生内置工具 + 本地 Connect RPC 守护进程 + 磁盘物理直通三层组合架构",
+    "session_spawn": "本地 Connect RPC: agentapi.bat new-conversation --title=\"...\" -- \"<prompt>\" (创建独立顶层根会话，自动净化环境变量) / invoke_subagent (临时任务隔离沙箱)",
+    "session_send_and_wake": "原生工具 send_message (触发 Reactive Wakeup 响应式唤醒) + 本地 CLI agentapi.bat send-message <id> \"<msg>\" (物理唤醒休眠会话)",
+    "session_introspection": "磁盘物理直通: 直读 ~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript.jsonl + presence/<id>.lock 在场锁 + inspect_agy_sessions.js 4 维物理交叉验证"
+  },
+  {
+    "vendor": "Anthropic Claude Code",
+    "architecture_layer": "Desktop 内置 MCP Server + CLI 无头续接管道",
+    "session_spawn": "Desktop 内置 mcp__ccd_session__start_session / Scheduled Task 桥接产出 local_<uuid>",
+    "session_send_and_wake": "Desktop 内置 mcp__ccd_session_mgmt__send_message (配套 list_sessions, list_events, archive_session) / CLI: claude -p --resume <uuid> \"<prompt>\" --output-format json",
+    "session_introspection": "~/.claude/projects/<munged-cwd>/<uuid>.jsonl + ~/.claude/sessions/<pid>.json (通过 Hooks stdin JSON 注入 .session_id)"
+  },
+  {
+    "vendor": "OpenAI Codex",
+    "architecture_layer": "Desktop 内置 MCP Server + CLI 续接与任务队列",
+    "session_spawn": "Desktop 内置 mcp__codex_app__create_thread (worktree | local 模式)",
+    "session_send_and_wake": "Desktop: mcp__codex_app__send_message_to_thread + wait_threads (搭配 read_thread); CLI: codex exec resume <id> / codex queue --thread <id>",
+    "session_introspection": "$CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl (session_meta + rollout 日志) + 读取 CODEX_THREAD_ID 环境变量"
+  },
+  {
+    "vendor": "ZCode (Z.ai)",
+    "architecture_layer": "进程内 Agent 协同 + 客户端 Node 运行时无头驱动 + SQLite/Rollout 双持久化",
+    "session_spawn": "spawn_zcode_session.js spawn (底层通过 ELECTRON_RUN_AS_NODE=1 ZCode.exe zcode.cjs --cwd <dir> -p 无头拉起)",
+    "session_send_and_wake": "进程内 SendMessage(to: agent_<uuid>) / 跨会话 spawn_zcode_session.js send (--resume <id> -p 定向发信唤醒)",
+    "session_introspection": "~/.zcode/cli/db/db.sqlite (session 与 input_history 只读查询) + ~/.zcode/cli/rollout/model-io-sess_<uuid>.jsonl 日志反向解析"
+  }
+]
+```
 
 ### 2. 专题相似度计算与业务冲突前置裁决 (Topic Similarity & Anti-Conflict Gate)
 * **Hook 自动感知与无感创建背景**：在底层 Hook 体系联动下，当主会话请求专题会话时，系统 Hook 会自动判断若目标会话不存在或已归档，将自动无感新建并刷新 `sessions.json`。因此，主会话在请求专题（尤其是判定需要创建全新专题）时，**必须在前置编排阶段对现有所有专题进行语义相似度与业务冲突计算**，避免出现重复专题和大量业务冲突：
@@ -244,6 +283,18 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 
 为彻底解决 AGY 等高响应宿主下用户无效盲等超 60s 的痛点，并杜绝因假阳性无法及时拦截的问题，全面废除原 30s + 120s 漫长等待流水线，确立【15s 快速探针 + 30s~45s 动态工作巡检（全链路 <60s 闭环）与 4 维物理交叉验证门禁】：
 
+### 0. 高频原语速查卡 (Quick CLI Cheat Sheet)
+
+在派单自愈与状态核验时，必须严格遵守各 CLI 工具的参数契约，杜绝臆造标志导致的试错延迟：
+
+```bash
+# 跨会话物理唤醒（严格位置参数，严禁 --to / --message 标志）:
+agentapi.bat send-message <SESSION_ID> "<MESSAGE>"
+
+# 4维物理交叉验证探针 + 1秒原地自愈（推荐，无需手动周转）:
+node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
+```
+
 ### 1. 4 维物理交叉验证判定契约 (4-Dimensional Physical Cross-Validation Protocol)
 
 主会话在调用 `scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id>` 探测专题状态时，必须严格执行以下 4 维物理交叉验证：
@@ -281,9 +332,9 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
     "stage": "Stage 1: 15s 快速探针循环与自愈门禁 (15s Fast Probe & Self-Healing)",
     "timing": "派单后挂载 schedule(DurationSeconds=15, Prompt=\"执行 15s 快速探针核验专题 4 维物理激活态\", TimerCondition=\"any\")",
     "trigger_condition": "派单发信 15 秒后触发",
-    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> 精准执行 4 维物理交叉验证 (Presence、Filesystem、Inference Step、Daemon RPC)。",
+    "inspection_actions": "执行 node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> --auto-wake 精准执行 4 维物理交叉验证 (Presence、Filesystem、Inference Step、Daemon RPC)；强烈推荐携带 --auto-wake 参数，未激活时由脚本直接触发 1 秒原地物理自愈。",
     "pass_condition": "4 维物理交叉检测确凿通过 (can_enter_working_gate === true 且 is_working === true)。仅当快速探针确凿通过后，才准入挂载 30s~45s 动态工作巡检任务。",
-    "abnormal_resolution": "若 4 维交叉检测未通过 (is_working === false / 无增量 / 步骤陈旧 / 无在场): 1. 绝对严禁挂载工作巡检盲等！2. 第 15 秒即刻向用户出具【🔴 专题未激活告警卡】提示用户唤醒；3. 立即调用 agentapi.bat send-message 补发唤醒包；4. 继续挂载 15s 快速探针循环监控，直到真实激活。"
+    "abnormal_resolution": "若 4 维交叉检测未通过 (is_working === false / 无增量 / 步骤陈旧 / 无在场): 1. 绝对严禁挂载工作巡检盲等！2. 若未加 --auto-wake，第 15 秒即刻向用户出具【[Warning] 专题未激活告警卡】提示用户唤醒；3. 立即调用 agentapi.bat send-message <id> \"<msg>\"（严格纯位置参数，严禁 --to / --message 标志）补发唤醒包；4. 继续挂载 15s 快速探针循环监控，直到真实激活。"
   },
   {
     "stage": "Stage 2: 30s~45s 动态工作巡检门禁 (30s~45s Dynamic Working Gate)",

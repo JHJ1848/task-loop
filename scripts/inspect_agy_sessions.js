@@ -327,6 +327,118 @@ function checkAgentApiRpc(sessionId, options = {}) {
 }
 
 /**
+ * 通过 agentapi 原地触发物理自愈唤醒 (Auto-Wake via AgentApi)
+ * 严格纯位置参数: agentapi send-message <sessionId> "<wakeMessage>"
+ */
+function wakeSessionViaAgentApi(sessionId, wakeMessage, options = {}) {
+  const defaultMsg = '【task-loop 自动物理唤醒】请立即处理当前会话任务。';
+  const msg = (typeof wakeMessage === 'string' && wakeMessage.trim()) ? wakeMessage.trim() : (options.wakeMessage || defaultMsg);
+
+  if (options.mockAgentApi) {
+    if (typeof options.mockAgentApi === 'function') {
+      return options.mockAgentApi(sessionId, msg);
+    }
+    return { success: true, stdout: 'mock success' };
+  }
+
+  const home = os.homedir();
+  const candidates = [
+    process.env.AGENTAPI_PATH,
+    options.agentApiPath,
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi.bat'),
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi.exe'),
+    path.join(home, '.gemini', 'antigravity', 'bin', 'agentapi'),
+    path.join(home, '.antigravity', 'bin', 'agentapi.bat'),
+    path.join(home, '.antigravity', 'bin', 'agentapi.exe'),
+    path.join(home, '.antigravity', 'bin', 'agentapi')
+  ].filter(Boolean);
+
+  let bin = candidates.find(c => fs.existsSync(c));
+  if (!bin) {
+    try {
+      const which = process.platform === 'win32' ? 'where.exe agentapi' : 'which agentapi';
+      const out = require('child_process').execSync(which, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 600 }).trim();
+      const firstLine = out.split(/\r?\n/)[0];
+      if (firstLine && fs.existsSync(firstLine)) bin = firstLine;
+    } catch {}
+  }
+
+  if (!bin || !fs.existsSync(bin)) {
+    return { success: false, error: 'agentapi binary not found' };
+  }
+
+  // 严格执行环境变量净化，防止上下文污染
+  const env = { ...process.env };
+  delete env.ANTIGRAVITY_CONVERSATION_ID;
+  delete env.ANTIGRAVITY_TRAJECTORY_ID;
+  delete env.ANTIGRAVITY_SOURCE_METADATA;
+
+  try {
+    const isWin = process.platform === 'win32';
+    const isBat = isWin && /\.(bat|cmd)$/i.test(bin);
+    let res;
+    if (isBat) {
+      const cmdPath = process.env.ComSpec || 'cmd.exe';
+      res = require('child_process').spawnSync(cmdPath, ['/c', bin, 'send-message', sessionId, msg], {
+        env,
+        encoding: 'utf8',
+        timeout: 5000,
+        stdio: ['pipe', 'pipe', 'ignore']
+      });
+    } else {
+      res = require('child_process').spawnSync(bin, ['send-message', sessionId, msg], {
+        env,
+        encoding: 'utf8',
+        timeout: 5000,
+        stdio: ['pipe', 'pipe', 'ignore']
+      });
+    }
+
+    if (res.error) {
+      return { success: false, error: res.error.message };
+    }
+    if (res.status === 0) {
+      return { success: true, stdout: (res.stdout || '').trim() };
+    } else {
+      const errOut = (res.stderr && res.stderr.trim()) || (res.stdout && res.stdout.trim()) || `exit code ${res.status}`;
+      return { success: false, error: errOut };
+    }
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * 内部辅助函数: 若处于未激活/未工作状态且开启 autoWake，原地补发物理唤醒并注入状态
+ */
+function applyAutoWakeIfDormant(ret, sessionId, options) {
+  const autoWake = options.autoWake !== undefined ? options.autoWake : options.auto_wake;
+  if (!autoWake) {
+    ret.auto_woken = false;
+    return ret;
+  }
+  if (ret.is_working || ret.can_enter_gate) {
+    ret.auto_woken = false;
+    ret.auto_wake_skipped = 'ALREADY_WORKING';
+    return ret;
+  }
+  const defaultMsg = '【task-loop 自动物理唤醒】请立即处理当前会话任务。';
+  const wakeMsg = (typeof autoWake === 'string' && autoWake.trim()) ? autoWake.trim() : (options.wakeMessage || defaultMsg);
+  const wakeRes = wakeSessionViaAgentApi(sessionId, wakeMsg, options);
+  if (wakeRes && wakeRes.success) {
+    ret.auto_woken = true;
+    ret.auto_wake_message = wakeMsg;
+    ret.auto_wake_result = 'SUCCESS';
+  } else {
+    ret.auto_woken = false;
+    ret.auto_wake_message = wakeMsg;
+    ret.auto_wake_result = 'FAILED';
+    ret.auto_wake_error = (wakeRes && wakeRes.error) || 'unknown error';
+  }
+  return ret;
+}
+
+/**
  * 跨会话转录内省原语 (Transcript Introspection Primitive)
  * 按时序提取目标会话的最新执行轨迹，包括思维链 Thinking、工具调用与模型内容。
  */
@@ -535,7 +647,7 @@ function probeDispatchSession(sessionId, options = {}) {
     };
     const dimensionRpc = checkAgentApiRpc(sessionId, options);
 
-    return {
+    return applyAutoWakeIfDormant({
       session_id: sessionId,
       found: false,
       thread_running: false,
@@ -561,7 +673,7 @@ function probeDispatchSession(sessionId, options = {}) {
       reason: `会话目录不存在: ${sessionDir}`,
       deep_link: `conversation://${sessionId}`,
       alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未创建或无日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
-    };
+    }, sessionId, options);
   }
 
   let logFile = path.join(sessionDir, '.system_generated', 'logs', 'transcript.jsonl');
@@ -622,7 +734,7 @@ function probeDispatchSession(sessionId, options = {}) {
     };
     const dimensionRpc = checkAgentApiRpc(sessionId, options);
 
-    return {
+    return applyAutoWakeIfDormant({
       session_id: sessionId,
       found: false,
       thread_running: false,
@@ -647,7 +759,7 @@ function probeDispatchSession(sessionId, options = {}) {
       reason: '未找到 transcript.jsonl 日志文件',
       deep_link: `conversation://${sessionId}`,
       alert_card: `[🔴 专题未激活告警卡]\n专题会话 (${sessionId}) 尚未生成交互日志！请点击唤醒：\n[-> 点击切换并激活专题会话](conversation://${sessionId})`
-    };
+    }, sessionId, options);
   }
 
   let lastDispatchIndex = -1;
@@ -693,7 +805,7 @@ function probeDispatchSession(sessionId, options = {}) {
     };
     const dimensionRpc = checkAgentApiRpc(sessionId, options);
 
-    return {
+    return applyAutoWakeIfDormant({
       session_id: sessionId,
       found: false,
       thread_running: false,
@@ -717,7 +829,7 @@ function probeDispatchSession(sessionId, options = {}) {
       },
       reason: `读取日志异常: ${e.message}`,
       deep_link: `conversation://${sessionId}`
-    };
+    }, sessionId, options);
   }
 
   if (lastDispatchIndex === -1) {
@@ -887,7 +999,7 @@ function probeDispatchSession(sessionId, options = {}) {
     };
   });
 
-  return {
+  return applyAutoWakeIfDormant({
     session_id: sessionId,
     found: true,
     thread_running: threadRunningFresh || threadRunning,
@@ -910,7 +1022,7 @@ function probeDispatchSession(sessionId, options = {}) {
     dimensions,
     deep_link: `conversation://${sessionId}`,
     alert_card: alertCard
-  };
+  }, sessionId, options);
 }
 
 if (require.main === module) {
@@ -926,6 +1038,8 @@ if (require.main === module) {
   let baselineSize = null;
   let freshWindowSec = 30;
   let skipRpc = false;
+  let autoWake = false;
+  let autoWakeMessage = null;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--root' && args[i + 1]) {
@@ -948,6 +1062,11 @@ if (require.main === module) {
       freshWindowSec = parseInt(args[++i], 10) || 30;
     } else if (args[i] === '--skip-rpc') {
       skipRpc = true;
+    } else if (args[i] === '--auto-wake') {
+      autoWake = true;
+      if (args[i + 1] && !args[i + 1].startsWith('--')) {
+        autoWakeMessage = args[++i];
+      }
     } else if (args[i] === '--json') {
       isJson = true;
     } else if (args[i] === '-h' || args[i] === '--help') {
@@ -964,6 +1083,7 @@ if (require.main === module) {
       console.log(`  --baseline-size <bytes>     Dispatch baseline transcript size in bytes`);
       console.log(`  --fresh-window-sec <sec>    Window in seconds for fresh step calculation (default: 30)`);
       console.log(`  --skip-rpc                  Skip AgentAPI metadata query`);
+      console.log(`  --auto-wake [wake_msg]      Auto-wake target session via agentapi if dormant/not working`);
       console.log(`  --json                      Output raw JSON instead of table`);
       process.exit(0);
     }
@@ -988,7 +1108,9 @@ if (require.main === module) {
       baselineTime,
       baselineSize,
       freshWindowSec,
-      skipRpc
+      skipRpc,
+      autoWake: autoWakeMessage || autoWake,
+      wakeMessage: autoWakeMessage
     });
     console.log(JSON.stringify(probeResult, null, 2));
     process.exit(0);
@@ -1009,5 +1131,6 @@ module.exports = {
   loadRegistrySessions,
   checkAgentApiRpc,
   fetchSessionTranscript,
-  printRecentTrajectory
+  printRecentTrajectory,
+  wakeSessionViaAgentApi
 };

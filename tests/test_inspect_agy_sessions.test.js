@@ -7,7 +7,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { inspectAgySessions, probeDispatchSession, formatRelativeTime, checkAgentApiRpc, fetchSessionTranscript } = require('../scripts/inspect_agy_sessions');
+const { inspectAgySessions, probeDispatchSession, formatRelativeTime, checkAgentApiRpc, fetchSessionTranscript, wakeSessionViaAgentApi } = require('../scripts/inspect_agy_sessions');
 
 function runTest() {
   console.log('Running test_inspect_agy_sessions.test.js...');
@@ -291,6 +291,76 @@ function runTest() {
   assert.strictEqual(notFoundRes.found, false);
   assert.strictEqual(notFoundRes.steps.length, 0);
   assert.ok(notFoundRes.error);
+
+  // Test 9: --auto-wake 原地物理自愈能力与 wakeSessionViaAgentApi 验证
+  assert.strictEqual(typeof wakeSessionViaAgentApi, 'function');
+
+  let mockSentId = null;
+  let mockSentMsg = null;
+  const mockApiSuccess = (sessId, msg) => {
+    mockSentId = sessId;
+    mockSentMsg = msg;
+    return { success: true, stdout: 'mock auto wake sent' };
+  };
+
+  // 9.1 休眠会话自动触发 auto-wake (默认唤醒词)
+  const autoWakeDormant = probeDispatchSession(staleSessId, {
+    brainPath: tempBrain,
+    freshWindowSec: 30,
+    skipRpc: true,
+    autoWake: true,
+    mockAgentApi: mockApiSuccess
+  });
+  assert.strictEqual(autoWakeDormant.auto_woken, true, 'Dormant session must trigger auto_woken: true');
+  assert.strictEqual(autoWakeDormant.auto_wake_result, 'SUCCESS');
+  assert.strictEqual(autoWakeDormant.auto_wake_message, '【task-loop 自动物理唤醒】请立即处理当前会话任务。');
+  assert.strictEqual(mockSentId, staleSessId);
+  assert.strictEqual(mockSentMsg, '【task-loop 自动物理唤醒】请立即处理当前会话任务。');
+
+  // 9.2 休眠会话传入自定义唤醒词
+  const customWakeMsg = '【紧急任务】主会话已下发 task-049，请立刻恢复执行！';
+  const autoWakeCustom = probeDispatchSession(staleSessId, {
+    brainPath: tempBrain,
+    freshWindowSec: 30,
+    skipRpc: true,
+    autoWake: customWakeMsg,
+    mockAgentApi: mockApiSuccess
+  });
+  assert.strictEqual(autoWakeCustom.auto_woken, true);
+  assert.strictEqual(autoWakeCustom.auto_wake_message, customWakeMsg);
+  assert.strictEqual(mockSentMsg, customWakeMsg);
+
+  // 9.3 唤醒失败处理 (模拟 exit code 1)
+  const mockApiFail = (sessId, msg) => {
+    return { success: false, error: 'exit code 1: daemon unreachable' };
+  };
+  const autoWakeFail = probeDispatchSession(staleSessId, {
+    brainPath: tempBrain,
+    freshWindowSec: 30,
+    skipRpc: true,
+    autoWake: true,
+    mockAgentApi: mockApiFail
+  });
+  assert.strictEqual(autoWakeFail.auto_woken, false);
+  assert.strictEqual(autoWakeFail.auto_wake_result, 'FAILED');
+  assert.ok(autoWakeFail.auto_wake_error.includes('exit code 1'));
+
+  // 9.4 活跃工作中会话不触发 auto-wake
+  const autoWakeActive = probeDispatchSession(dormantSessId, {
+    brainPath: tempBrain,
+    autoWake: true,
+    mockAgentApi: mockApiSuccess
+  });
+  assert.strictEqual(autoWakeActive.auto_woken, false, 'Active session must NOT trigger auto-wake');
+  assert.strictEqual(autoWakeActive.auto_wake_skipped, 'ALREADY_WORKING');
+
+  // 9.5 默认不传 autoWake 时 auto_woken 为 false
+  const noAutoWake = probeDispatchSession(staleSessId, {
+    brainPath: tempBrain,
+    freshWindowSec: 30,
+    skipRpc: true
+  });
+  assert.strictEqual(noAutoWake.auto_woken, false);
 
   // Cleanup
   fs.rmSync(tempDir, { recursive: true, force: true });

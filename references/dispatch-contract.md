@@ -85,6 +85,16 @@
 
 ## 四、派单完整背景与信息梳理法定契约 (Full Context Dispatching Protocol)
 
+### 0. 跨会话高频原语速查卡 (Quick CLI Cheat Sheet)
+
+```bash
+# 跨会话物理唤醒（严格位置参数，严禁 --to / --message 标志）:
+agentapi.bat send-message <SESSION_ID> "<MESSAGE>"
+
+# 4维物理交叉验证探针 + 1秒原地自愈（推荐，未激活时脚本内部直接补发唤醒，无需主会话来回周转）:
+node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
+```
+
 ### 1. 核心痛点与杜绝盲人摸象铁律
 主会话向专题会话派单时，**严禁省略业务背景只甩修改步骤与白名单清单**！
 若仅提供孤立的改动指令（How），会导致专题会话严重缺乏全局视角（Why & Global Context），极易产生信息孤岛、断章取义、破坏隐式业务制约甚至反复走弯路。
@@ -114,6 +124,12 @@
   }
 ]
 ```
+
+### 1.1 双轨合一派单机制 (Dual-Trigger Dispatch)
+为彻底杜绝目标专题在后台无焦点时“静默入队休眠 (DORMANT_NOT_ACTIVATED)”导致白白浪费 15 秒探针时间：
+* 主会话在调用内置 `send_message` 发送四大法定板块派单报文的同时，**强烈建议顺带调用一次轻量物理唤醒命令**：
+  `agentapi.bat send-message <SESSION_ID> "【物理唤醒】请立即处理最新派单报文。"`
+* 实行“发信 + 物理唤醒”双发，使目标专题在收到消息的同时直接拉起大模型推理线程，从源头上消灭后台休眠。
 
 ### 2. 标准派单报文四大法定板块示范模板 (Standard 4-Section Dispatch Template)
 

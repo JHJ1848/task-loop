@@ -92,12 +92,46 @@ description: "[task-loop] Universal cross-agent task loop plugin for Antigravity
 1. **主会话 (Main Session)**：负责需求初加工、明确任务类型（只读探索 `explore` vs 修改落地 `work`）、划定物理白名单 `allowlist`。**允许并提倡主会话直接操作与主理 `docs/`（含 `docs/MEMORY.md`、`docs/memory/*.md`）、`MEMORY.md`、`README.md`、`AGENTS.md`、`references/` 等文档资产以防止上下文失真；但严禁主会话直接编写模块业务代码，且严禁派遣 Worker 子代理，仅限派遣 `reviewer` (代码审查) 与 `explorer` / `research` (架构探索) 子代理**；所有模块业务代码开发 (WORK) 强制通过 sidebus (`send_message` / `agentapi`) 定向派发至专题会话；
 2. **专题会话 (Topic Session)**：负责独立的模块代码开发以及协助局部 `docs` 文档编辑；承接任务后方可直接实施或按需在专题内拉起子代理 (subagents) 协同，严格执行五步闭环（`1. 边界锁定 -> 2. 白名单内手术式实施 -> 3. 本地自测与门禁核验 -> 4. 协助专题记忆沉淀 docs/memory/*.md -> 5. 标准化结构交付`）。
 
+### 跨平台会话操作底层原理摘要 (Cross-Platform Session Mechanics)
+
+```json
+[
+  {
+    "vendor": "Google Antigravity (AGY)",
+    "session_spawn": "agentapi new-conversation --title=\"...\" -- \"<prompt>\" (本地 Connect RPC 创建顶层根会话) / invoke_subagent (临时子代理)",
+    "session_send_and_wake": "内置 send_message (触发 Reactive Wakeup 响应式唤醒) + agentapi send-message <id> <msg> (强制物理唤醒休眠会话)",
+    "session_introspection": "直读 ~/.gemini/antigravity/brain/<id>/.system_generated/logs/transcript.jsonl + presence/<id>.lock + inspect_agy_sessions.js"
+  },
+  {
+    "vendor": "Anthropic Claude Code",
+    "session_spawn": "Desktop 内置 mcp__ccd_session__start_session / Scheduled Task 桥接产出 local_<uuid>",
+    "session_send_and_wake": "Desktop 内置 mcp__ccd_session_mgmt__send_message / CLI: claude -p --resume <uuid> \"<prompt>\"",
+    "session_introspection": "~/.claude/projects/<munged-cwd>/<uuid>.jsonl + ~/.claude/sessions/<pid>.json"
+  },
+  {
+    "vendor": "OpenAI Codex",
+    "session_spawn": "Desktop 内置 mcp__codex_app__create_thread (worktree | local)",
+    "session_send_and_wake": "Desktop: mcp__codex_app__send_message_to_thread + wait_threads; CLI: codex exec resume <id> / codex queue",
+    "session_introspection": "$CODEX_HOME/sessions/YYYY/MM/DD/*.jsonl (session_meta + rollout)"
+  },
+  {
+    "vendor": "ZCode (Z.ai)",
+    "session_spawn": "spawn_zcode_session.js spawn (底层 ELECTRON_RUN_AS_NODE=1 ZCode.exe zcode.cjs -p)",
+    "session_send_and_wake": "进程内 SendMessage(to: agent_<uuid>) / 跨会话 spawn_zcode_session.js send (--resume <id> -p)",
+    "session_introspection": "~/.zcode/cli/db/db.sqlite (只读查询) + ~/.zcode/cli/rollout/model-io-sess_<uuid>.jsonl"
+  }
+]
+```
+
 ---
 
 ## 四、渐进式参考手册索引 (Progressive Disclosure)
 
 - 插件清单元数据：[`plugin.json`](plugin.json)
+- 会话 SDK 总索引：[`references/sdk/README.md`](references/sdk/README.md)
+- Antigravity SDK 规范：[`references/sdk/agy.md`](references/sdk/agy.md)
+- Codex SDK 规范：[`references/sdk/codex.md`](references/sdk/codex.md)
+- Claude Code SDK 规范：[`references/sdk/claude.md`](references/sdk/claude.md)
 - ZCode 适配规范：[`references/sdk/zcode.md`](references/sdk/zcode.md)
-- 会话 SDK 规范：[`references/sdk/README.md`](references/sdk/README.md)
 - 派单契约与门禁：[`references/dispatch-contract.md`](references/dispatch-contract.md)
 - 核心受控记忆：[`docs/MEMORY.md`](docs/MEMORY.md)

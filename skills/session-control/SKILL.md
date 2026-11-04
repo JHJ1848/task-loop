@@ -7,6 +7,26 @@ description: "[task-loop] Multi-vendor agent session provider, introspection, an
 
 本文档为 `task-loop` 中【会话控制专题 (`session_control`)】的专属技能定义，负责跨厂商智能体会话抽象、反向内省、生命周期管理与专题路由。
 
+> [!IMPORTANT]
+> **高频跨会话调用原语速查卡 (Quick Reference Cheat Sheet)**
+> 
+> * **跨会话物理唤醒 / 派单发信 (严格纯位置参数，严禁 `--to` / `--message` 等 GNU 风格长参数)**:
+>   ```bash
+>   # 正确纯位置参数格式 (Windows / Linux 通用):
+>   agentapi.bat send-message <SESSION_ID> "<MESSAGE>"
+>   
+>   # 错误示范 (报错 flag provided but not defined: -to，切勿试错):
+>   # agentapi.bat send-message --to <SESSION_ID> --message "..." [WRONG!]
+>   ```
+> * **4 维物理交叉验证探针 + 1 秒原地物理自愈 (检测到休眠原地唤醒，杜绝 53 秒盲等)**:
+>   ```bash
+>   # 执行 15s 探针并在休眠时原地自动唤醒 (默认提示词):
+>   node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
+>   
+>   # Python 同构命令 (支持自定义唤醒词):
+>   python scripts/inspect_agy_sessions.py --probe-dispatch <SESSION_ID> --auto-wake "【自愈唤醒】请立即恢复执行"
+>   ```
+
 ![session-control 跨厂商会话控制与内省体系架构](assets/architecture.svg)
 
 ---
@@ -176,13 +196,16 @@ def create_top_level_topic_session(title: str, initial_prompt: str, workspace_ro
 agentapi.bat send-message <target_conversation_id> "<message_or_json_payload>"
 ```
 
-#### 3.4 专题会话状态 4 维物理交叉验证快速探针 (`--probe-dispatch`)
-主会话向目标专题发信派单后，通过 `inspect_agy_sessions.js --probe-dispatch` 执行 15s 快速探针，精准核验 4 维物理激活态（Presence 在场锁、Filesystem 物理增量、Inference Step 时效强约束、Daemon RPC 可达性），防止假阳性与无效盲等：
+#### 3.4 专题会话状态 4 维物理交叉验证快速探针与原地自愈 (`--probe-dispatch` / `--auto-wake`)
+主会话向目标专题发信派单后，通过 `inspect_agy_sessions.js --probe-dispatch` 执行 15s 快速探针，精准核验 4 维物理激活态（Presence 在场锁、Filesystem 物理增量、Inference Step 时效强约束、Daemon RPC 可达性），防止假阳性与无效盲等；可附加 `--auto-wake` 参数在检测到未激活态时实现 1 秒原地物理自愈唤醒，杜绝 53 秒盲等与参数试错：
 ```bash
-# 执行 15s 快速探针核验专题激活态 (支持 --probe-dispatch 与 --monitor-dispatch 别名)
-node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id>
+# 执行 15s 快速探针并在检测到休眠时原地自动唤醒 (推荐)
+node scripts/inspect_agy_sessions.js --probe-dispatch <target_session_id> --auto-wake
+
+# Python 同构命令
+python scripts/inspect_agy_sessions.py --probe-dispatch <target_session_id> --auto-wake
 ```
-判定标准：`can_enter_working_gate === true` 且 `is_working === true` 方可准入 30s~45s 动态工作巡检；若未达标则在 15s 内即刻出具告警卡并补发唤醒，全链路响应控制在 60s 内。
+判定标准：`can_enter_working_gate === true` 且 `is_working === true` 方可准入 30s~45s 动态工作巡检；若未达标且开启 `--auto-wake`，探针内部直接通过 `agentapi` 补发唤醒，输出 `auto_woken: true` 实现秒级自愈。
 
 #### 3.5 专题会话跨会话转录与轨迹内省 (`--dump-recent` / `fetchSessionTranscript`)
 主会话或巡检器可通过 `--dump-recent <target_session_id>` 快速转储并查看指定会话的最近执行轨迹（包含步骤序号、来源角色、动作类型、工具摘要与思考链片段），支持 `--tail <n>` 自定义步数（默认 5 步，支持 `--json` 输出结构化数据）：
@@ -288,13 +311,18 @@ agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发�
   },
   {
     "gotcha_id": "Gotcha 16",
-    "title": "15s 快速探针与 4 维物理交叉验证",
-    "rule": "inspect_agy_sessions.js --probe-dispatch 提供 4 维物理交叉验证 (Presence 在场锁、Filesystem 物理增量、Inference Step 时效约束、Daemon RPC 可达性)。若 can_enter_working_gate !== true 或 is_working !== true 绝对严禁挂载工作巡检，必须在 15s 内即刻出具告警卡、自愈补发并循环 15s 快速探针，直到确凿激活才准入 30s~45s 动态工作巡检，全链路控制在 60s 内，严禁盲等。"
+    "title": "15s 快速探针与 4 维物理交叉验证 (--auto-wake 秒级自愈)",
+    "rule": "inspect_agy_sessions.js --probe-dispatch 提供 4 维物理交叉验证 (Presence 在场锁、Filesystem 物理增量、Inference Step 时效约束、Daemon RPC 可达性)。推荐附加 --auto-wake 参数：若检测到未进入工作态 (can_enter_working_gate !== true)，探针内部直接补发物理唤醒并返回 auto_woken: true，实现 1 秒原地物理自愈，彻底根除主会话来回周转与 53 秒盲等痛点。"
   },
   {
     "gotcha_id": "Gotcha 17",
     "title": "多渠道转录内省与轨迹审查规范",
     "rule": "当探针报告专题在场但怀疑卡顿、或巡检需要核实专题执行进度时，优先使用 inspect_agy_sessions.js --dump-recent <session_id> --tail 5 查看最近轨迹与思维链，或直接读取 probe_dispatch 返回的 recent_trajectory 字段，彻底杜绝主会话对专题执行进度的盲猜与失联盲等。"
+  },
+  {
+    "gotcha_id": "Gotcha 18",
+    "title": "跨会话发信严格纯位置参数语法 (严禁 GNU 风格标志)",
+    "rule": "调用 agentapi send-message 发信时，参数格式必须为严格纯位置参数: agentapi.bat send-message <SESSION_ID> \"<MESSAGE>\"。绝对严禁传入 --to 或 --message 等长参数标志（会报 flag provided but not defined: -to 错误并导致来回试错 53 秒）。"
   }
 ]
 ```

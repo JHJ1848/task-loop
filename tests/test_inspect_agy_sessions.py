@@ -23,7 +23,7 @@ if sys.platform == "win32":
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from scripts.inspect_agy_sessions import inspect_agy_sessions, format_relative_time, probe_dispatch_session, check_agentapi_rpc, fetch_session_transcript
+from scripts.inspect_agy_sessions import inspect_agy_sessions, format_relative_time, probe_dispatch_session, check_agentapi_rpc, fetch_session_transcript, wake_session_via_agent_api
 
 
 class TestInspectAgySessions(unittest.TestCase):
@@ -306,6 +306,80 @@ class TestInspectAgySessions(unittest.TestCase):
         self.assertFalse(not_found_res["found"])
         self.assertEqual(len(not_found_res["steps"]), 0)
         self.assertIsNotNone(not_found_res.get("error"))
+
+        # Test 9: --auto-wake 原地物理自愈能力与 wake_session_via_agent_api 验证
+        self.assertTrue(callable(wake_session_via_agent_api))
+
+        mock_sent = {"id": None, "msg": None}
+
+        def mock_api_success(sess_id, msg):
+            mock_sent["id"] = sess_id
+            mock_sent["msg"] = msg
+            return {"success": True, "stdout": "mock auto wake sent"}
+
+        # 9.1 休眠会话自动触发 auto-wake (默认唤醒词)
+        auto_wake_dormant = probe_dispatch_session(
+            stale_sess_id,
+            brain_path=temp_brain,
+            fresh_window_sec=30,
+            skip_rpc=True,
+            auto_wake=True,
+            mock_agent_api=mock_api_success
+        )
+        self.assertTrue(auto_wake_dormant["auto_woken"], "Dormant session must trigger auto_woken: True")
+        self.assertEqual(auto_wake_dormant["auto_wake_result"], "SUCCESS")
+        self.assertEqual(auto_wake_dormant["auto_wake_message"], "【task-loop 自动物理唤醒】请立即处理当前会话任务。")
+        self.assertEqual(mock_sent["id"], stale_sess_id)
+        self.assertEqual(mock_sent["msg"], "【task-loop 自动物理唤醒】请立即处理当前会话任务。")
+
+        # 9.2 休眠会话传入自定义唤醒词
+        custom_wake_msg = "【紧急任务】主会话已下发 task-049，请立刻恢复执行！"
+        auto_wake_custom = probe_dispatch_session(
+            stale_sess_id,
+            brain_path=temp_brain,
+            fresh_window_sec=30,
+            skip_rpc=True,
+            auto_wake=custom_wake_msg,
+            mock_agent_api=mock_api_success
+        )
+        self.assertTrue(auto_wake_custom["auto_woken"])
+        self.assertEqual(auto_wake_custom["auto_wake_message"], custom_wake_msg)
+        self.assertEqual(mock_sent["msg"], custom_wake_msg)
+
+        # 9.3 唤醒失败处理 (模拟 exit code 1)
+        def mock_api_fail(sess_id, msg):
+            return {"success": False, "error": "exit code 1: daemon unreachable"}
+
+        auto_wake_fail = probe_dispatch_session(
+            stale_sess_id,
+            brain_path=temp_brain,
+            fresh_window_sec=30,
+            skip_rpc=True,
+            auto_wake=True,
+            mock_agent_api=mock_api_fail
+        )
+        self.assertFalse(auto_wake_fail["auto_woken"])
+        self.assertEqual(auto_wake_fail["auto_wake_result"], "FAILED")
+        self.assertIn("exit code 1", auto_wake_fail["auto_wake_error"])
+
+        # 9.4 活跃工作中会话不触发 auto-wake
+        auto_wake_active = probe_dispatch_session(
+            dormant_sess_id,
+            brain_path=temp_brain,
+            auto_wake=True,
+            mock_agent_api=mock_api_success
+        )
+        self.assertFalse(auto_wake_active["auto_woken"], "Active session must NOT trigger auto-wake")
+        self.assertEqual(auto_wake_active["auto_wake_skipped"], "ALREADY_WORKING")
+
+        # 9.5 默认不传 auto_wake 时 auto_woken 为 False
+        no_auto_wake = probe_dispatch_session(
+            stale_sess_id,
+            brain_path=temp_brain,
+            fresh_window_sec=30,
+            skip_rpc=True
+        )
+        self.assertFalse(no_auto_wake["auto_woken"])
 
         shutil.rmtree(temp_dir, ignore_errors=True)
 
