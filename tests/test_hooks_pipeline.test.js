@@ -142,6 +142,12 @@ function runHooksPipelineTests() {
       false,
       'Main session must NEVER inject wrapup contract (prevent self-send infinite loop)'
     );
+    assert.ok(
+      mainResult.injectSteps[0].ephemeralMessage.includes('Raw User Natural Language - Scoped') &&
+      mainResult.injectSteps[0].ephemeralMessage.includes('Multimodal Visual Assets') &&
+      mainResult.injectSteps[0].ephemeralMessage.includes('Context Reset & Preceding Job Cutoff'),
+      'Main session rules must include raw user natural language, multimodal assets, and context reset rules'
+    );
 
     // 1.4 Test ZCode adapter ignores AGY UUID sessions
     // 本用例验证「宿主厂商未声明」分支，故必须显式剥离宿主环境变量：在 Claude Code 等宿主内运行时

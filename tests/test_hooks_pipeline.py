@@ -168,6 +168,9 @@ class TestHooksPipeline(unittest.TestCase):
         self.assertTrue(len(res.get("injectSteps", [])) > 0)
         self.assertIn("主会话", res["injectSteps"][0]["ephemeralMessage"])
         self.assertNotIn("专题强制收尾与反向汇报契约", res["injectSteps"][0]["ephemeralMessage"])
+        self.assertIn("Raw User Natural Language - Scoped", res["injectSteps"][0]["ephemeralMessage"])
+        self.assertIn("Multimodal Visual Assets", res["injectSteps"][0]["ephemeralMessage"])
+        self.assertIn("Context Reset & Preceding Job Cutoff", res["injectSteps"][0]["ephemeralMessage"])
 
         # 2. Test ZCode hook ignores AGY UUID sessions
         # 本用例验证「宿主厂商未声明」分支，故必须显式剥离宿主环境变量：在 Claude Code 等宿主内运行时

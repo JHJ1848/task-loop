@@ -93,7 +93,7 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
   {
     "section_id": "Section 1",
     "section_name": "【一、完整业务背景与原始需求 (Background & Full Requirements)】",
-    "required_content": "核心痛点、事故反思、原始用户指令全貌还原、业务期望达成形态，解答 Why & Context。"
+    "required_content": "包含三大核心子项：1) 模块对应原始用户自然语言输入原样引用 (Raw User Natural Language - Scoped: 严禁主观改写或抽象替代；多需求时精准截取本模块原话段落)；2) 多模态视觉上下文与图片资产 (Multimodal Visual Assets & Screenshots: 显式透传图片绝对路径与 1~2 句核心视觉线索，无图则标明'无配图')；3) 主会话补充技术背景与期望形态 (Synthesized Background & Target State: 痛点/反思/设计推演置后补充)。解答 Why, Context & Verbatim Intent。"
   },
   {
     "section_id": "Section 2",
@@ -113,14 +113,26 @@ description: "[task-loop] Universal cross-agent task loop orchestrator for Antig
 ]
 ```
 
+* **前序任务显式收敛与上下文重置机制 (Preceding Job Cutoff & Context Reset)**:
+  为根除专题物理实体会话复用时“无意继承上一个已完成 Job 的残留上下文、临时变量或作废假设”导致的思维串味与边界泛化问题，派单报文必须在四大法定板块顶部，置顶显式下发【零、上下文边界重置与前序任务收敛 (Context Reset & Preceding Job Cutoff)】声明；严令目标专题立即封存上一 Job 的执行上下文，将上一次工作成果作为沉淀事实，从零重新加载并严格锁定当前任务的新目标、物理白名单 (Allowlist) 与门禁，杜绝把历史临时变量或旧假设带入新任务。
+
 * **标准派单示范模板 (Standard 4-Section Dispatch Template)**:
 ```markdown
 [主会话派单: WORK] task-xxx: 简明任务标题
 
+【零、上下文边界重置与前序任务收敛 (Context Reset & Preceding Job Cutoff)】
+* 状态重置指令:
+  "【前序任务已完成并归档】请立即结束并封存上一个 Job 的执行状态与临时变量。严格以本次下发的新目标、新物理白名单 (Allowlist) 和新验收标准为唯一当前任务基准，从零锁定新工作边界，严禁将前序 Job 的残留变量、临时分支或已作废假设混入本次任务！"
+
 【一、完整业务背景与原始需求 (Background & Full Requirements)】
-* 核心业务痛点与现状：...
-* 原始用户指令与诉求全貌还原：...
-* 期望达成的最终架构与功能形态：...
+* 模块对应原始用户需求 (Raw User Natural Language - Scoped):
+  > "一字不差引用用户原始自然语言中针对本模块的指令段落（多需求时精准截取本模块原话，严禁主观改写或抽象替代）"
+* 多模态视觉上下文与图片资产 (Multimodal Visual Assets & Screenshots):
+  - 配图路径: file:///C:/Users/48631/.../.user_uploaded/media_xxx.png (若无配图注明: "无配图")
+  - 核心视觉线索: 截图中红框圈出了具体报错/UI要素/参数定义...
+* 主会话补充技术背景与期望形态 (Synthesized Background & Target State):
+  - 核心业务痛点与技术现状: ...
+  - 期望达成的最终架构与功能形态: ...
 
 【二、全局信息梳理与技术推演 (Information Breakdown & Rationale)】
 * 调用链路与跨模块影响面梳理：...

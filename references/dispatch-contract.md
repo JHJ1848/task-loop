@@ -105,7 +105,7 @@ node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
   {
     "section_id": "Section 1",
     "section_name": "【一、完整业务背景与原始需求 (Background & Full Requirements)】",
-    "required_content": "核心痛点、事故反思、原始用户指令全貌还原、业务期望达成形态，解答 Why & Context。"
+    "required_content": "包含三大核心子项：1) 模块对应原始用户自然语言输入原样引用 (Raw User Natural Language - Scoped: 严禁主观改写或抽象替代；多需求时精准截取本模块原话段落)；2) 多模态视觉上下文与图片资产 (Multimodal Visual Assets & Screenshots: 显式透传图片绝对路径与 1~2 句核心视觉线索，无图则标明'无配图')；3) 主会话补充技术背景与期望形态 (Synthesized Background & Target State: 痛点/反思/设计推演置后补充)。解答 Why, Context & Verbatim Intent。"
   },
   {
     "section_id": "Section 2",
@@ -131,15 +131,40 @@ node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
   `agentapi.bat send-message <SESSION_ID> "【物理唤醒】请立即处理最新派单报文。"`
 * 实行“发信 + 物理唤醒”双发，使目标专题在收到消息的同时直接拉起大模型推理线程，从源头上消灭后台休眠。
 
+### 1.2 原始需求零失真切片与多模态透传机制 (Raw Intent Slicing & Multimodal Passthrough)
+为根治“主会话二次加工语义失真”与“视觉图片资产丢失”导致的派单跑偏与任务反复驳回：
+* **模块对应原始需求原样引用 (Verbatim Scoped Quote)**：
+  主会话严禁仅用自己的理解转述概括用户需求。必须在一字不差保留用户原话的前提下，按模块职责精准切片出与目标专题直接相关的原始自然语言指令；严禁跨模块冗余污染，亦严禁抽象概括替代原话。
+* **多模态视觉上下文与配图透传 (Multimodal Assets Passthrough)**：
+  当用户输入附带图片、截图或终端报错图时（如保存在 `.user_uploaded/` 目录中的图片），主会话必须在派单第一板块中明确给出图片的绝对路径（`file:///...`），并提炼 1~2 句核心视觉线索（如标红文字、按钮高亮、错误弹窗内容），确保各专题（含文本/CLI 环境）具备 100% 对齐的视觉感知。无配图时显式注明 `无配图`。
+* **补充技术推演置后 (Synthesized Background Positioned After)**：
+  主会话对系统链路、架构设计、排障反思的技术推演统统置于原始自然语言和配图之后，作为技术补充，确保下层专题首先阅读到的是最高优先级的原始客户诉求与视觉原图。
+
+### 1.3 前序任务显式收敛与上下文重置机制 (Preceding Job Cutoff & Context Reset)
+为根除专题物理实体会话复用时“无意继承上一个已完成 Job 的残留上下文、变量或作废假设”导致的思维串味与边界泛化问题：
+* **前置显式切断 (Mandatory Zero-State Cutoff)**：
+  派单报文必须在四大法定板块之前，显式下发【零、上下文边界重置与前序任务收敛 (Context Reset & Preceding Job Cutoff)】声明；
+* **物理边界清零重置**：
+  严令目标专题立即封存上一 Job 的执行上下文，将上一次工作成果作为沉淀事实，从零重新加载并严格锁定当前任务的目标、物理白名单 (Allowlist) 与门禁，杜绝把历史临时变量或旧假设带入新任务。
+
 ### 2. 标准派单报文四大法定板块示范模板 (Standard 4-Section Dispatch Template)
 
 ```markdown
 [主会话派单: WORK] task-xxx: 简明任务标题
 
+【零、上下文边界重置与前序任务收敛 (Context Reset & Preceding Job Cutoff)】
+* 状态重置指令:
+  "【前序任务已完成并归档】请立即结束并封存上一个 Job 的执行状态与临时变量。严格以本次下发的新目标、新物理白名单 (Allowlist) 和新验收标准为唯一当前任务基准，从零锁定新工作边界，严禁将前序 Job 的残留变量、临时分支或已作废假设混入本次任务！"
+
 【一、完整业务背景与原始需求 (Background & Full Requirements)】
-* 核心业务痛点与现状：...
-* 原始用户指令与诉求全貌还原：...
-* 期望达成的最终架构与功能形态：...
+* 模块对应原始用户需求 (Raw User Natural Language - Scoped):
+  > "一字不差引用用户原始自然语言中针对本模块的指令段落（多需求时精准截取本模块原话，严禁主观改写或抽象替代）"
+* 多模态视觉上下文与图片资产 (Multimodal Visual Assets & Screenshots):
+  - 配图路径: file:///C:/Users/48631/.../.user_uploaded/media_xxx.png (若无配图注明: "无配图")
+  - 核心视觉线索: 截图中红框圈出了具体报错/UI要素/参数定义...
+* 主会话补充技术背景与期望形态 (Synthesized Background & Target State):
+  - 核心业务痛点与技术现状: ...
+  - 期望达成的最终架构与功能形态: ...
 
 【二、全局信息梳理与技术推演 (Information Breakdown & Rationale)】
 * 调用链路与跨模块影响面梳理：...
