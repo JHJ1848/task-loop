@@ -430,6 +430,12 @@ node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
     "script": "scripts/hooks/enforce_allowlist.js (.py)",
     "lifecycle_point": "工具执行拦截门禁 (Pre-Tool-Use)",
     "core_function": "物理白名单安全门禁 (Allowlist Guard)。物理拦截专题会话越界写文件行为，防目录前缀碰撞与符号链接逃逸；支持主会话直接维护 docs/ 与治理文档，硬性拦截主会话直接写模块业务代码，保障派单治理闭环。"
+  },
+  {
+    "hook_name": "Codex UserPromptSubmit",
+    "script": "scripts/hooks/codex_main_intake.js",
+    "lifecycle_point": "Codex 用户消息提交前",
+    "core_function": "仅当当前顶层线程精确等于 .agents/task-loop/sessions.json 的 vendors.codex.main_thread_id 时，注入精简派单提示：向已登记、可续接且持有正式 threadId 的长期专题会话使用 send_message_to_thread，并用 wait_threads 收取交付；临时子代理或 Multi-Agent 仅在用户明确要求时使用。统一状态注册表优先，sessions.codex.json 与旧 .codex 注册表仅在统一状态缺失时兼容读取；非主会话、其他厂商和可识别的嵌套线程不注入。与 Codex 长会话健康提示并列运行。"
   }
 ]
 ```

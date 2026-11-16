@@ -20,6 +20,20 @@ function runPluginManifestTests() {
   assert.ok(hooksData['session-context-injector'], 'session-context-injector hook must be declared');
   assert.ok(hooksData['allowlist-safety-gate'], 'allowlist-safety-gate hook must be declared');
 
+  // 2.1 Verify Codex's explicit manifest preserves both its main-intake
+  // reminder and the independent long-session health advisory.
+  const codexManifestPath = path.join(rootDir, '.codex-plugin', 'plugin.json');
+  assert.strictEqual(fs.existsSync(codexManifestPath), true, '.codex-plugin/plugin.json must exist');
+  const codexManifest = JSON.parse(fs.readFileSync(codexManifestPath, 'utf8'));
+  assert.strictEqual(codexManifest.hooks, './hooks/codex-session-health.json');
+  const codexHooksPath = path.join(rootDir, 'hooks', 'codex-session-health.json');
+  const codexHooks = JSON.parse(fs.readFileSync(codexHooksPath, 'utf8'));
+  const codexCommands = JSON.stringify(codexHooks);
+  for (const script of ['codex_main_intake.js', 'codex_session_health.js']) {
+    assert.ok(codexCommands.includes(script), `Codex UserPromptSubmit must run ${script}`);
+    assert.strictEqual(fs.existsSync(path.join(rootDir, 'scripts', 'hooks', script)), true, `scripts/hooks/${script} must exist`);
+  }
+
   // 3. Verify rules
   const rulesPath = path.join(rootDir, 'rules', 'task-loop-governance.md');
   assert.strictEqual(fs.existsSync(rulesPath), true, 'rules/task-loop-governance.md must exist');

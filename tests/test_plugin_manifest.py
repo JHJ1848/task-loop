@@ -23,6 +23,21 @@ class TestPluginManifest(unittest.TestCase):
         self.assertTrue("session-context-injector" in data)
         self.assertTrue("allowlist-safety-gate" in data)
 
+    def test_codex_user_prompt_hooks_include_intake_and_health(self):
+        manifest_path = os.path.join(self.root_dir, ".codex-plugin", "plugin.json")
+        self.assertTrue(os.path.exists(manifest_path), ".codex-plugin/plugin.json must exist")
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            manifest = json.load(f)
+        self.assertEqual(manifest.get("hooks"), "./hooks/codex-session-health.json")
+
+        hooks_path = os.path.join(self.root_dir, "hooks", "codex-session-health.json")
+        with open(hooks_path, "r", encoding="utf-8") as f:
+            hooks = json.load(f)
+        raw = json.dumps(hooks)
+        for script in ("codex_main_intake.js", "codex_session_health.js"):
+            self.assertIn(script, raw, f"Codex UserPromptSubmit must run {script}")
+            self.assertTrue(os.path.exists(os.path.join(self.root_dir, "scripts", "hooks", script)))
+
     def test_rules_exist(self):
         rules_path = os.path.join(self.root_dir, "rules", "task-loop-governance.md")
         self.assertTrue(os.path.exists(rules_path), "rules/task-loop-governance.md must exist")
