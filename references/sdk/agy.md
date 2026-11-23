@@ -327,7 +327,7 @@ if __name__ == "__main__":
   {
     "response": {
       "newConversation": {
-        "conversationId": "79262e90-3bd8-4ae5-a760-2896cfa3ea0f",
+        "conversationId": "<conversation-id>",
         "prompt": "首轮初始化派单提示词"
       }
     }
@@ -351,7 +351,7 @@ if __name__ == "__main__":
   ```json
   {
     "tool": "send_message",
-    "Recipient": "79262e90-3bd8-4ae5-a760-2896cfa3ea0f",
+    "Recipient": "<recipient-session-id>",
     "Message": "这是追加下发的专题任务详情..."
   }
   ```
@@ -366,15 +366,15 @@ if __name__ == "__main__":
 
 ## 六、真实专题派单实战案例 (Real-World Dispatch Case)
 
-以会话控制专题会话 `cdd1ca5c-3532-4489-b844-15c6f34055fa` 为例，主会话或外部守护进程通过 Sidebus 下发落地工作包：
+以会话控制专题会话 `<topic-session-id>` 为例，主会话或外部守护进程通过 Sidebus 下发落地工作包：
 
 ### 1. 派单调用命令
 ```bash
-agentapi.bat send-message cdd1ca5c-3532-4489-b844-15c6f34055fa "【任务派发】你是负责【会话控制专题】的专题会话。请按以下白名单执行修改任务：\n- 任务类型: work\n- 物理白名单: skills/session-control/SKILL.md, references/sdk/agy.md, docs/memory/session_control.md\n- 验收准则: 深度优化 SKILL.md 增加 Sidebus 实操指引与案例，完成自测并回写记忆。"
+agentapi.bat send-message "<topic-session-id>" "【任务派发】你是负责【会话控制专题】的专题会话。请按以下白名单执行修改任务：\n- 任务类型: work\n- 物理白名单: skills/session-control/SKILL.md, references/sdk/agy.md, docs/memory/session_control.md\n- 验收准则: 深度优化 SKILL.md 增加 Sidebus 实操指引与案例，完成自测并回写记忆。"
 ```
 
 ### 2. 执行与交付流转
-1. **Sidebus 投递**：`agentapi.bat send-message` 命中 Language Server Sidebus 通道，将消息注入会话 `cdd1ca5c-3532-4489-b844-15c6f34055fa`。
+1. **Sidebus 投递**：`agentapi.bat send-message` 命中 Language Server Sidebus 通道，将消息注入会话 `<topic-session-id>`。
 2. **IDE 视图渲染**：会话历史顶部出现 `Message from Root Agent v` 折叠卡片，自动加载上下文记忆并触发执行。
 3. **休眠唤醒一键切换卡 (Sleep-Wakeup Deep Link)**：若目标会话处于后台休眠状态，主控端在回复中向用户出具 `[-> 点击切换至专题会话](conversation://<target_session_id>)`，用户点击即可在 IDE 中即时切换焦点并激活推理。
 4. **Reactive Wakeup 回执**：专题会话执行完毕后，通过 sidebus (`send_message`) 将结构化交付结果汇报给主会话。
@@ -417,50 +417,43 @@ python scripts/inspect_agy_sessions.py --root . [--active-window 30] [--json]
 
 ---
 
-## 八、官方与本地完整文档路径索引 (Reference Registry JSON)
+## 八、官方与项目文档索引 (Reference Registry JSON)
 
 ```json
 [
   {
     "doc_name": "AGY SDK 规范 (本项目)",
     "relative_path": "references/sdk/agy.md",
-    "absolute_path": "d:/jhj/projects/task-loop/references/sdk/agy.md",
     "description": "Google Antigravity 宿主工具原语、Python SDK 与 agentapi CLI 深度规范"
   },
   {
     "doc_name": "跨厂商 SDK 主索引 (本项目)",
     "relative_path": "references/sdk/README.md",
-    "absolute_path": "d:/jhj/projects/task-loop/references/sdk/README.md",
     "description": "六大标准会话原语与多厂商能力映射矩阵"
   },
   {
     "doc_name": "会话控制专题技能 (本项目)",
     "relative_path": "skills/session-control/SKILL.md",
-    "absolute_path": "d:/jhj/projects/task-loop/skills/session-control/SKILL.md",
     "description": "跨厂商会话提供者、反向内省、Sidebus 实操指引与生命周期治理"
   },
   {
     "doc_name": "新专题会话开辟技能 (本项目)",
     "relative_path": "skills/new-session/SKILL.md",
-    "absolute_path": "d:/jhj/projects/task-loop/skills/new-session/SKILL.md",
     "description": "从 docs/memory/*.md 自动发现与开辟独立顶层根会话 (nestingDepth: 0)"
   },
   {
     "doc_name": "会话控制受控记忆 (本项目)",
     "relative_path": "docs/memory/session_control.md",
-    "absolute_path": "d:/jhj/projects/task-loop/docs/memory/session_control.md",
     "description": "会话控制专题已知事实、设计决策与实战陷阱"
   },
   {
     "doc_name": "Antigravity 官方指南与站点地图 (内置)",
     "relative_path": "builtin/skills/antigravity_guide/SKILL.md",
-    "absolute_path": "C:/Users/48631/.gemini/antigravity/builtin/skills/antigravity_guide/SKILL.md",
     "description": "Google Antigravity 官方 CLI、IDE、2.0 桌面端与 SDK 综合指南"
   },
   {
     "doc_name": "Antigravity 定制系统指南 (内置)",
     "relative_path": "builtin/skills/agy-customizations/SKILL.md",
-    "absolute_path": "C:/Users/48631/.gemini/antigravity/builtin/skills/agy-customizations/SKILL.md",
     "description": "Antigravity Rules、Skills、Plugins、Hooks 与 MCP 官方定制规范"
   }
 ]

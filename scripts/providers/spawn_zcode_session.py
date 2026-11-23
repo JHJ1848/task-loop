@@ -61,12 +61,11 @@ DESKTOP_SYNC_NOTICE = (
 
 def win_install_roots(env):
     local = env.get("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
-    program_files = env.get("ProgramFiles") or r"C:\Program Files"
-    return [
-        r"D:\Application\ZCode",
-        os.path.join(local, "Programs", "ZCode"),
-        os.path.join(program_files, "ZCode"),
-    ]
+    roots = [os.path.join(local, "Programs", "ZCode")]
+    program_files = env.get("ProgramFiles")
+    if program_files:
+        roots.append(os.path.join(program_files, "ZCode"))
+    return roots
 
 
 def unix_install_roots(platform):

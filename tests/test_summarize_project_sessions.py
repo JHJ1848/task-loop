@@ -41,7 +41,7 @@ def test_format_markdown_table():
     mock_sessions = [
         {
             "vendor": "antigravity",
-            "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+            "session_id": "00000000-0000-4000-8000-000000000002",
             "title": "Inspect session module",
             "last_active_at": "2026-08-25T01:42:46.000Z",
             "is_active": True,
@@ -58,7 +58,7 @@ def test_format_markdown_table():
     ]
 
     table = format_markdown_table(mock_sessions)
-    assert "| ANTIGRAVITY | `cdd1ca5c...` |" in table
+    assert f"| ANTIGRAVITY | `{mock_sessions[0]['session_id'][:8]}...` |" in table
     assert "| CLAUDE | `11111111...` |" in table
     assert "活动 (Active)" in table
     assert "离线 (Idle)" in table

@@ -1,6 +1,6 @@
-# [Reference] 专题会话默认兜底工作流规范 (Default Fallback Workflow)
+# 专题会话执行与子代理分工
 
-本文档定义了 `task-loop` 各专题会话在**无第三方工作流插件**（如 `jiaohuan-dev` 等）环境下的原生默认执行工作流，确保在纯净、零依赖环境下保持极简、高效、安全的代码实施闭环。
+本文档说明专题独立执行与子代理协作的选择。专题收到 `WORK` 派单后按[派单契约](dispatch-contract.md)加载 [bugfix-dev](../skills/bugfix-dev/SKILL.md) 并遵守写入白名单。
 
 ---
 
@@ -127,20 +127,9 @@
 
 ---
 
-## 三、第三方插件插槽协同 (Third-Party Plugin Interoperability)
+## 三、开发与修复入口
 
-```json
-[
-  {
-    "scenario": "未安装第三方插件 (默认纯净环境)",
-    "action": "100% 严格执行本文档定义的【简单直接改动 / 复杂 explore + worker + viewer】原生兜底流程。"
-  },
-  {
-    "scenario": "已安装第三方插件 (如 jiaohuan-dev)",
-    "action": "可按需结合其 /project-memory, /debug, /dev 等方法论，但核心协作流与短路重试机制依然有效。"
-  }
-]
-```
+专题及其实施子代理沿用派单指定的 [bugfix-dev](../skills/bugfix-dev/SKILL.md)，按已确认的目标、写入白名单和验收条件执行。
 
 ---
 

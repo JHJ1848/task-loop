@@ -9,7 +9,7 @@
       "input": {
         "vendor": "agy",
         "session": { "vendor": "codex" },
-        "sessionId": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+        "sessionId": "00000000-0000-4000-8000-000000000002",
         "env": { "ZCODE_SESSION_ID": "zcode-1" }
       },
       "expected": {
@@ -47,7 +47,7 @@
       "description": "Explicit session payload vendor has second precedence (Level 2)",
       "input": {
         "session": { "vendor": "zcode" },
-        "sessionId": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+        "sessionId": "00000000-0000-4000-8000-000000000002",
         "env": { "CODEX_THREAD_ID": "codex-th-1" }
       },
       "expected": {

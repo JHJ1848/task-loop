@@ -18,6 +18,22 @@ const stateStore = require('./task_loop_state');
 const codexModelPolicy = require('./providers/codex_model_policy');
 const codexSessionProvider = require('./providers/codex_session_provider');
 
+const PLUGIN_ROOT = path.resolve(__dirname, '..');
+
+function isSessionMemoryWorkflow() {
+  const manifest = path.join(PLUGIN_ROOT, '.codex-plugin', 'plugin.json');
+  return fs.existsSync(manifest) && JSON.parse(fs.readFileSync(manifest, 'utf8')).name === 'session-memory-workflow';
+}
+
+/** Codex 原位升级沿用记忆模块的就绪判定，旧项目仍使用原建档路径。 */
+function usesManagedTopicMemory(wsRoot, options) {
+  if (isSessionMemoryWorkflow()) return true;
+  if (detectTopicVendor(process.env, options.vendor) !== 'codex') return false;
+  const frameworkPath = path.join(PLUGIN_ROOT, 'skills', 'project-memory', 'scripts', 'runtime', 'framework.js');
+  if (!fs.existsSync(frameworkPath)) return false;
+  return require(frameworkPath).inspectFramework(path.resolve(wsRoot)).status === 'ready';
+}
+
 function detectTopicVendor(env = process.env, explicitVendor = null) {
   return stateStore.normalizeVendor(explicitVendor) || stateStore.normalizeVendor(stateStore.detectVendor(env));
 }
@@ -29,21 +45,30 @@ function normalizePath(p) {
 /**
  * 解析受控记忆文档，提炼专题元数据与初始化 Prompt
  */
-function parseMemoryDoc(docPath, wsRoot) {
+function parseMemoryDoc(docPath, wsRoot, { dryRun = false, topicTitle } = {}) {
   const fullPath = path.isAbsolute(docPath) ? docPath : path.join(wsRoot, docPath);
-  if (!fs.existsSync(fullPath)) {
+  const exists = fs.existsSync(fullPath);
+  if (!exists && !dryRun) {
     throw new Error(`记忆文档不存在: ${fullPath}`);
   }
 
-  const content = fs.readFileSync(fullPath, 'utf8');
   const baseName = path.basename(fullPath, '.md');
   const relPath = normalizePath(path.relative(wsRoot, fullPath));
+  let content = '';
+  if (exists) {
+    content = fs.readFileSync(fullPath, 'utf8');
+  } else if (topicTitle) {
+    const previewTitle = isSessionMemoryWorkflow()
+      ? String(topicTitle).replace(/\s+/g, ' ').trim()
+      : `${topicTitle} (${baseName})`;
+    content = `# ${previewTitle}`;
+  }
 
   // 1. 提炼专题名称与分类
   let title = '';
   const titleMatch = content.match(/^#\s+(.+)$/m);
   if (titleMatch) {
-    title = titleMatch[1].replace(/\[.*?受控记忆.*?\]/g, '').replace(/[#\*`]/g, '').trim();
+    title = titleMatch[1].replace(/^专题受控记忆[:：]\s*/, '').replace(/\[.*?受控记忆.*?\]/g, '').replace(/[#\*`]/g, '').trim();
   }
   if (!title) {
     title = `${baseName}专题`;
@@ -176,6 +201,10 @@ function spawnRootConversation(title, prompt, wsRoot, options = {}) {
       creation_request: request,
       creation_result: result
     });
+  }
+
+  if (options.dryRun) {
+    return createStatus('DRY_RUN', currentVendor, 'dry-run; no host adapter was executed');
   }
 
   delete env.ANTIGRAVITY_CONVERSATION_ID;
@@ -358,15 +387,32 @@ function saveSessionsState(state, wsRoot, vendorOverride = null) {
 function createTopicMemoryDoc(moduleKey, topicTitle, options = {}) {
   const wsRoot = options.wsRoot || process.cwd();
   const memoryDir = path.join(wsRoot, 'docs', 'memory');
+  const docPath = path.join(memoryDir, `${moduleKey}.md`);
+  const relPath = normalizePath(path.join('docs', 'memory', `${moduleKey}.md`));
+  if (options.dryRun) return { docPath, relPath };
+
+  // Codex 的 force 只重建会话，已有记忆正文继续复用。
+  if (detectTopicVendor(process.env, options.vendor) === 'codex' && fs.existsSync(docPath)) {
+    assertProjectMemoryDoc(wsRoot, moduleKey, relPath);
+    return { docPath, relPath };
+  }
+
+  const cleanTitle = topicTitle || `[${moduleKey}专题] 核心功能维护 & 记忆沉淀`;
+  if (usesManagedTopicMemory(wsRoot, options)) {
+    checkedTopicDocPath(wsRoot, moduleKey, relPath);
+    if (fs.existsSync(docPath)) {
+      assertProjectMemoryDoc(wsRoot, moduleKey, relPath);
+    } else {
+      provisionTopicMemoryDoc(wsRoot, moduleKey, cleanTitle, relPath);
+    }
+    return { docPath, relPath };
+  }
+
   if (!fs.existsSync(memoryDir)) {
     fs.mkdirSync(memoryDir, { recursive: true });
   }
 
-  const docPath = path.join(memoryDir, `${moduleKey}.md`);
-  const relPath = normalizePath(path.join('docs', 'memory', `${moduleKey}.md`));
-
   if (!fs.existsSync(docPath) || options.force) {
-    const cleanTitle = topicTitle || `[${moduleKey}专题] 核心功能维护 & 记忆沉淀`;
     const docContent = `# [专题受控记忆] ${cleanTitle} (${moduleKey})
 
 本文档为 \`${moduleKey}\` 专题的受控记忆文档，记录本专题的架构设计、物理白名单、核心逻辑与已证实事实。
@@ -387,6 +433,89 @@ function createTopicMemoryDoc(moduleKey, topicTitle, options = {}) {
   }
 
   return { docPath, relPath };
+}
+
+function isInsideDirectory(directory, file) {
+  const rel = path.relative(directory, file);
+  return Boolean(rel && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
+}
+
+function resolvePhysicalPath(fullPath) {
+  let ancestor = fullPath;
+  while (!fs.lstatSync(ancestor, { throwIfNoEntry: false })) {
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) throw new Error(`无法解析路径: ${fullPath}`);
+    ancestor = parent;
+  }
+  return path.resolve(fs.realpathSync(ancestor), path.relative(ancestor, fullPath));
+}
+
+function checkedTopicDocPath(wsRoot, moduleKey, docPath) {
+  const fullPath = path.resolve(wsRoot, docPath);
+  const memoryDir = path.resolve(wsRoot, 'docs', 'memory');
+  if (String(docPath).split(/[\\/]/).includes('..') ||
+      !isInsideDirectory(memoryDir, fullPath) ||
+      path.basename(fullPath) !== `${moduleKey}.md`) {
+    throw new Error(`记忆文档必须位于项目 docs/memory 内且文件名为 ${moduleKey}.md: ${docPath}`);
+  }
+  const physicalMemoryDir = path.join(resolvePhysicalPath(path.resolve(wsRoot)), 'docs', 'memory');
+  const physicalDoc = resolvePhysicalPath(fullPath);
+  if (!isInsideDirectory(physicalMemoryDir, physicalDoc) || path.basename(physicalDoc) !== `${moduleKey}.md`) {
+    throw new Error(`记忆文档没有解析为项目 docs/memory 内的 ${moduleKey}.md: ${docPath}`);
+  }
+  return fullPath;
+}
+
+function assertProjectMemoryDoc(wsRoot, moduleKey, docPath) {
+  const fullPath = checkedTopicDocPath(wsRoot, moduleKey, docPath);
+  if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+    throw new Error(`记忆文档不存在或不是文件: ${docPath}`);
+  }
+}
+
+function provisionTopicMemoryDoc(wsRoot, moduleKey, title, memoryDoc) {
+  if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(moduleKey)) {
+    throw new Error(`记忆建档失败: 无效的模块 Key ${moduleKey}`);
+  }
+  if (Number(process.versions.node.split('.')[0]) < 20) {
+    throw new Error(`记忆建档需要 Node.js 20+，当前版本为 ${process.versions.node}`);
+  }
+  const cli = path.join(PLUGIN_ROOT, 'skills', 'project-memory', 'scripts', 'project-memory.js');
+  const result = spawnSync(process.execPath, [
+    cli, 'provision', '--project-root', path.resolve(wsRoot),
+    '--module-key', moduleKey, '--title', title
+  ], { encoding: 'utf8' });
+  if (result.error || result.status !== 0) {
+    const reason = result.error?.message || result.stderr?.trim() || `退出状态 ${result.status ?? result.signal}`;
+    throw new Error(`记忆建档失败: ${reason}`);
+  }
+
+  let receipt;
+  try {
+    receipt = JSON.parse(result.stdout);
+  } catch {
+    throw new Error('记忆建档失败: CLI 未返回有效 JSON');
+  }
+  if (receipt?.status === 'requires_memory_initialization') {
+    throw new Error(`记忆建档需要先执行 memory-init（${receipt.framework_status}）`);
+  }
+  if (!['provisioned', 'reused'].includes(receipt?.status) ||
+      receipt.module_key !== moduleKey || receipt.memory_doc !== memoryDoc) {
+    throw new Error('记忆建档失败: 回执状态、模块 Key 或文档路径不符合契约');
+  }
+  assertProjectMemoryDoc(wsRoot, moduleKey, memoryDoc);
+}
+
+function findExistingTopicMemoryDoc(wsRoot, moduleKey, ...paths) {
+  for (const docPath of paths) {
+    if (!docPath) continue;
+    const fullPath = checkedTopicDocPath(wsRoot, moduleKey, docPath);
+    if (fs.existsSync(fullPath)) {
+      if (!fs.statSync(fullPath).isFile()) throw new Error(`记忆文档不是文件: ${docPath}`);
+      return fullPath;
+    }
+  }
+  return null;
 }
 
 function normalizeBoundSession(vendor, sessionId, options = {}) {
@@ -427,12 +556,14 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
   const vendor = detectTopicVendor(process.env, options.vendor) || 'antigravity';
   const boundSession = normalizeBoundSession(vendor, sessionId, options);
   sessionId = boundSession.id;
-  const { docPath, relPath } = createTopicMemoryDoc(moduleKey, topicTitle, { wsRoot, force: options.force });
-  const meta = parseMemoryDoc(docPath, wsRoot);
-  const state = loadSessionsState(wsRoot, vendor);
-  const existingModule = state.modules && state.modules[meta.module_key];
-  const existingModelConfig = existingModule && existingModule.model_config;
-  const isMain = meta.module_key === 'main' || state.main_thread_id === sessionId;
+  const storedModules = loadSessionsState(wsRoot, vendor).modules;
+  const storedDocPath = moduleKey !== 'main' ? storedModules?.[moduleKey]?.memory_doc : null;
+  const defaultPath = `docs/memory/${moduleKey}.md`;
+  const docPath = findExistingTopicMemoryDoc(wsRoot, moduleKey, options.docPath, storedDocPath, defaultPath);
+  if (!options.dryRun && (!docPath || (vendor !== 'codex' && path.relative(path.resolve(wsRoot, defaultPath), docPath) === ''))) {
+    createTopicMemoryDoc(moduleKey, topicTitle, { wsRoot, force: options.force, vendor });
+  }
+  const meta = parseMemoryDoc(docPath || defaultPath, wsRoot, { dryRun: options.dryRun, topicTitle });
 
   if (options.dryRun) {
     return {
@@ -444,6 +575,11 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
       message: `[预览模式] 将把当前会话 (ID: ${sessionId}) 就地注册为专题 "${meta.title}" 并绑定至 ${meta.memory_doc}`
     };
   }
+
+  const state = loadSessionsState(wsRoot, vendor);
+  const existingModule = state.modules && state.modules[meta.module_key];
+  const existingModelConfig = existingModule && existingModule.model_config;
+  const isMain = meta.module_key === 'main' || state.main_thread_id === sessionId;
 
   // 更新 state
   if (!state.modules) state.modules = {};
@@ -503,17 +639,24 @@ function bindCurrentSession(moduleKey, topicTitle, sessionId, wsRoot, options = 
  * 同时创建专题记忆文档与顶层专题会话
  */
 function createTopicAndSession(moduleKey, topicTitle, wsRoot, options = {}) {
-  const { docPath, relPath } = createTopicMemoryDoc(moduleKey, topicTitle, { wsRoot, force: options.force });
-  return provisionSingleDoc(docPath, wsRoot, options);
+  return provisionSingleDoc(null, wsRoot, { ...options, topicTitle }, moduleKey);
 }
 
 /**
  * 单个记忆文档初始化或强制重建
  */
-function provisionSingleDoc(docPath, wsRoot, options = {}) {
-  const meta = parseMemoryDoc(docPath, wsRoot);
+function provisionSingleDoc(docPath, wsRoot, options = {}, newModuleKey = null) {
   const vendor = detectTopicVendor(process.env, options.vendor) || 'antigravity';
   const state = loadSessionsState(wsRoot, vendor);
+  const storedDocPath = newModuleKey && newModuleKey !== 'main' && state.modules?.[newModuleKey]?.memory_doc;
+  const defaultPath = newModuleKey && `docs/memory/${newModuleKey}.md`;
+  let needsMemoryDoc = false;
+  if (newModuleKey) {
+    docPath = findExistingTopicMemoryDoc(wsRoot, newModuleKey, storedDocPath, defaultPath);
+    needsMemoryDoc = !docPath;
+    docPath = docPath || defaultPath;
+  }
+  let meta = parseMemoryDoc(docPath, wsRoot, { ...options, dryRun: options.dryRun || needsMemoryDoc });
   const existingModule = state.modules ? state.modules[meta.module_key] : null;
 
   if (isReusableModule(vendor, existingModule) && !options.force) {
@@ -523,7 +666,7 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
       module_key: meta.module_key,
       session_id: existingModule.session_id,
       title: existingModule.title,
-      memory_doc: meta.memory_doc,
+      memory_doc: storedDocPath || meta.memory_doc,
       message: `专题会话已存在 (ID: ${existingModule.session_id})。如需重新创建请使用 --force 参数。`
     };
   }
@@ -536,6 +679,13 @@ function provisionSingleDoc(docPath, wsRoot, options = {}) {
       memory_doc: meta.memory_doc,
       message: `[预览模式] 将创建顶层会话: "${meta.title}" 并绑定至 ${meta.memory_doc}`
     };
+  }
+
+  const forceLegacyTemplate = newModuleKey && options.force && vendor !== 'codex' && !isSessionMemoryWorkflow()
+    && path.relative(path.resolve(wsRoot, defaultPath), path.resolve(wsRoot, docPath)) === '';
+  if (needsMemoryDoc || forceLegacyTemplate) {
+    createTopicMemoryDoc(newModuleKey, options.topicTitle, { wsRoot, force: options.force, vendor });
+    meta = parseMemoryDoc(docPath, wsRoot);
   }
 
   const newId = spawnRootConversation(meta.title, meta.initialPrompt, wsRoot, {
@@ -764,6 +914,7 @@ function main() {
         dryRun,
         force,
         vendor,
+        docPath: targetDoc,
         id_kind: bindIdKind
       });
       console.log(`状态: [${res.status}]`);
@@ -796,7 +947,7 @@ function main() {
     console.log(`目标受控记忆: ${targetDoc}`);
     console.log('--------------------------------------------------------------------------------');
     try {
-      const res = provisionSingleDoc(targetDoc, wsRoot, { dryRun, force, vendor });
+      const res = provisionSingleDoc(targetDoc, wsRoot, { dryRun, force, vendor, topicTitle: customTitle });
       console.log(`状态: [${res.status}]`);
       console.log(`模块 Key: ${res.module_key}`);
       console.log(`专题标题: ${res.title}`);
@@ -870,6 +1021,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  isSessionMemoryWorkflow,
   parseMemoryDoc,
   detectTopicVendor,
   spawnRootConversation,

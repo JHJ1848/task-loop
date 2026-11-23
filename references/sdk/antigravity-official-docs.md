@@ -40,7 +40,7 @@ from google.antigravity import Agent, LocalAgentConfig, types
 # 显式指定会话 ID 进行跨进程持久化或恢复
 config = LocalAgentConfig(
     save_dir="./sessions",
-    conversation_id="cdd1ca5c-3532-4489-b844-15c6f34055fa",
+    conversation_id="<conversation-id>",
     session_continuation_mode=types.SessionContinuationMode.CREATE_OR_RESUME,
 )
 

@@ -108,7 +108,7 @@ function testKeyHygiene() {
   assert.strictEqual(isValidModuleKey('You_are'), false);
 
   // 硬编码 UUID 已移除: 陌生 UUID 不得触发 main 推断
-  const stranger = inferTopicMapping({ title: '某普通会话标题', session_id: 'ee94b2c5-c0c2-473f-8f71-213250ba5295' });
+  const stranger = inferTopicMapping({ title: '某普通会话标题', session_id: '00000000-0000-4000-8000-000000000001' });
   assert.notStrictEqual(stranger.module_key, 'main', 'hardcoded UUID must not force main');
   console.log('KeyHygiene PASSED!');
 }

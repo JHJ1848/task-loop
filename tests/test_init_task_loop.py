@@ -17,7 +17,7 @@ from scripts.init_task_loop import infer_topic_mapping, init_task_loop
 class TestInitSkill(unittest.TestCase):
 
     def test_infer_topic_mapping_standardization(self):
-        mock_main = {"session_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295", "title": "当前项目作为开发仓库", "is_main": True}
+        mock_main = {"session_id": "00000000-0000-4000-8000-000000000001", "title": "当前项目作为开发仓库", "is_main": True}
         mapped_main = infer_topic_mapping(mock_main)
         self.assertEqual(mapped_main["module_key"], "main")
         self.assertEqual(mapped_main["topic_name"], "[主会话] 任务编排 & 治理中枢")

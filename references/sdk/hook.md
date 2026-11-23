@@ -74,9 +74,8 @@
   - 若越界，返回 `decision: "deny"` 并附带标准化反向审批申请模板。
 
 ### 2. OpenAI Codex 引导与拦截策略
-* Codex 当前通过 Skill 引导与运行时参数传递：
-  - 在派单时直接将单一职责目标与 Allowlist 写入派单包；
-  - 执行端在读取派单包后严格自律，配合后置 Git Diff 审计，一旦超出 Allowlist 即触发自动驳回重修机制。
+* 一个 `UserPromptSubmit` 命令核对会话登记和可验证的顶层身份，仅为登记的 Main 注入短派单提示。符合条件的已登记长会话可收到健康提醒。详见 [Codex Hook](codex.md#01-codex-长会话提醒与轮换)。
+* 派单通过 Skill 携带目标、验收条件和 Allowlist，交付时核对 Git Diff。创建或绑定会话由 `session-init` 与 `new-session` 处理。
 
 ### 3. Anthropic Claude Code Hook 管道契约
 * **配置文件**：`.claude/settings.json`

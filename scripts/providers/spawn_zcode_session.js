@@ -42,12 +42,9 @@ const DESKTOP_SYNC_NOTICE =
 
 function winInstallRoots(env) {
   const local = env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-  const programFiles = env.ProgramFiles || 'C:\\Program Files';
-  return [
-    'D:\\Application\\ZCode',
-    path.join(local, 'Programs', 'ZCode'),
-    path.join(programFiles, 'ZCode')
-  ];
+  const roots = [path.join(local, 'Programs', 'ZCode')];
+  if (env.ProgramFiles) roots.push(path.join(env.ProgramFiles, 'ZCode'));
+  return roots;
 }
 
 function macInstallRoots() {

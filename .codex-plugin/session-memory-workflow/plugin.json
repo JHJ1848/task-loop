@@ -1,0 +1,6 @@
+{
+  "name": "session-memory-workflow",
+  "version": "1.7.0-rc.1",
+  "skills": "./skills/",
+  "hooks": "./hooks/codex-session-health.json"
+}

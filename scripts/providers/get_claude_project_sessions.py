@@ -24,7 +24,6 @@ def normalize_path(path_str: str) -> str:
 
 def munge_project_dir(path_str: str) -> str:
     # Claude Code encodes the cwd into the storage dir name:
-    # "D:\jhj\projects\task-loop" -> "D--jhj-projects-task-loop"
     return re.sub(r'[^A-Za-z0-9-]', '-', str(Path(path_str).resolve()))
 
 

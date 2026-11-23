@@ -1,8 +1,24 @@
 # Task Loop (`task-loop`)
 
-通用跨 Agent 任务循环调度器（Universal Cross-Agent Task Loop），全面支持 **Antigravity (AGY)**、**ZCode (Z.ai)**、**OpenAI Codex** 和 **Anthropic Claude Code**。
+Task Loop 在 Antigravity、ZCode、Codex 和 Claude Code 环境中提供会话识别、专题派单和受控交付。Codex 从 `v1.7.0-rc.1` 起在同一插件中提供会话编排、项目记忆和开发工作流。现有 `task-loop@task-loop` 可原位升级。`session-memory-workflow` 另供隔离实验导出。[Codex 安装与更新](#4-openai-codex-插件集成)
 
-![架构设计与落地方案](assets/architecture.png)
+## 设计架构
+
+![Codex 合并候选架构图，展示宿主、会话编排、项目记忆及各自的数据归属](assets/session-memory-workflow-architecture.svg)
+
+### 宿主与会话编排
+
+- **Codex 宿主**提供会话操作。`create_thread` 创建会话，`send_message_to_thread` 向已有长期专题派单，`wait_threads` 获取结果。一个 `UserPromptSubmit` Hook 核对会话登记，按条件提供 Main 派单提示和长会话健康提醒。
+- **会话入口**由 `session-init` 注册主会话并对齐专题，旧 `init` 保留兼容入口。`new-session` 先查现有可续接绑定。Codex 以宿主返回的正式 `threadId` 落绑定，排队回执继续等待正式 ID。
+- **独立任务**由 `create-task` 定界。用户可以在当前会话开任务，也可以明确要求向已有长期专题派单。每项任务有单独的上下文、目标、文件白名单和验收条件。专题负责实施和回传，主会话负责核验。默认用宿主发信协作，文件调度模式可另行启用队列与租约。
+
+### 项目记忆与数据归属
+
+- **项目记忆**由 `memory-init` 显式初始化或迁移。`memory-get` 只读检索，`memory-put` 在确认后归档。新项目先执行 `memory-init`，再执行 `session-init`。已有项目先查看记忆状态和现有绑定。
+- **两个数据源**各有明确职责。`.agents/task-loop/sessions.json` 按宿主保存 `main_thread_id`、模块与会话绑定。`docs/MEMORY.md`、`docs/memory/` 和 `docs/change/` 存储主索引、专题知识和历史变更。记忆临时材料位于 `.agents/project-memory/`。
+- **接入契约**使用 `module_key` 和项目相对路径 `memory_doc`。已有文档可直接复用。已通过 `memory-init` 接入受控框架的 Codex 项目，在缺文档时使用 `project-memory.js provision` 建档。旧项目升级后沿用已有绑定与记忆。`--dry-run` 只预览。记忆运行时要求 Node.js 20+，会话脚本保留 Node.js 和 Python 入口。
+
+合并源码提供会话编排、项目记忆、`workflow` 路由、`bugfix-dev` 开发与修复、`explore` 只读探索，以及 `session-gotcha-extractor` 经验提炼。[合并与接入契约](references/session-memory-workflow-migration.md) · [派单协议](references/dispatch-contract.md) · [Codex 宿主适配](references/sdk/codex.md)
 
 ---
 
@@ -13,14 +29,14 @@
 - **1 / 2 / 3 复杂度分级调度（Complexity Tiering）**：
   - **Level 1（简单）**：单点 Bugfix / 单文件修改，直发单线程极速闭环。
   - **Level 2（标准）**：模块内功能开发与重构，边界约束内自测与专题记忆回写。
-  - **Level 3（复杂）**：跨模块架构演进 / 耗时 > 3 分钟，强制 Subagent 编排（Research / Worker / Reviewer 并行流转）。
-- **双运行时环境支持（Dual Runtime: Node.js & Python）**：Node.js (18+) 为 Primary 主力黄金事实源（零 npm 外部依赖，极速启动）；Python (3.8+) 为等价标准库薄适配（零 pip 外部依赖），契约测试保障 100% 行为等价。
+  - **Level 3（复杂）**：跨模块改动按依赖和写入范围拆分，由专题分别实施，再由主会话统筹验收。
+- **双运行时环境支持（Dual Runtime: Node.js & Python）**：会话工具以 Node.js 18+ 为主，提供 Python 3.8+ 入口。合并候选的项目记忆模块使用 Node.js 20+。
 
 ---
 
 ## [Session Mechanics] 插件操作会话的基础原理与跨平台底层架构
 
-不同 AI 宿主对“会话（Session / Thread / Conversation）”的底层暴露方式截然不同。本插件通过抽象统一的 **六大标准会话原语 (`SessionProvider`)** 与 **双层生命周期钩子 (`PreInvocation` / `PreToolUse`)**，在底层針對四大平台采用各自原生的权威通信机制：
+`SessionProvider` 为不同宿主提供统一的会话操作接口。各宿主仍使用自己的原生通信和 Hook 协议，例如 Codex 的 `UserPromptSubmit`，以及 Antigravity 的 `PreInvocation` 和 `PreToolUse`。
 
 ### 1. Google Antigravity (AGY)：原生 Built-in 工具 + `agentapi` Sidebus RPC + 磁盘物理直通
 与 Claude Code Desktop（内置 `ccd_session*` MCP）和 Codex（内置 `codex_app` MCP）不同，**AGY 不通过 MCP 暴露会话管理**，而是采用三层组合原语（经 AGY 官方内置 `antigravity_guide`、`automation`、`agy-customizations/docs/hooks.md` 及 `agentapi` CLI 实测证实）：
@@ -95,7 +111,7 @@ task-loop/
 ├── SKILL.md                 # Agent 核心 Skill 说明与规范
 ├── README.md                # 项目主说明与版本记录
 ├── assets/                  # 架构图与静态资源
-│   └── architecture.png
+│   └── session-memory-workflow-architecture.svg
 ├── config/                  # 用户配置与偏好定义
 │   ├── user_preferences.json # 用户偏好自解释配置文件
 │   └── README.md            # 配置参数详解手册
@@ -158,9 +174,9 @@ task-loop/
   },
   {
     "vendor": "OpenAI Codex",
-    "method": "Codex CLI / Desktop 插件",
-    "command": "codex plugin add task-loop@personal --json",
-    "notes": "读取 .codex-plugin/plugin.json，提供稳定的降级与 CLI 分派能力"
+    "method": "GitHub 市场安装",
+    "command": "codex plugin marketplace add https://github.com/JHJ1848/task-loop.git\ncodex plugin add task-loop@task-loop --json",
+    "notes": "更新时先刷新 task-loop 市场，再安装最新快照中的插件"
   }
 ]
 ```
@@ -198,11 +214,41 @@ node scripts/install_zcode_plugin.js
 ```
 
 ### 4. OpenAI Codex 插件集成
-Codex 支持通过 `.codex-plugin/plugin.json` 作为个人插件引入：
-```powershell
-codex plugin add task-loop@personal --json
-codex plugin list --marketplace personal --json
+
+**从 GitHub 安装 `task-loop`**
+
+```bash
+codex plugin marketplace add https://github.com/JHJ1848/task-loop.git
+codex plugin add task-loop@task-loop --json
 ```
+
+**更新已从 GitHub 安装的 `task-loop`**
+
+```bash
+codex plugin marketplace upgrade task-loop --json
+codex plugin add task-loop@task-loop --json
+codex plugin list --marketplace task-loop --json
+```
+
+`marketplace upgrade` 刷新 Git 市场快照，`plugin add` 将该快照中的插件写入安装缓存。新安装或更新 Hook 定义后，在 Codex 中审核并信任当前 Hook，然后用实际任务验证提示是否出现。[OpenAI 插件打包与 Hook 说明](https://developers.openai.com/plugins/build/plugins)
+
+每次升级先记录已启用的插件版本、当前 Main 和需保留的专题绑定。安装后核对版本和 Hook 信任状态，确认每个项目只有一个 Main 提示来源。停用已由新包接管的旧入口，保留仍供其他项目或宿主使用的脚本与数据。旧缓存是否清理由回滚需求决定。[升级与回退](references/session-memory-workflow-migration.md#验收与回退)
+
+**本地验收 `session-memory-workflow` 合并候选**
+
+在包含首批合并改动的源码根目录运行。将 `../session-memory-workflow-preview` 换成仓库外、父目录已存在且尚未使用的输出目录。
+
+```bash
+node scripts/export_codex_plugin.js --check
+node scripts/export_codex_plugin.js --out ../session-memory-workflow-preview
+codex plugin marketplace add ../session-memory-workflow-preview
+codex plugin add session-memory-workflow@session-memory-workflow-candidate --json
+codex plugin list --marketplace session-memory-workflow-candidate --json
+```
+
+`--check` 核对候选清单、Hook、Skill 入口和本地引用，回执列出入口及描述的 UTF-8 字节数。`init` 和 `project-memory` 保留在候选包中，Codex 用户可通过 `$` 点名调用。
+
+合并候选当前从本地市场安装。GitHub 安装命令以 [GitHub 市场清单](https://github.com/JHJ1848/task-loop/blob/master/.claude-plugin/marketplace.json) 实际提供的插件名为准。验收候选的主会话提示时，在测试环境中仅启用一套提供该提示的 Hook。
 
 ---
 
@@ -300,15 +346,7 @@ python scripts/install_zcode_plugin.py
 6. 打开 task-loop 的详情页，确认其列出的三个 Hook（SessionStart / UserPromptSubmit / PreToolUse）均显示 **runnable**；
 7. 重启一个会话（或在设置里 Reload 插件）使钩子生效。
 
-各操作系统下安装副本的绝对位置参考（`~` 为用户主目录）:
-
-```json
-[
-  { "os": "Windows", "default_dest": "C:\\Users\\<用户名>\\.zcode\\plugin-workspace\\task-loop", "cli_config": "C:\\Users\\<用户名>\\.zcode\\cli\\config.json" },
-  { "os": "macOS", "default_dest": "/Users/<用户名>/.zcode/plugin-workspace/task-loop", "cli_config": "/Users/<用户名>/.zcode/cli/config.json" },
-  { "os": "Linux", "default_dest": "/home/<用户名>/.zcode/plugin-workspace/task-loop", "cli_config": "/home/<用户名>/.zcode/cli/config.json" }
-]
-```
+安装副本位于 `~/.zcode/plugin-workspace/task-loop/`，客户端配置位于 `~/.zcode/cli/config.json`。`~` 表示当前用户主目录。
 
 ### 五、第四步: 验证安装生效
 

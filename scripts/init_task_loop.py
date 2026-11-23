@@ -15,6 +15,9 @@ import json
 import re
 from datetime import datetime, timezone
 
+if __name__ == "__main__" and ("--dry-run" in sys.argv[1:] or "-d" in sys.argv[1:]):
+    sys.dont_write_bytecode = True
+
 # Import providers & sibling modules
 script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
@@ -45,7 +48,7 @@ except ImportError:
 
 from codex_model_policy import apply_initial_model_config, configured_model
 import task_loop_state as state_store
-from new_topic_session import spawn_root_conversation
+from new_topic_session import is_session_memory_workflow, spawn_root_conversation
 
 
 def is_reusable_session(vendor, session):
@@ -228,7 +231,8 @@ def normalize_h1_title(doc_title, module_key):
     """清洗并规范化从记忆文档 H1 提取的标题"""
     if not doc_title or not isinstance(doc_title, str):
         return None
-    cleaned = re.sub(r"\[\s*(?:受控记忆(?:文档)?|MEMORY)\s*\]", "", doc_title, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^专题受控记忆[:：]\s*", "", doc_title)
+    cleaned = re.sub(r"\[\s*(?:受控记忆(?:文档)?|MEMORY)\s*\]", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"[#*`]", "", cleaned).strip()
     if not cleaned or is_generic_template(cleaned, module_key):
         return None
@@ -723,6 +727,8 @@ def init_task_loop(options=None):
     if dry_run:
         return result
 
+    manages_own_memory = not is_session_memory_workflow()
+
     # 实际写入
     os.makedirs(task_loop_dir, exist_ok=True)
 
@@ -1016,7 +1022,7 @@ def init_task_loop(options=None):
     if main_thread_id:
         result["scaffolded_memory_docs"] = []
         main_doc = "docs/MEMORY.md"
-        if scaffold_memory_doc(ws_root, main_doc, "[主会话] 任务编排 & 治理中枢"):
+        if manages_own_memory and scaffold_memory_doc(ws_root, main_doc, "[主会话] 任务编排 & 治理中枢"):
             result["scaffolded_memory_docs"].append(main_doc)
 
     # 会话工具优先指引 (核心思想: 基于会话 SDK 的长期会话编排)

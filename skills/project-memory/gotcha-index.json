@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-17T09:36:59.457Z",
+  "generator": {
+    "script": "scripts/export-gotcha-index.js",
+    "runtime": "node >=18",
+    "command": "node scripts/export-gotcha-index.js"
+  },
+  "source_directory": "examples",
+  "document_count": 1,
+  "scenario_count": 0,
+  "documents": [
+    {
+      "path": "examples/gotcha-recording-examples.md",
+      "scenario_count": 0,
+      "time": null,
+      "tags": []
+    }
+  ],
+  "scenarios": []
+}

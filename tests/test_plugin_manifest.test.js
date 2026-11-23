@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const assert = require('assert');
+const RELEASE_VERSION = '1.7.0-rc.1';
 
 function runPluginManifestTests() {
   const rootDir = path.resolve(__dirname, '..');
@@ -10,8 +11,36 @@ function runPluginManifestTests() {
   assert.strictEqual(fs.existsSync(pluginJsonPath), true, 'plugin.json must exist at root');
   const pluginData = JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8'));
   assert.strictEqual(pluginData.name, 'task-loop', 'plugin name must be task-loop');
-  assert.ok(pluginData.version, 'plugin must have version');
+  assert.strictEqual(pluginData.version, RELEASE_VERSION, 'plugin version must match the release candidate');
   assert.ok(pluginData.capabilities, 'plugin must declare capabilities');
+  assert.ok(pluginData.capabilities.skills.includes('skills/subagent'), 'AGY subagent skill must remain in the public plugin');
+
+  // Root upgrade keeps task-loop@task-loop while the Codex-only experiment has a separate identity.
+  for (const [relativePath, expectedName] of [
+    ['.codex-plugin/plugin.json', 'task-loop'],
+    ['.claude-plugin/plugin.json', 'task-loop'],
+    ['.zcode-plugin/plugin.json', 'task-loop'],
+    ['.codex-plugin/session-memory-workflow/plugin.json', 'session-memory-workflow'],
+  ]) {
+    const manifest = JSON.parse(fs.readFileSync(path.join(rootDir, relativePath), 'utf8'));
+    assert.strictEqual(manifest.name, expectedName, `${relativePath} must retain its installation identity`);
+    assert.strictEqual(manifest.version, RELEASE_VERSION, `${relativePath} must match the release candidate`);
+  }
+  for (const relativePath of [
+    'marketplace.json',
+    '.claude-plugin/marketplace.json',
+    '.codex-plugin/session-memory-workflow/marketplace.json',
+  ]) {
+    const marketplace = JSON.parse(fs.readFileSync(path.join(rootDir, relativePath), 'utf8'));
+    assert.strictEqual(marketplace.metadata.version, RELEASE_VERSION, `${relativePath} must match the release candidate`);
+    assert.strictEqual(marketplace.plugins.length, 1, `${relativePath} must expose one installation entry`);
+    assert.strictEqual(marketplace.plugins[0].source, './', `${relativePath} must remain an in-place upgrade`);
+  }
+  const rootMarketplace = JSON.parse(fs.readFileSync(path.join(rootDir, 'marketplace.json'), 'utf8'));
+  assert.strictEqual(rootMarketplace.name, 'task-loop');
+  assert.strictEqual(rootMarketplace.plugins[0].name, 'task-loop');
+  const subagentCodexPolicy = fs.readFileSync(path.join(rootDir, 'skills', 'subagent', 'agents', 'openai.yaml'), 'utf8');
+  assert.ok(subagentCodexPolicy.includes('allow_implicit_invocation: false'), 'Codex must keep subagent explicit without changing AGY exposure');
   
   // 2. Verify hooks.json
   const hooksJsonPath = path.join(rootDir, 'hooks.json');
@@ -20,17 +49,20 @@ function runPluginManifestTests() {
   assert.ok(hooksData['session-context-injector'], 'session-context-injector hook must be declared');
   assert.ok(hooksData['allowlist-safety-gate'], 'allowlist-safety-gate hook must be declared');
 
-  // 2.1 Verify Codex's explicit manifest preserves both its main-intake
-  // reminder and the independent long-session health advisory.
+  // 2.1 One Codex process owns Main context and the health module dependency.
   const codexManifestPath = path.join(rootDir, '.codex-plugin', 'plugin.json');
   assert.strictEqual(fs.existsSync(codexManifestPath), true, '.codex-plugin/plugin.json must exist');
   const codexManifest = JSON.parse(fs.readFileSync(codexManifestPath, 'utf8'));
   assert.strictEqual(codexManifest.hooks, './hooks/codex-session-health.json');
   const codexHooksPath = path.join(rootDir, 'hooks', 'codex-session-health.json');
   const codexHooks = JSON.parse(fs.readFileSync(codexHooksPath, 'utf8'));
-  const codexCommands = JSON.stringify(codexHooks);
+  assert.deepStrictEqual(Object.keys(codexHooks.hooks), ['UserPromptSubmit']);
+  const codexCommands = codexHooks.hooks.UserPromptSubmit.flatMap(group => group.hooks);
+  assert.strictEqual(codexCommands.length, 1, 'Codex must launch only one advisory process per prompt');
+  assert.strictEqual(codexCommands[0].command, 'node "${PLUGIN_ROOT}/scripts/hooks/codex_main_intake.js"');
+  const codexEntry = fs.readFileSync(path.join(rootDir, 'scripts', 'hooks', 'codex_main_intake.js'), 'utf8');
+  assert.ok(codexEntry.includes("require('./codex_session_health.js')"), 'combined entry must load the health module');
   for (const script of ['codex_main_intake.js', 'codex_session_health.js']) {
-    assert.ok(codexCommands.includes(script), `Codex UserPromptSubmit must run ${script}`);
     assert.strictEqual(fs.existsSync(path.join(rootDir, 'scripts', 'hooks', script)), true, `scripts/hooks/${script} must exist`);
   }
 

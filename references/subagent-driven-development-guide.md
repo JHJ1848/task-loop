@@ -52,38 +52,9 @@
 
 ---
 
-## 三、第三方工作流 Plugin 插槽扩展机制 (Workflow Plugin Extension Slot)
+## 三、开发与修复入口
 
-为支持开发规范与业务方法论的多样性扩展，`task-loop` 提供了声明式三方工作流插件插槽机制（参考 `https://github.com/JHJ1848/jiaohuan-dev.git`）：
-
-```text
-┌────────────────────────────────────────────────────────┐
-│             Task Loop Topic Orchestrator               │
-├────────────────────────────────────────────────────────┤
-│ 1. 任务到达专题会话                                    │
-│    │                                                   │
-│    ▼                                                   │
-│ 2. 探测环境工作流插件插槽 (Workflow Plugin Detection) │
-│    ├─► 检测到 jiaohuan-dev 等三方工作流 Plugin:         │
-│    │     └─► 挂接其 workflow/dev/debug/explore 标准门禁 │
-│    │                                                   │
-│    └─► 未检测到三方插件 (纯净默认环境):                │
-│          └─► 零外部依赖，直接调用原生模型开发与极速闭环 │
-└────────────────────────────────────────────────────────┘
-```
-
-### 1. 插槽声明与判定规则 (JSON 规范)
-```json
-[
-  {
-    "slot_id": "workflow_plugin_slot",
-    "reference_repo": "https://github.com/JHJ1848/jiaohuan-dev.git",
-    "optional_plugin": "jiaohuan-dev (含 dev, debug, explore, workflow 等 skills)",
-    "detection_strategy": "检查宿主技能集合中是否存在 jiaohuan-dev 命名空间或对应 SKILL.md",
-    "fallback_behavior": "当插件未安装时，平滑降级为原生直接开发模式，保证 100% 独立可用与零外部依赖强绑定。"
-  }
-]
-```
+专题及其实施子代理沿用派单指定的 [bugfix-dev](../skills/bugfix-dev/SKILL.md)，按已确认的目标、写入白名单和验收条件执行。
 
 ---
 

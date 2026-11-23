@@ -67,13 +67,13 @@ class TestConformancePython(unittest.TestCase):
                     "updated_at": "2026-09-20T10:00:00+00:00",
                     "modules": {
                         "session_control": {
-                            "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+                            "session_id": "00000000-0000-4000-8000-000000000002",
                             "memory_doc": "docs/memory/session_control.md",
                         }
                     },
                     "sessions": [
                         {"session_id": "mock-registered-session-id", "vendor": "antigravity"},
-                        {"session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa", "vendor": "antigravity"},
+                        {"session_id": "00000000-0000-4000-8000-000000000002", "vendor": "antigravity"},
                     ],
                 }
             },

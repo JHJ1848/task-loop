@@ -1,194 +1,115 @@
 #!/usr/bin/env node
 /**
- * Codex UserPromptSubmit advisory for a registered task-loop main thread.
- *
- * This hook is intentionally read-only: it neither creates threads nor sends
- * messages. Its only job is to add a compact dispatch reminder when the active
- * top-level Codex thread is the main thread registered for this workspace.
+ * Single Codex UserPromptSubmit entry: registered Main dispatch context and
+ * long-session health share registration and transcript identity checks.
+ * This hook never creates threads, sends messages or changes project state.
  */
-
+const health = require('./codex_session_health.js');
 const fs = require('fs');
-const path = require('path');
 
-const THREAD_ID = /^[a-zA-Z0-9_-]{8,80}$/;
-const MAX_META_BYTES = 256 * 1024;
+const HISTORY_TAIL_BYTES = 64 * 1024;
+const CONTEXT_EVENTS = new Set([
+  'user_message', 'agent_message', 'agent_reasoning', 'token_count',
+  'task_started', 'task_complete', 'task_completed', 'turn_aborted',
+  'item_started', 'item_completed', 'exec_command_begin', 'exec_command_end',
+  'exec_command_output_delta', 'mcp_tool_call_begin', 'mcp_tool_call_end',
+  'web_search_begin', 'web_search_end'
+]);
+const RESPONSE_TYPES = new Set([
+  'message', 'reasoning', 'function_call', 'function_call_output',
+  'custom_tool_call', 'custom_tool_call_output', 'web_search_call',
+  'image_generation_call', 'local_shell_call', 'mcp_call', 'mcp_list_tools'
+]);
 
-function readJson(file) {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function directoriesFrom(cwd) {
-  if (typeof cwd !== 'string' || !cwd.trim()) return [];
-  const directories = [];
-  let current = path.resolve(cwd);
-  while (true) {
-    directories.push(current);
-    const parent = path.dirname(current);
-    if (parent === current) return directories;
-    current = parent;
-  }
-}
-
-function stringId(value) {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function codexMainFromPartition(document) {
-  if (!document || typeof document !== 'object') return { recognized: false, mainThreadId: null };
-  if (document.vendors && typeof document.vendors === 'object') {
-    const codex = document.vendors.codex;
-    return {
-      recognized: true,
-      mainThreadId: codex && typeof codex === 'object' ? stringId(codex.main_thread_id) : null
-    };
-  }
-  if (document.vendor === 'codex') {
-    return { recognized: true, mainThreadId: stringId(document.main_thread_id) };
-  }
-  return { recognized: false, mainThreadId: null };
+function additionalContext() {
+  return '[task-loop Main] 查 vendors.codex.modules。同项目正式会话：resumable=true、id_kind=threadId。send_message_to_thread 派单，wait_threads 收件。WORK 须专题加载 bugfix-dev，附 Allowlist 和验收。临时子代理仅按用户明确要求启用。';
 }
 
 /**
- * Newer .agents state is authoritative. The vendor mirror is only used when
- * the unified state does not exist, and the old .codex v1-v3 registry is the
- * final compatibility fallback. This prevents a stale legacy main binding
- * from overriding a current v4/v5 Codex partition.
+ * Prove the exact developer message is still in the recent context. Unknown,
+ * partial or reset history cannot establish that proof, so the caller resends.
+ * No clock window or persistent marker is used: a lost/failed injection retries.
  */
-function findCodexMainThread(cwd) {
-  const directories = directoriesFrom(cwd);
-
-  for (const root of directories) {
-    const primary = path.join(root, '.agents', 'task-loop', 'sessions.json');
-    if (fs.existsSync(primary)) {
-      const document = readJson(primary);
-      const result = codexMainFromPartition(document);
-      return { root, source: primary, mainThreadId: result.mainThreadId, authoritative: true };
-    }
-  }
-
-  for (const root of directories) {
-    const mirror = path.join(root, '.agents', 'task-loop', 'sessions.codex.json');
-    if (fs.existsSync(mirror)) {
-      const result = codexMainFromPartition(readJson(mirror));
-      return { root, source: mirror, mainThreadId: result.mainThreadId, authoritative: true };
-    }
-  }
-
-  for (const root of directories) {
-    const legacy = path.join(root, '.codex', 'task-loop', 'sessions.json');
-    if (fs.existsSync(legacy)) {
-      const document = readJson(legacy);
-      return {
-        root,
-        source: legacy,
-        mainThreadId: document && typeof document === 'object' ? stringId(document.main_thread_id) : null,
-        authoritative: true
-      };
-    }
-  }
-
-  return null;
-}
-
-function sessionIdFrom(payload) {
-  return stringId(payload && (payload.session_id || payload.sessionId || payload.sessionID));
-}
-
-function isUserPromptSubmit(payload) {
-  const event = payload && (payload.hook_event_name || payload.hookEventName || payload.event || payload.eventName);
-  return typeof event === 'string' && event.toLowerCase() === 'userpromptsubmit';
-}
-
-function isCodexPayload(payload, env) {
-  const declaredVendor = payload && payload.vendor;
-  if (typeof declaredVendor === 'string' && declaredVendor && declaredVendor.toLowerCase() !== 'codex') return false;
-  return !(env.ANTIGRAVITY_CONVERSATION_ID || env.ZCODE_SESSION_ID || env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID);
-}
-
-function hasNestedThreadEvidence(payload) {
-  if (!payload || typeof payload !== 'object') return true;
-  if (stringId(payload.parent_thread_id || payload.parentThreadId || payload.parent_session_id || payload.parentSessionId)) {
-    return true;
-  }
-  if (payload.is_subagent === true || payload.isSubagent === true) return true;
-  const source = payload.thread_source || payload.threadSource;
-  return typeof source === 'string' && source !== 'user';
-}
-
-function transcriptProvesTopLevel(transcriptPath, sessionId) {
+function hasCurrentMainContext(fd, message) {
   try {
-    const fd = fs.openSync(path.resolve(transcriptPath), 'r');
-    try {
-      const buffer = Buffer.alloc(MAX_META_BYTES);
-      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
-      const lineEnd = buffer.indexOf(10, 0);
-      if (lineEnd < 0 || lineEnd >= bytesRead) return false;
-      const firstLine = JSON.parse(buffer.subarray(0, lineEnd).toString('utf8'));
-      const meta = firstLine && firstLine.payload;
-      return firstLine.type === 'session_meta' && meta &&
-        (meta.session_id || meta.id) === sessionId &&
-        meta.thread_source === 'user' && !meta.parent_thread_id;
-    } finally {
-      fs.closeSync(fd);
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size === 0) return false;
+    const start = Math.max(0, stat.size - HISTORY_TAIL_BYTES);
+    const buffer = Buffer.alloc(stat.size - start);
+    const count = fs.readSync(fd, buffer, 0, buffer.length, start);
+    // Concurrent append/truncate or a partial last line makes the snapshot
+    // inconclusive. Never suppress the reminder based on that snapshot.
+    if (count !== buffer.length || buffer[count - 1] !== 10 ||
+        fs.fstatSync(fd).size !== stat.size) return false;
+    const lines = buffer.toString('utf8').split('\n');
+    if (start > 0) lines.shift(); // Discard the possibly truncated first record.
+    lines.pop();
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const record = JSON.parse(lines[index]);
+      const payload = record && record.payload;
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+      if (record.type === 'response_item') {
+        if (!RESPONSE_TYPES.has(payload.type)) return false;
+        if (payload.type === 'message') {
+          if (!['developer', 'system', 'user', 'assistant'].includes(payload.role) ||
+              !Array.isArray(payload.content)) return false;
+          if (payload.role === 'developer' && payload.content.length === 1 &&
+              payload.content[0].type === 'input_text' &&
+              payload.content[0].text === message) return true;
+        }
+      } else if (record.type === 'event_msg') {
+        // Compaction, clear/rollback and any new unrecognized event stop the
+        // proof. In particular, user/assistant echoes never count as injection.
+        if (!CONTEXT_EVENTS.has(payload.type)) return false;
+      } else if (!['turn_context', 'token_usage_record'].includes(record.type)) {
+        // session_meta, compacted and unknown record kinds are boundaries.
+        return false;
+      }
     }
   } catch {
     return false;
   }
+  return false;
 }
 
-function isTopLevelCodexThread(payload, sessionId, env) {
-  if (hasNestedThreadEvidence(payload)) return false;
-  if (env.CODEX_THREAD_ID && env.CODEX_THREAD_ID !== sessionId) return false;
-  const transcriptPath = payload.transcript_path || payload.transcriptPath;
-  return !transcriptPath || transcriptProvesTopLevel(transcriptPath, sessionId);
-}
-
-function additionalContext() {
-  return '[task-loop | Codex 主会话派单提示] 当前为已登记的主会话。需要分派开发、排障或审查时，先查 .agents/task-loop/sessions.json 的 vendors.codex.modules；仅向项目一致、resumable=true、id_kind=threadId 的正式 session_id 用 send_message_to_thread 派单，并以 wait_threads 获取交付。临时子代理或 Multi-Agent 仅在用户明确要求时启用；授权不足时先询问。';
-}
-
-function processPayload(payload, env = process.env) {
-  if (!isUserPromptSubmit(payload) || !isCodexPayload(payload, env)) return {};
-  const sessionId = sessionIdFrom(payload);
-  if (!sessionId || !THREAD_ID.test(sessionId) || !isTopLevelCodexThread(payload, sessionId, env)) return {};
-
-  const registry = findCodexMainThread(payload.cwd || payload.currentWorkingDirectory || payload.workspace || payload.workspaceRoot);
-  if (!registry || registry.mainThreadId !== sessionId) return {};
-
-  return {
-    hookSpecificOutput: {
+function processPayload(payload, env = process.env, now = Date.now()) {
+  let context;
+  const message = additionalContext();
+  try {
+    context = health.resolveSession(payload, env, fd => hasCurrentMainContext(fd, message));
+  } catch {
+    return {};
+  }
+  if (!context) return {};
+  const output = {};
+  if (context.project.isMain && !context.mainContextPresent) {
+    output.hookSpecificOutput = {
       hookEventName: 'UserPromptSubmit',
-      additionalContext: additionalContext()
-    }
-  };
+      additionalContext: message
+    };
+  }
+  try {
+    const healthMessage = health.sessionHealth(context, env, now);
+    if (healthMessage) output.systemMessage = healthMessage;
+  } catch {
+    // A cooldown/data-directory failure must not suppress Main dispatch context.
+  }
+  return output;
 }
 
 function main() {
   let raw = '';
   process.stdin.setEncoding('utf8');
-  process.stdin.on('data', (chunk) => { raw += chunk; });
+  process.stdin.on('data', chunk => { raw += chunk; });
   process.stdin.on('end', () => {
     try {
       const output = processPayload(raw.trim() ? JSON.parse(raw) : {});
       if (Object.keys(output).length) process.stdout.write(JSON.stringify(output) + '\n');
     } catch {
-      // A reminder must never block the active Codex prompt.
+      // Malformed host input remains a quiet no-op.
     }
   });
 }
 
-module.exports = {
-  additionalContext,
-  findCodexMainThread,
-  hasNestedThreadEvidence,
-  isCodexPayload,
-  isTopLevelCodexThread,
-  processPayload,
-  transcriptProvesTopLevel
-};
-
+module.exports = { additionalContext, hasCurrentMainContext, processPayload };
 if (require.main === module) main();

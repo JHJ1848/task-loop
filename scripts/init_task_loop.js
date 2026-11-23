@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const codexModelPolicy = require('./providers/codex_model_policy');
 const stateStore = require('./task_loop_state');
-const { spawnRootConversation: createRootConversation } = require('./new_topic_session');
+const { spawnRootConversation: createRootConversation, isSessionMemoryWorkflow } = require('./new_topic_session');
 
 /**
  * 容错 Provider 注册表: 已知厂商扫描器按序尝试加载, 缺失即跳过。
@@ -243,6 +243,7 @@ function formatTagFromKey(key) {
 function normalizeH1Title(docTitle, moduleKey) {
   if (!docTitle || typeof docTitle !== 'string') return null;
   let cleaned = docTitle
+    .replace(/^专题受控记忆[:：]\s*/, '')
     .replace(/\[\s*(?:受控记忆(?:文档)?|MEMORY)\s*\]/gi, '')
     .replace(/[#*`]/g, '')
     .trim();
@@ -776,6 +777,8 @@ function initTaskLoop(options = {}) {
     return result;
   }
 
+  const managesOwnMemory = !isSessionMemoryWorkflow();
+
   // 实际写入
   os_mkdir_p(taskLoopDir);
 
@@ -1068,7 +1071,7 @@ function initTaskLoop(options = {}) {
   if (mainThreadId) {
     result.scaffolded_memory_docs = [];
     const mainDoc = 'docs/MEMORY.md';
-    if (scaffoldMemoryDoc(wsRoot, mainDoc, '[主会话] 任务编排 & 治理中枢')) {
+    if (managesOwnMemory && scaffoldMemoryDoc(wsRoot, mainDoc, '[主会话] 任务编排 & 治理中枢')) {
       result.scaffolded_memory_docs.push(mainDoc);
     }
   }

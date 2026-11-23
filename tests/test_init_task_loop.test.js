@@ -8,7 +8,7 @@ function runInitSkillTests() {
   console.log('--- Running test_init_task_loop.test.js ---');
 
   // Test 1: inferTopicMapping standardization
-  const mockMain = { session_id: 'ee94b2c5-c0c2-473f-8f71-213250ba5295', title: '当前项目作为开发仓库', is_main: true };
+  const mockMain = { session_id: '00000000-0000-4000-8000-000000000001', title: '当前项目作为开发仓库', is_main: true };
   const mappedMain = inferTopicMapping(mockMain);
   assert.strictEqual(mappedMain.module_key, 'main');
   assert.strictEqual(mappedMain.topic_name, '[主会话] 任务编排 & 治理中枢');

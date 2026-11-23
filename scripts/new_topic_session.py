@@ -16,6 +16,10 @@ import re
 import subprocess
 import uuid
 from datetime import datetime
+from pathlib import Path
+
+if __name__ == "__main__" and ("--dry-run" in sys.argv[1:] or "-d" in sys.argv[1:]):
+    sys.dont_write_bytecode = True
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "providers"))
@@ -23,6 +27,42 @@ import spawn_zcode_session as zcode_spawn
 import task_loop_state as state_store
 from codex_model_policy import apply_initial_model_config, build_create_thread_request
 import codex_session_provider as codex_session_provider
+
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+
+
+def is_session_memory_workflow():
+    manifest = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
+    return manifest.is_file() and json.loads(manifest.read_text(encoding="utf-8")).get("name") == "session-memory-workflow"
+
+
+def uses_managed_topic_memory(ws_root, options):
+    """Codex 原位升级复用记忆模块的就绪判定，旧项目继续使用原建档路径。"""
+    if is_session_memory_workflow():
+        return True
+    if detect_topic_vendor(os.environ, options.get("vendor")) != "codex":
+        return False
+    framework = PLUGIN_ROOT / "skills" / "project-memory" / "scripts" / "runtime" / "framework.js"
+    if not framework.is_file():
+        return False
+    # ready 必须有受控注册块。这里只做入口筛选，完整校验仍由同一 Node 实现负责，
+    # 让尚未接入项目记忆的旧项目保留纯 Python 建档能力。
+    agents_files = (Path(ws_root) / ".agents/AGENTS.md", Path(ws_root) / "AGENTS.md")
+    if not any(file.is_file() and b"<!-- project-memory:index:start -->" in file.read_bytes()
+               for file in agents_files):
+        return False
+    try:
+        result = subprocess.run([
+            "node", "-e",
+            "process.stdout.write(JSON.stringify(require(process.argv[1]).inspectFramework(process.argv[2])))",
+            str(framework), os.path.abspath(ws_root),
+        ], capture_output=True, text=True, encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError(f"受控项目记忆状态检查需要 Node.js: {error}") from error
+    if result.returncode != 0:
+        raise RuntimeError(f"项目记忆状态检查失败: {result.stderr.strip()}")
+    return json.loads(result.stdout).get("status") == "ready"
 
 
 def detect_topic_vendor(env=None, explicit_vendor=None):
@@ -34,22 +74,28 @@ def normalize_path(p):
     return p.replace("\\", "/") if p else ""
 
 
-def parse_memory_doc(doc_path, ws_root):
+def parse_memory_doc(doc_path, ws_root, *, dry_run=False, topic_title=None):
     full_path = doc_path if os.path.isabs(doc_path) else os.path.join(ws_root, doc_path)
-    if not os.path.exists(full_path):
+    exists = os.path.exists(full_path)
+    if not exists and not dry_run:
         raise FileNotFoundError(f"记忆文档不存在: {full_path}")
-
-    with open(full_path, "r", encoding="utf-8") as f:
-        content = f.read()
 
     base_name = os.path.splitext(os.path.basename(full_path))[0]
     rel_path = normalize_path(os.path.relpath(full_path, ws_root))
+    if exists:
+        with open(full_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    elif topic_title:
+        preview_title = " ".join(str(topic_title).split()) if is_session_memory_workflow() else f"{topic_title} ({base_name})"
+        content = f"# {preview_title}"
+    else:
+        content = ""
 
     # 1. 提炼标题
     title = ""
     title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
     if title_match:
-        raw_t = title_match.group(1)
+        raw_t = re.sub(r"^专题受控记忆[:：]\s*", "", title_match.group(1))
         clean_t = re.sub(r"\[.*?受控记忆.*?\]", "", raw_t)
         title = re.sub(r"[#\*`]", "", clean_t).strip()
     if not title:
@@ -179,6 +225,9 @@ def spawn_root_conversation(title, prompt, ws_root, options=None):
             creation_request=request,
             creation_result=result,
         )
+
+    if options.get("dry_run"):
+        return create_status("DRY_RUN", current_vendor, "dry-run; no host adapter was executed")
 
     for k in ["ANTIGRAVITY_CONVERSATION_ID", "ANTIGRAVITY_SOURCE_METADATA", "ANTIGRAVITY_TRAJECTORY_ID"]:
         env.pop(k, None)
@@ -344,13 +393,27 @@ def create_topic_memory_doc(module_key, topic_title=None, options=None):
         options = {}
     ws_root = options.get("ws_root") or os.getcwd()
     memory_dir = os.path.join(ws_root, "docs", "memory")
-    os.makedirs(memory_dir, exist_ok=True)
-
     doc_path = os.path.join(memory_dir, f"{module_key}.md")
     rel_path = normalize_path(os.path.join("docs", "memory", f"{module_key}.md"))
+    if options.get("dry_run"):
+        return {"doc_path": doc_path, "rel_path": rel_path}
 
+    # Codex 的 force 只重建会话，已有记忆正文继续复用。
+    if detect_topic_vendor(os.environ, options.get("vendor")) == "codex" and os.path.exists(doc_path):
+        assert_project_memory_doc(ws_root, module_key, rel_path)
+        return {"doc_path": doc_path, "rel_path": rel_path}
+
+    clean_title = topic_title or f"[{module_key}专题] 核心功能维护 & 记忆沉淀"
+    if uses_managed_topic_memory(ws_root, options):
+        checked_topic_doc_path(ws_root, module_key, rel_path)
+        if os.path.exists(doc_path):
+            assert_project_memory_doc(ws_root, module_key, rel_path)
+        else:
+            provision_topic_memory_doc(ws_root, module_key, clean_title, rel_path)
+        return {"doc_path": doc_path, "rel_path": rel_path}
+
+    os.makedirs(memory_dir, exist_ok=True)
     if not os.path.exists(doc_path) or options.get("force"):
-        clean_title = topic_title or f"[{module_key}专题] 核心功能维护 & 记忆沉淀"
         doc_content = f"""# [专题受控记忆] {clean_title} ({module_key})
 
 本文档为 `{module_key}` 专题的受控记忆文档，记录本专题的架构设计、物理白名单、核心逻辑与已证实事实。
@@ -371,6 +434,78 @@ def create_topic_memory_doc(module_key, topic_title=None, options=None):
             f.write(doc_content)
 
     return {"doc_path": doc_path, "rel_path": rel_path}
+
+
+def is_inside_directory(directory, file):
+    try:
+        return bool(file.relative_to(directory).parts)
+    except ValueError:
+        return False
+
+
+def checked_topic_doc_path(ws_root, module_key, doc_path):
+    root = Path(os.path.abspath(ws_root))
+    full_path = Path(os.path.abspath(root / doc_path))
+    memory_dir = root / "docs" / "memory"
+    if (".." in re.split(r"[/\\]", str(doc_path))
+            or not is_inside_directory(memory_dir, full_path) or full_path.name != f"{module_key}.md"):
+        raise ValueError(f"记忆文档必须位于项目 docs/memory 内且文件名为 {module_key}.md: {doc_path}")
+    physical_memory_dir = root.resolve() / "docs" / "memory"
+    physical_doc = full_path.resolve()
+    if not is_inside_directory(physical_memory_dir, physical_doc) or physical_doc.name != f"{module_key}.md":
+        raise ValueError(f"记忆文档没有解析为项目 docs/memory 内的 {module_key}.md: {doc_path}")
+    return str(full_path)
+
+
+def assert_project_memory_doc(ws_root, module_key, doc_path):
+    full_path = checked_topic_doc_path(ws_root, module_key, doc_path)
+    if not os.path.isfile(full_path):
+        raise ValueError(f"记忆文档不存在或不是文件: {doc_path}")
+
+
+def provision_topic_memory_doc(ws_root, module_key, title, memory_doc):
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", module_key):
+        raise ValueError(f"记忆建档失败: 无效的模块 Key {module_key}")
+    cli = PLUGIN_ROOT / "skills" / "project-memory" / "scripts" / "project-memory.js"
+    try:
+        version = subprocess.run(["node", "--version"], capture_output=True, text=True, encoding="utf-8")
+        match = re.fullmatch(r"v(\d+)\..+", version.stdout.strip())
+        if version.returncode != 0 or not match or int(match.group(1)) < 20:
+            reason = version.stderr.strip() or version.stdout.strip() or f"退出状态 {version.returncode}"
+            raise RuntimeError(f"记忆建档需要 Node.js 20+，版本检查结果为 {reason}")
+        result = subprocess.run([
+            "node", str(cli), "provision", "--project-root", os.path.abspath(ws_root),
+            "--module-key", module_key, "--title", title,
+        ], capture_output=True, text=True, encoding="utf-8")
+    except OSError as error:
+        raise RuntimeError(f"记忆建档无法执行 Node.js: {error}") from error
+    if result.returncode != 0:
+        reason = result.stderr.strip() or f"退出状态 {result.returncode}"
+        raise RuntimeError(f"记忆建档失败: {reason}")
+
+    try:
+        receipt = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("记忆建档失败: CLI 未返回有效 JSON") from error
+    status = receipt.get("status") if isinstance(receipt, dict) else None
+    if status == "requires_memory_initialization":
+        raise RuntimeError(f"记忆建档需要先执行 memory-init（{receipt.get('framework_status')}）")
+    if (status not in ("provisioned", "reused") or receipt.get("module_key") != module_key
+            or receipt.get("memory_doc") != memory_doc):
+        raise RuntimeError("记忆建档失败: 回执状态、模块 Key 或文档路径不符合契约")
+    assert_project_memory_doc(ws_root, module_key, memory_doc)
+
+
+def find_existing_topic_memory_doc(ws_root, module_key, *paths):
+    for doc_path in paths:
+        if not doc_path:
+            continue
+        full_path = checked_topic_doc_path(ws_root, module_key, doc_path)
+        if os.path.exists(full_path):
+            if not os.path.isfile(full_path):
+                raise ValueError(f"记忆文档不是文件: {doc_path}")
+            return full_path
+    return None
 
 
 def normalize_bound_session(vendor, session_id, options=None):
@@ -411,12 +546,15 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
 
     vendor = detect_topic_vendor(os.environ, options.get("vendor")) or "antigravity"
     session_id, id_kind = normalize_bound_session(vendor, session_id, options)
-    doc_info = create_topic_memory_doc(module_key, topic_title, {"ws_root": ws_root, "force": options.get("force")})
-    meta = parse_memory_doc(doc_info["doc_path"], ws_root)
-    state = load_sessions_state(ws_root, vendor)
-    existing_module = (state.get("modules") or {}).get(meta["module_key"])
-    existing_model_config = existing_module.get("model_config") if isinstance(existing_module, dict) else None
-    is_main = meta["module_key"] == "main" or state.get("main_thread_id") == session_id
+    stored_modules = load_sessions_state(ws_root, vendor).get("modules") or {}
+    stored_module = stored_modules.get(module_key) or {}
+    stored_doc_path = stored_module.get("memory_doc") if module_key != "main" else None
+    default_path = f"docs/memory/{module_key}.md"
+    doc_path = find_existing_topic_memory_doc(ws_root, module_key, options.get("doc_path"), stored_doc_path, default_path)
+    default_full_path = os.path.normcase(os.path.abspath(os.path.join(ws_root, default_path)))
+    if not options.get("dry_run") and (not doc_path or (vendor != "codex" and os.path.normcase(doc_path) == default_full_path)):
+        create_topic_memory_doc(module_key, topic_title, {"ws_root": ws_root, "force": options.get("force"), "vendor": vendor})
+    meta = parse_memory_doc(doc_path or default_path, ws_root, dry_run=options.get("dry_run"), topic_title=topic_title)
 
     if options.get("dry_run"):
         return {
@@ -427,6 +565,11 @@ def bind_current_session(module_key, topic_title=None, session_id=None, ws_root=
             "memory_doc": meta["memory_doc"],
             "message": f"[预览模式] 将把当前会话 (ID: {session_id}) 就地注册为专题 \"{meta['title']}\" 并绑定至 {meta['memory_doc']}"
         }
+
+    state = load_sessions_state(ws_root, vendor)
+    existing_module = (state.get("modules") or {}).get(meta["module_key"])
+    existing_model_config = existing_module.get("model_config") if isinstance(existing_module, dict) else None
+    is_main = meta["module_key"] == "main" or state.get("main_thread_id") == session_id
 
     if "modules" not in state or state["modules"] is None:
         state["modules"] = {}
@@ -488,16 +631,25 @@ def create_topic_and_session(module_key, topic_title=None, ws_root=None, options
         options = {}
     if ws_root is None:
         ws_root = os.getcwd()
-    doc_info = create_topic_memory_doc(module_key, topic_title, {"ws_root": ws_root, "force": options.get("force")})
-    return provision_single_doc(doc_info["doc_path"], ws_root, options)
+    return provision_single_doc(None, ws_root, {**options, "topic_title": topic_title}, new_module_key=module_key)
 
 
-def provision_single_doc(doc_path, ws_root, options=None):
+def provision_single_doc(doc_path, ws_root, options=None, *, new_module_key=None):
     if options is None:
         options = {}
-    meta = parse_memory_doc(doc_path, ws_root)
     vendor = detect_topic_vendor(os.environ, options.get("vendor")) or "antigravity"
     state = load_sessions_state(ws_root, vendor)
+    stored_doc_path = None
+    default_path = None
+    needs_memory_doc = False
+    if new_module_key:
+        stored_module = (state.get("modules") or {}).get(new_module_key) or {}
+        stored_doc_path = stored_module.get("memory_doc") if new_module_key != "main" else None
+        default_path = f"docs/memory/{new_module_key}.md"
+        doc_path = find_existing_topic_memory_doc(ws_root, new_module_key, stored_doc_path, default_path)
+        needs_memory_doc = not doc_path
+        doc_path = doc_path or default_path
+    meta = parse_memory_doc(doc_path, ws_root, dry_run=options.get("dry_run") or needs_memory_doc, topic_title=options.get("topic_title"))
     existing_module = (state.get("modules") or {}).get(meta["module_key"])
 
     if is_reusable_module(vendor, existing_module) and not options.get("force"):
@@ -507,7 +659,7 @@ def provision_single_doc(doc_path, ws_root, options=None):
             "module_key": meta["module_key"],
             "session_id": existing_module.get("session_id"),
             "title": existing_module.get("title"),
-            "memory_doc": meta["memory_doc"],
+            "memory_doc": stored_doc_path or meta["memory_doc"],
             "message": f"专题会话已存在 (ID: {existing_module.get('session_id')})。如需重新创建请使用 --force 参数。"
         }
 
@@ -519,6 +671,13 @@ def provision_single_doc(doc_path, ws_root, options=None):
             "memory_doc": meta["memory_doc"],
             "message": f"[预览模式] 将创建顶层会话: \"{meta['title']}\" 并绑定至 {meta['memory_doc']}"
         }
+
+    force_legacy_template = (new_module_key and options.get("force") and vendor != "codex" and not is_session_memory_workflow()
+                             and os.path.normcase(os.path.abspath(os.path.join(ws_root, default_path)))
+                             == os.path.normcase(os.path.abspath(os.path.join(ws_root, doc_path))))
+    if needs_memory_doc or force_legacy_template:
+        create_topic_memory_doc(new_module_key, options.get("topic_title"), {"ws_root": ws_root, "force": options.get("force"), "vendor": vendor})
+        meta = parse_memory_doc(doc_path, ws_root)
 
     new_id = spawn_root_conversation(meta["title"], meta["initialPrompt"], ws_root, {
         **options,
@@ -750,6 +909,7 @@ def main():
                 "dry_run": dry_run,
                 "force": force,
                 "vendor": vendor,
+                "doc_path": None if create_new_topic_key else target_doc,
                 "id_kind": bind_id_kind,
             })
             print(f"状态: [{res['status']}]")
@@ -782,7 +942,7 @@ def main():
         print(f"目标受控记忆: {target_doc}")
         print("-" * 80)
         try:
-            res = provision_single_doc(target_doc, ws_root, {"dry_run": dry_run, "force": force, "vendor": vendor})
+            res = provision_single_doc(target_doc, ws_root, {"dry_run": dry_run, "force": force, "vendor": vendor, "topic_title": custom_title})
             print(f"状态: [{res['status']}]")
             print(f"模块 Key: {res['module_key']}")
             print(f"专题标题: {res['title']}")

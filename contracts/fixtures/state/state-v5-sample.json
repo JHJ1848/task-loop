@@ -9,17 +9,17 @@
     "vendors": {
       "antigravity": {
         "vendor": "antigravity",
-        "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+        "main_thread_id": "00000000-0000-4000-8000-000000000001",
         "updated_at": "2026-09-20T10:00:00.000Z",
         "modules": {
           "session_control": {
-            "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+            "session_id": "00000000-0000-4000-8000-000000000002",
             "memory_doc": "docs/memory/session_control.md"
           }
         },
         "sessions": [
           {
-            "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+            "session_id": "00000000-0000-4000-8000-000000000002",
             "module_key": "session_control",
             "vendor": "antigravity",
             "resumable": true
@@ -47,7 +47,7 @@
       "description": "Writing partition with matching expectedRevision (3) succeeds and increments revision to 4",
       "expected_revision": 3,
       "partition_update": {
-        "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295"
+        "main_thread_id": "00000000-0000-4000-8000-000000000001"
       },
       "expected_outcome": "success",
       "resulting_revision": 4
@@ -57,7 +57,7 @@
       "description": "Writing partition with mismatched expectedRevision (999) raises TL_STATE_REVISION_CONFLICT",
       "expected_revision": 999,
       "partition_update": {
-        "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295"
+        "main_thread_id": "00000000-0000-4000-8000-000000000001"
       },
       "expected_outcome": "conflict",
       "expected_error_code": "TL_STATE_REVISION_CONFLICT"

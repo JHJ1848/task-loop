@@ -103,10 +103,10 @@ Codex `create_thread` 属于 Desktop 宿主工具，不由本仓库脚本层伪�
   "schema_version": 4,
   "vendors": {
     "antigravity": {
-      "main_thread_id": "ee94b2c5-c0c2-473f-8f71-213250ba5295",
+      "main_thread_id": "<main-thread-id>",
       "modules": {
         "session_control": {
-          "session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+          "session_id": "<topic-session-id>",
           "title": "[Session] SDK & Scripting",
           "resumable": true
         }

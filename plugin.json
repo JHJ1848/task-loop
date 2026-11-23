@@ -1,6 +1,6 @@
 {
   "name": "task-loop",
-  "version": "1.6.1",
+  "version": "1.7.0-rc.1",
   "description": "Universal Cross-Agent Task Loop Plugin for Antigravity, Codex, and Claude Code",
   "author": "Antigravity Team",
   "capabilities": {
@@ -10,7 +10,12 @@
       "skills/subagent",
       "skills/init",
       "skills/new-session",
-      "skills/discuss"
+      "skills/create-task",
+      "skills/discuss",
+      "skills/bugfix-dev",
+      "skills/project-memory",
+      "skills/memory-get",
+      "skills/memory-put"
     ],
     "rules": [
       "rules/task-loop-governance.md"

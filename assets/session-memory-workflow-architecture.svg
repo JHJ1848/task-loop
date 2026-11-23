@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="smw-title smw-desc">
+  <title id="smw-title">Session Memory Workflow 架构图</title>
+  <desc id="smw-desc">Codex 候选插件连接会话编排与项目记忆。会话侧按厂商维护绑定和队列，记忆侧维护项目文档和索引，两者由模块键和相对记忆路径关联。</desc>
+  <defs>
+    <style>
+      text { fill: #f0f6fc; font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+      .title { font-size: 40px; font-weight: 700; }
+      .label { fill: #9fb2c7; font-size: 16px; font-weight: 600; }
+      .node-title { font-size: 24px; font-weight: 700; }
+      .copy { fill: #b7c7d8; font-size: 18px; }
+      .mono { fill: #b4d7ff; font-size: 16px; font-family: Consolas, "SFMono-Regular", monospace; }
+      .edge-label { fill: #acd1ff; font-size: 16px; }
+      .edge { fill: none; stroke: #7893af; stroke-width: 2; marker-end: url(#smw-arrow); }
+      .link { fill: none; stroke: #58a6ff; stroke-width: 2; marker-end: url(#smw-link); }
+    </style>
+    <marker id="smw-arrow" viewBox="0 0 8 8" markerWidth="6" markerHeight="6" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#7893af"/>
+    </marker>
+    <marker id="smw-link" viewBox="0 0 8 8" markerWidth="6" markerHeight="6" refX="7" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#58a6ff"/>
+    </marker>
+  </defs>
+
+  <rect width="1280" height="720" fill="#0d1117"/>
+  <text x="48" y="64" class="title">Session Memory Workflow</text>
+  <text x="48" y="96" class="copy">Codex 合并候选 · 会话编排、记忆读写与项目数据的归属</text>
+  <path d="M48 112H1232" stroke="#30363d"/>
+
+  <!-- Host and two plugin modules feed distinct project data stores. -->
+  <rect x="48" y="128" width="1184" height="104" rx="8" fill="#161b22" stroke="#394451"/>
+  <rect x="48" y="264" width="1184" height="236" rx="8" fill="#101820" stroke="#303d49"/>
+  <rect x="48" y="536" width="1184" height="116" rx="8" fill="#151c24" stroke="#394451"/>
+
+  <path d="M312 232V312" class="edge"/>
+  <path d="M968 232V312" class="edge"/>
+  <path d="M552 380H728" class="link"/>
+  <path d="M728 428H552" class="link" stroke-dasharray="8 6"/>
+  <path d="M312 480V536" class="edge"/>
+  <path d="M968 480V536" class="edge"/>
+
+  <text x="72" y="160" class="label">宿主 · CODEX</text>
+  <text x="72" y="192" class="node-title">任务会话与 Hook</text>
+  <text x="304" y="192" class="copy">登记主会话的派单提示  /  长会话健康提醒</text>
+  <text x="1208" y="160" text-anchor="end" class="mono">UserPromptSubmit</text>
+  <text x="72" y="216" class="mono">create_thread · send_message_to_thread · wait_threads</text>
+
+  <text x="72" y="292" class="label">候选插件 · SKILLS</text>
+  <text x="336" y="256" class="edge-label">会话操作</text>
+  <text x="992" y="256" class="edge-label">记忆操作</text>
+
+  <rect x="72" y="312" width="480" height="168" rx="8" fill="#11253a" stroke="#58a6ff"/>
+  <text x="96" y="348" class="node-title">会话编排</text>
+  <text x="96" y="376" class="mono">session-init / new-session</text>
+  <text x="96" y="412" class="copy">主会话定范围、派单与验收</text>
+  <text x="96" y="440" class="copy">长期专题实施并回传结果</text>
+  <text x="96" y="464" class="mono">复用可续接的正式 threadId</text>
+
+  <rect x="728" y="312" width="480" height="168" rx="8" fill="#161b22" stroke="#63758a"/>
+  <text x="752" y="348" class="node-title">项目记忆</text>
+  <text x="752" y="376" class="mono">memory-init / memory-get / memory-put</text>
+  <text x="752" y="412" class="copy">显式初始化与建档，维护文档索引</text>
+  <text x="752" y="440" class="copy">只读检索，确认后归档</text>
+  <text x="752" y="464" class="mono">project-memory.js · Node.js 20+</text>
+
+  <rect x="568" y="348" width="144" height="24" rx="4" fill="#101820"/>
+  <text x="640" y="368" text-anchor="middle" class="edge-label">缺文档时建档</text>
+  <rect x="560" y="396" width="160" height="24" rx="4" fill="#101820"/>
+  <text x="640" y="416" text-anchor="middle" class="edge-label">返回 memory_doc</text>
+
+  <text x="336" y="524" class="edge-label">注册与绑定</text>
+  <text x="992" y="524" class="edge-label">维护文档</text>
+  <text x="72" y="564" class="label">项目内数据</text>
+  <path d="M640 564V632" stroke="#394451"/>
+  <text x="72" y="596" class="node-title">会话注册表</text>
+  <text x="72" y="624" class="mono">.agents/task-loop/sessions.json</text>
+  <text x="664" y="596" class="node-title">主索引、专题与变更记录</text>
+  <text x="664" y="624" class="mono">docs/MEMORY.md · docs/memory/ · docs/change/</text>
+
+  <path d="M48 672H1232" stroke="#30363d"/>
+  <text x="48" y="700" class="copy">实线：调用或写入</text>
+  <text x="272" y="700" class="copy">虚线：建档回执</text>
+  <text x="1232" y="700" text-anchor="end" class="mono">module_key + 项目相对 memory_doc</text>
+</svg>

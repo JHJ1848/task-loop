@@ -1,0 +1,13 @@
+{
+  "name": "session-memory-workflow-candidate",
+  "metadata": {
+    "description": "Candidate package combining task-loop session governance with project-memory skills for Codex.",
+    "version": "1.7.0-rc.1"
+  },
+  "plugins": [
+    {
+      "name": "session-memory-workflow",
+      "source": "./"
+    }
+  ]
+}

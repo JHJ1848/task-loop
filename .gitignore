@@ -14,6 +14,11 @@ venv/
 .codex/
 .claude/
 
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+
 # Developer Private Rules & Machine Governance
 AGENTS.md
 

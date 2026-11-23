@@ -2,6 +2,8 @@ import os
 import json
 import unittest
 
+RELEASE_VERSION = "1.7.0-rc.1"
+
 class TestPluginManifest(unittest.TestCase):
     def setUp(self):
         self.root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -12,8 +14,40 @@ class TestPluginManifest(unittest.TestCase):
         with open(plugin_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         self.assertEqual(data.get("name"), "task-loop")
-        self.assertTrue("version" in data)
+        self.assertEqual(data.get("version"), RELEASE_VERSION)
         self.assertTrue("capabilities" in data)
+        self.assertIn("skills/subagent", data["capabilities"]["skills"])
+
+    def test_release_candidate_versions_and_upgrade_identity(self):
+        manifests = {
+            ".codex-plugin/plugin.json": "task-loop",
+            ".claude-plugin/plugin.json": "task-loop",
+            ".zcode-plugin/plugin.json": "task-loop",
+            ".codex-plugin/session-memory-workflow/plugin.json": "session-memory-workflow",
+        }
+        for relative_path, expected_name in manifests.items():
+            with open(os.path.join(self.root_dir, relative_path), "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            self.assertEqual(manifest.get("name"), expected_name)
+            self.assertEqual(manifest.get("version"), RELEASE_VERSION)
+
+        for relative_path in (
+            "marketplace.json",
+            ".claude-plugin/marketplace.json",
+            ".codex-plugin/session-memory-workflow/marketplace.json",
+        ):
+            with open(os.path.join(self.root_dir, relative_path), "r", encoding="utf-8") as f:
+                marketplace = json.load(f)
+            self.assertEqual(marketplace["metadata"].get("version"), RELEASE_VERSION)
+            self.assertEqual(len(marketplace.get("plugins", [])), 1)
+            self.assertEqual(marketplace["plugins"][0].get("source"), "./")
+
+        with open(os.path.join(self.root_dir, "marketplace.json"), "r", encoding="utf-8") as f:
+            root_marketplace = json.load(f)
+        self.assertEqual(root_marketplace.get("name"), "task-loop")
+        self.assertEqual(root_marketplace["plugins"][0].get("name"), "task-loop")
+        with open(os.path.join(self.root_dir, "skills", "subagent", "agents", "openai.yaml"), "r", encoding="utf-8") as f:
+            self.assertIn("allow_implicit_invocation: false", f.read())
 
     def test_hooks_json_exists_and_valid(self):
         hooks_path = os.path.join(self.root_dir, "hooks.json")
@@ -33,9 +67,13 @@ class TestPluginManifest(unittest.TestCase):
         hooks_path = os.path.join(self.root_dir, "hooks", "codex-session-health.json")
         with open(hooks_path, "r", encoding="utf-8") as f:
             hooks = json.load(f)
-        raw = json.dumps(hooks)
+        self.assertEqual(list(hooks["hooks"]), ["UserPromptSubmit"])
+        commands = [hook for group in hooks["hooks"]["UserPromptSubmit"] for hook in group["hooks"]]
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0]["command"], 'node "${PLUGIN_ROOT}/scripts/hooks/codex_main_intake.js"')
+        with open(os.path.join(self.root_dir, "scripts", "hooks", "codex_main_intake.js"), "r", encoding="utf-8") as f:
+            self.assertIn("require('./codex_session_health.js')", f.read())
         for script in ("codex_main_intake.js", "codex_session_health.js"):
-            self.assertIn(script, raw, f"Codex UserPromptSubmit must run {script}")
             self.assertTrue(os.path.exists(os.path.join(self.root_dir, "scripts", "hooks", script)))
 
     def test_rules_exist(self):

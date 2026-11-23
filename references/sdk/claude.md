@@ -84,12 +84,12 @@
 ```bash
 # 1. 无头派发 worker 并固定会话 ID，读取结构化结果
 claude -p "请根据任务包 LOOP-003 执行修复，文件白名单：src/..." \
-  --session-id 6f4c9a1e-0000-4000-8000-000000000003 \
+  --session-id "<session-uuid>" \
   --output-format json --allowedTools "Read Edit Bash" \
   | jq '{session_id, is_error, result, total_cost_usd}'
 
 # 2. 续接既有 worker 会话下发下一轮指令（只读追问加 --fork-session）
-claude -p --resume 6f4c9a1e-0000-4000-8000-000000000003 "汇报当前进度" --output-format json
+claude -p --resume "<session-uuid>" "汇报当前进度" --output-format json
 
 # 3. 脚本化查询活动/后台会话（输出完整 sessionId，可直接 --resume）
 claude agents --json --all --cwd "$(pwd)" | jq -r '.[] | select(.sessionId) | .sessionId'

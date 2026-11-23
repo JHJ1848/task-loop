@@ -1,7 +1,5 @@
 # Universal Task Loop Dispatch & Orchestration Contract
 
-![架构设计与落地方案](../assets/architecture.png)
-
 ---
 
 ## 一、主会话定位与三核心能力（Main Session Role & Capabilities）
@@ -81,6 +79,8 @@
 * **只读任务**：`[主会话派单任务: EXPLORE (只读)] 会话专题负责人...`
 * **修改任务**：`[主会话派单任务: WORK (修改)] 会话专题负责人...`
 
+每条 `WORK` 派单正文须明确要求专题先加载并遵循本插件的 [bugfix-dev](../skills/bugfix-dev/SKILL.md)，并给出已确认的目标、Allowlist 和可观察的验收条件。宿主支持命名空间时，填写当前安装实际注册的 Skill 名，例如 Codex 中的 `task-loop:bugfix-dev` 或 `session-memory-workflow:bugfix-dev`。专题无法加载时暂停写入并回报。交付列出所用 Skill、实际改动文件和验收证据，由 Main 核对边界和结果。
+
 ---
 
 ## 四、派单完整背景与信息梳理法定契约 (Full Context Dispatching Protocol)
@@ -151,6 +151,7 @@ node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
 
 ```markdown
 [主会话派单: WORK] task-xxx: 简明任务标题
+先加载并遵循本插件的 bugfix-dev。写入限于下列 Allowlist，按验收条件复核并回报证据。
 
 【零、上下文边界重置与前序任务收敛 (Context Reset & Preceding Job Cutoff)】
 * 状态重置指令:
@@ -160,7 +161,7 @@ node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
 * 模块对应原始用户需求 (Raw User Natural Language - Scoped):
   > "一字不差引用用户原始自然语言中针对本模块的指令段落（多需求时精准截取本模块原话，严禁主观改写或抽象替代）"
 * 多模态视觉上下文与图片资产 (Multimodal Visual Assets & Screenshots):
-  - 配图路径: file:///C:/Users/48631/.../.user_uploaded/media_xxx.png (若无配图注明: "无配图")
+  - 配图路径: file:///<目标项目根>/.user_uploaded/media_xxx.png (若无配图注明: "无配图")
   - 核心视觉线索: 截图中红框圈出了具体报错/UI要素/参数定义...
 * 主会话补充技术背景与期望形态 (Synthesized Background & Target State):
   - 核心业务痛点与技术现状: ...
@@ -201,7 +202,7 @@ node scripts/inspect_agy_sessions.js --probe-dispatch <SESSION_ID> --auto-wake
     "tier_name": "Level 1 (Simple)",
     "scenario": "单点 Bugfix、单文件/文本/配置微调、只读排查、快速查询",
     "subagent_policy": "none",
-    "execution_rule": "极速直发：直接派发到专题会话（或主会话直接快速微调），单线程立即执行，无需复杂 Q&A，极速闭环。"
+    "execution_rule": "业务代码修改以简短 WORK 消息直接派给对应专题单线程执行。消息包含 bugfix-dev、目标、Allowlist 和验收条件。主会话可直接完成只读任务及其权限内的文档维护。"
   },
   {
     "complexity": 2,
@@ -386,7 +387,7 @@ flowchart TD
     "recipient": "Main Session (main_thread_id)",
     "payload_example": {
       "type": "ALLOWLIST_EXPANSION_REQUEST",
-      "topic_session_id": "cdd1ca5c-3532-4489-b844-15c6f34055fa",
+      "topic_session_id": "<topic-session-id>",
       "target_files": [
         "scripts/hooks/enforce_allowlist.js",
         "scripts/hooks/enforce_allowlist.py"
@@ -423,7 +424,7 @@ flowchart TD
       "conflicted_files": [
         "scripts/hooks/enforce_allowlist.js"
       ],
-      "conflicted_with_session": "1057c10a-523d-47a4-858e-eabeaa784932",
+      "conflicted_with_session": "<conflicting-session-id>",
       "resolution": "目标文件正在由 hook 专题会话并行重构，当前申请已被阻断。请先完成现有白名单内工作，待该会话交付后再行串行调度。"
     }
   }
@@ -576,7 +577,7 @@ flowchart TD
 ```json
 [
   {
-    "physical_path_pattern": "scripts/hooks/*, config/hooks.json, .agents/hooks.json",
+    "physical_path_pattern": "scripts/hooks/*, hooks.json, hooks/*.json, .agents/hooks.json",
     "statutory_topic": "hook",
     "topic_name": "[钩子专题] 生命周期 & 安全门禁",
     "scope_description": "PreInvocation 瞬态上下文注入、PreToolUse 物理白名单门禁、生命周期拦截与安全防护。"
